@@ -1,0 +1,35 @@
+# Rust
+target/
+*.lock
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test artifacts
+*.tmp
+/tmp/
+
+# Documentation builds
+/target/doc/
+
+# Backup files
+*.bak
+*.orig
+
+# FreeSWITCH specific
+*.wav
+*.mp3
+*.gsm
+/recordings/

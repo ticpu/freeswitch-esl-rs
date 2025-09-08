@@ -1,0 +1,26 @@
+[package]
+name = "fs_cli-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Interactive FreeSWITCH CLI client using ESL"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "fs_cli"
+path = "src/main.rs"
+
+[dependencies]
+freeswitch-esl-rs = { path = ".." }
+tokio = { version = "1.0", features = ["full"] }
+clap = { version = "4.0", features = ["derive"] }
+rustyline = { path = "../../rustyline" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+colored = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+crossterm = "0.27"
+dirs = "5.0"
+chrono = { version = "0.4", features = ["serde"] }
