@@ -207,7 +207,7 @@ impl fmt::Display for EslEventType {
 
 impl EslEventType {
     /// Parse event type from string name
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_event_type(s: &str) -> Option<Self> {
         match s.to_uppercase().as_str() {
             "CUSTOM" => Some(EslEventType::Custom),
             "CLONE" => Some(EslEventType::Clone),

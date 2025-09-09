@@ -115,20 +115,24 @@ impl CommandBuilder {
     /// Build the command string
     pub fn build(self) -> String {
         let mut result = self.command;
-        result.push('\n');
+        result.push_str(LINE_TERMINATOR);
 
         // Add headers
         for (key, value) in &self.headers {
-            result.push_str(&format!("{}: {}\n", key, value));
+            result.push_str(&format!("{}: {}{}", key, value, LINE_TERMINATOR));
         }
 
         // Add body if present
         if let Some(body) = &self.body {
-            result.push_str(&format!("Content-Length: {}\n", body.len()));
-            result.push('\n');
+            result.push_str(&format!(
+                "Content-Length: {}{}",
+                body.len(),
+                LINE_TERMINATOR
+            ));
+            result.push_str(LINE_TERMINATOR);
             result.push_str(body);
         } else {
-            result.push('\n');
+            result.push_str(LINE_TERMINATOR);
         }
 
         result
@@ -170,26 +174,31 @@ pub enum EslCommand {
 }
 
 impl EslCommand {
+    /// Format a simple command with optional arguments
+    fn format_simple_command(cmd: &str, args: &[&str]) -> String {
+        let mut result = String::from(cmd);
+        for arg in args {
+            result.push(' ');
+            result.push_str(arg);
+        }
+        result.push_str(HEADER_TERMINATOR);
+        result
+    }
+
     /// Convert command to wire format string
     pub fn to_wire_format(&self) -> String {
         match self {
-            EslCommand::Auth { password } => {
-                format!("auth {}\n\n", password)
-            }
+            EslCommand::Auth { password } => Self::format_simple_command("auth", &[password]),
             EslCommand::UserAuth { user, password } => {
-                format!("userauth {}:{}\n\n", user, password)
+                Self::format_simple_command("userauth", &[&format!("{}:{}", user, password)])
             }
-            EslCommand::Api { command } => {
-                format!("api {}\n\n", command)
-            }
-            EslCommand::BgApi { command } => {
-                format!("bgapi {}\n\n", command)
-            }
+            EslCommand::Api { command } => Self::format_simple_command("api", &[command]),
+            EslCommand::BgApi { command } => Self::format_simple_command("bgapi", &[command]),
             EslCommand::Events { format, events } => {
-                format!("event {} {}\n\n", format, events)
+                Self::format_simple_command("event", &[format, events])
             }
             EslCommand::Filter { header, value } => {
-                format!("filter {} {}\n\n", header, value)
+                Self::format_simple_command("filter", &[header, value])
             }
             EslCommand::SendMsg { uuid, event } => {
                 let mut builder = CommandBuilder::new(&format!(
@@ -224,11 +233,9 @@ impl EslCommand {
                 }
                 .to_wire_format()
             }
-            EslCommand::Exit => "exit\n\n".to_string(),
-            EslCommand::Log { level } => {
-                format!("log {}\n\n", level)
-            }
-            EslCommand::NoOp => "noop\n\n".to_string(),
+            EslCommand::Exit => Self::format_simple_command("exit", &[]),
+            EslCommand::Log { level } => Self::format_simple_command("log", &[level]),
+            EslCommand::NoOp => Self::format_simple_command("noop", &[]),
         }
     }
 }

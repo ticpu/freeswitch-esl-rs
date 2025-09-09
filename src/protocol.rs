@@ -35,7 +35,8 @@ impl MessageType {
             CONTENT_TYPE_API_RESPONSE => MessageType::ApiResponse,
             CONTENT_TYPE_TEXT_EVENT_PLAIN
             | CONTENT_TYPE_TEXT_EVENT_JSON
-            | CONTENT_TYPE_TEXT_EVENT_XML => MessageType::Event,
+            | CONTENT_TYPE_TEXT_EVENT_XML
+            | "log/data" => MessageType::Event,
             "text/disconnect-notice" => MessageType::Disconnect,
             _ => MessageType::Unknown(content_type.to_string()),
         }
@@ -89,7 +90,7 @@ impl EslMessage {
 
         // Parse event type from Event-Name header
         if let Some(event_name) = event.header(HEADER_EVENT_NAME) {
-            event.event_type = EslEventType::from_str(event_name);
+            event.event_type = EslEventType::parse_event_type(event_name);
         }
 
         Ok(event)
@@ -105,9 +106,21 @@ impl EslMessage {
     }
 }
 
+/// Parser state for handling incomplete messages
+#[derive(Debug)]
+enum ParseState {
+    WaitingForHeaders,
+    WaitingForBody {
+        message_type: MessageType,
+        headers: std::collections::HashMap<String, String>,
+        body_length: usize,
+    },
+}
+
 /// ESL protocol parser
 pub struct EslParser {
     buffer: EslBuffer,
+    state: ParseState,
 }
 
 impl EslParser {
@@ -115,6 +128,7 @@ impl EslParser {
     pub fn new() -> Self {
         Self {
             buffer: EslBuffer::new(),
+            state: ParseState::WaitingForHeaders,
         }
     }
 
@@ -127,50 +141,79 @@ impl EslParser {
 
     /// Try to parse a complete message from the buffer
     pub fn parse_message(&mut self) -> EslResult<Option<EslMessage>> {
-        // Check if we have a complete message (headers + optional body)
-        let terminator = HEADER_TERMINATOR.as_bytes();
+        match &self.state {
+            ParseState::WaitingForHeaders => {
+                // Check if we have complete headers
+                let terminator = HEADER_TERMINATOR.as_bytes();
 
-        if let Some(headers_data) = self.buffer.extract_until_pattern(terminator) {
-            // Parse headers
-            let headers_str = String::from_utf8(headers_data)
-                .map_err(|_| EslError::protocol_error("Invalid UTF-8 in headers"))?;
+                if let Some(headers_data) = self.buffer.extract_until_pattern(terminator) {
+                    // Parse headers
+                    let headers_str = String::from_utf8(headers_data)
+                        .map_err(|_| EslError::protocol_error("Invalid UTF-8 in headers"))?;
 
-            let headers = self.parse_headers(&headers_str)?;
+                    let headers = self.parse_headers(&headers_str)?;
 
-            // Determine message type
-            let content_type = headers
-                .get(HEADER_CONTENT_TYPE)
-                .map(|s| s.as_str())
-                .unwrap_or("unknown");
-            let message_type = MessageType::from_content_type(content_type);
+                    // Determine message type
+                    let content_type = headers
+                        .get(HEADER_CONTENT_TYPE)
+                        .map(|s| s.as_str())
+                        .unwrap_or("unknown");
+                    let message_type = MessageType::from_content_type(content_type);
 
-            // Check for body based on Content-Length header
-            let body = if let Some(length_str) = headers.get(HEADER_CONTENT_LENGTH) {
-                let length: usize = length_str.parse().map_err(|_| EslError::InvalidHeader {
-                    header: format!("Content-Length: {}", length_str),
-                })?;
+                    // Check if we need a body
+                    if let Some(length_str) = headers.get(HEADER_CONTENT_LENGTH) {
+                        let length: usize =
+                            length_str
+                                .trim()
+                                .parse()
+                                .map_err(|_| EslError::InvalidHeader {
+                                    header: format!("Content-Length: {}", length_str),
+                                })?;
 
-                if length > 0 {
-                    if let Some(body_data) = self.buffer.extract_bytes(length) {
-                        let body_str = String::from_utf8(body_data)
-                            .map_err(|_| EslError::protocol_error("Invalid UTF-8 in body"))?;
-                        Some(body_str)
+                        if length > 0 {
+                            // Transition to waiting for body
+                            self.state = ParseState::WaitingForBody {
+                                message_type,
+                                headers,
+                                body_length: length,
+                            };
+                            // Try to parse body immediately
+                            self.parse_message()
+                        } else {
+                            // No body needed, complete message
+                            let message = EslMessage::new(message_type, headers, None);
+                            self.state = ParseState::WaitingForHeaders;
+                            Ok(Some(message))
+                        }
                     } else {
-                        // Not enough data for body yet
-                        return Ok(None);
+                        // No Content-Length header, complete message without body
+                        let message = EslMessage::new(message_type, headers, None);
+                        self.state = ParseState::WaitingForHeaders;
+                        Ok(Some(message))
                     }
                 } else {
-                    None
+                    // No complete headers yet
+                    Ok(None)
                 }
-            } else {
-                None
-            };
+            }
+            ParseState::WaitingForBody {
+                message_type,
+                headers,
+                body_length,
+            } => {
+                if let Some(body_data) = self.buffer.extract_bytes(*body_length) {
+                    let body_str = String::from_utf8(body_data)
+                        .map_err(|_| EslError::protocol_error("Invalid UTF-8 in body"))?;
 
-            let message = EslMessage::new(message_type, headers, body);
-            Ok(Some(message))
-        } else {
-            // No complete message yet
-            Ok(None)
+                    let message =
+                        EslMessage::new(message_type.clone(), headers.clone(), Some(body_str));
+                    self.state = ParseState::WaitingForHeaders;
+                    Ok(Some(message))
+                } else {
+                    // Not enough body data yet
+                    Ok(None)
+                }
+            }
         }
     }
 
@@ -221,7 +264,7 @@ impl EslParser {
 
         // Extract event type from Event-Name header
         if let Some(event_name) = event.header(HEADER_EVENT_NAME) {
-            event.event_type = EslEventType::from_str(event_name);
+            event.event_type = EslEventType::parse_event_type(event_name);
         }
 
         Ok(event)
@@ -250,7 +293,7 @@ impl EslParser {
 
             // Extract event type
             if let Some(event_name) = event.header("Event-Name") {
-                event.event_type = EslEventType::from_str(event_name);
+                event.event_type = EslEventType::parse_event_type(event_name);
             }
         }
 
@@ -274,21 +317,20 @@ impl EslParser {
             let line = line.trim();
             if line.starts_with('<') && line.ends_with('>') && line.contains("=") {
                 // Extract attribute-like data
-                if let Some(eq_pos) = line.find('=') {
-                    if let Some(start) = line.find('"') {
-                        if let Some(end) = line.rfind('"') {
-                            let key = line[1..eq_pos].trim();
-                            let value = &line[start + 1..end];
-                            event.headers.insert(key.to_string(), value.to_string());
-                        }
-                    }
+                if let Some(eq_pos) = line.find('=')
+                    && let Some(start) = line.find('"')
+                    && let Some(end) = line.rfind('"')
+                {
+                    let key = line[1..eq_pos].trim();
+                    let value = &line[start + 1..end];
+                    event.headers.insert(key.to_string(), value.to_string());
                 }
             }
         }
 
         // Extract event type
         if let Some(event_name) = event.header("Event-Name") {
-            event.event_type = EslEventType::from_str(event_name);
+            event.event_type = EslEventType::parse_event_type(event_name);
         }
 
         Ok(event)

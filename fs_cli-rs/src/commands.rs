@@ -1,13 +1,13 @@
 //! Command processing and execution for fs_cli-rs
 
+use crate::esl_debug::EslDebugLevel;
 use anyhow::{Error, Result};
 use colored::*;
 use freeswitch_esl_rs::{command::EslCommand, EslHandle};
-use rustyline::{history::FileHistory, Editor};
+use rustyline::ExternalPrinter;
 use std::str::FromStr;
-
-use crate::completion::FsCliCompleter;
-use crate::esl_debug::EslDebugLevel;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// FreeSWITCH log levels
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -127,6 +127,7 @@ impl LogLevel {
 pub struct CommandProcessor {
     no_color: bool,
     debug_level: EslDebugLevel,
+    printer: Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
 }
 
 impl CommandProcessor {
@@ -135,16 +136,51 @@ impl CommandProcessor {
         Self {
             no_color,
             debug_level,
+            printer: None,
+        }
+    }
+
+    /// Set external printer for coordinated output
+    pub fn set_printer(&mut self, printer: Option<Arc<Mutex<dyn ExternalPrinter + Send>>>) {
+        self.printer = printer;
+    }
+
+    /// Print message using external printer or fallback to println
+    async fn print_message(&self, message: &str) {
+        if let Some(printer_arc) = &self.printer {
+            if let Ok(mut p) = printer_arc.try_lock() {
+                let _ = p.print(message.to_string());
+            } else {
+                // Fallback if printer is locked
+                println!("{}", message);
+            }
+        } else {
+            println!("{}", message);
+        }
+    }
+
+    /// Print error message using external printer or fallback to eprintln
+    async fn print_error(&self, message: &str) {
+        if let Some(printer_arc) = &self.printer {
+            if let Ok(mut p) = printer_arc.try_lock() {
+                let _ = p.print(message.to_string());
+            } else {
+                // Fallback if printer is locked
+                eprintln!("{}", message);
+            }
+        } else {
+            eprintln!("{}", message);
         }
     }
 
     /// Handle command execution errors with proper formatting
-    pub fn handle_error(&self, error: Error) {
-        if !self.no_color {
-            eprintln!("{}: {}", "Error".red().bold(), error);
+    pub async fn handle_error(&self, error: Error) {
+        let error_msg = if !self.no_color {
+            format!("{}: {}", "Error".red().bold(), error)
         } else {
-            eprintln!("Error: {}", error);
-        }
+            format!("Error: {}", error)
+        };
+        self.print_error(&error_msg).await;
     }
 
     /// Execute a FreeSWITCH command
@@ -156,7 +192,7 @@ impl CommandProcessor {
 
         // Handle special commands
         if let Some(result) = self.handle_special_command(handle, command).await? {
-            println!("{}", result);
+            self.print_message(&result).await;
             return Ok(());
         }
 
@@ -165,18 +201,19 @@ impl CommandProcessor {
             Ok(response) => {
                 if !response.is_success() {
                     if let Some(reply) = response.reply_text() {
-                        if !self.no_color {
-                            eprintln!("{}: {}", "API Error".red().bold(), reply);
+                        let error_msg = if !self.no_color {
+                            format!("{}: {}", "API Error".red().bold(), reply)
                         } else {
-                            eprintln!("API Error: {}", reply);
-                        }
+                            format!("API Error: {}", reply)
+                        };
+                        self.print_error(&error_msg).await;
                         return Ok(()); // Don't treat API errors as fatal
                     }
                 }
 
                 let body = response.body_string();
                 if !body.trim().is_empty() {
-                    println!("{}", body);
+                    self.print_message(&body).await;
                 }
             }
             Err(e) => {
@@ -278,14 +315,24 @@ impl CommandProcessor {
             Err(err) => return Ok(Some(err)),
         };
 
-        // Send the log command to FreeSWITCH
-        let cmd = EslCommand::Log {
-            level: log_level.as_str().to_string(),
+        // Send the log command directly to FreeSWITCH (not as API)
+        let cmd = if log_level == LogLevel::NoLog {
+            EslCommand::Api {
+                command: "nolog".to_string(),
+            }
+        } else {
+            EslCommand::Log {
+                level: log_level.as_str().to_string(),
+            }
         };
         let response = handle.send_command(cmd).await?;
 
         if response.is_success() {
-            Ok(Some(format!("Log level set to: {}", log_level.as_str())))
+            Ok(Some(format!(
+                "+OK log level {} [{}]",
+                log_level.as_str(),
+                log_level as u8
+            )))
         } else {
             Ok(Some(format!(
                 "Failed to set log level: {}",
@@ -352,33 +399,8 @@ impl CommandProcessor {
         "Uptime information not found".to_string()
     }
 
-    /// Show command history
-    pub fn show_history(&self, rl: &Editor<FsCliCompleter, FileHistory>) {
-        if !self.no_color {
-            println!("{}", "Command History:".cyan().bold());
-        } else {
-            println!("Command History:");
-        }
-
-        let history = rl.history();
-        for (i, entry) in history
-            .iter()
-            .enumerate()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .take(20)
-        {
-            if !self.no_color {
-                println!("  {}: {}", (i + 1).to_string().dimmed(), entry);
-            } else {
-                println!("  {}: {}", i + 1, entry);
-            }
-        }
-    }
-
     /// Show help information
-    pub fn show_help(&self) {
+    pub async fn show_help(&self) {
         let help_text = r#"
 FreeSWITCH CLI Commands:
 
@@ -386,7 +408,6 @@ Basic Commands:
   status                    - Show system status
   version                   - Show FreeSWITCH version
   uptime                    - Show system uptime
-  help                      - Show this help
 
 Show Commands:
   show channels             - List active channels
@@ -409,18 +430,20 @@ Function Key Shortcuts:
   F6  = reloadxml           F12 = version
 
 Built-in Commands:
-  history                   - Show command history
+  /help                     - Show this help
+  /quit, /exit, /bye        - Exit the CLI
+  history                   - Show command history  
   clear                     - Clear screen
-  quit/exit/bye            - Exit the CLI
 
 You can execute any FreeSWITCH API command directly.
 Use Tab for command completion and Up/Down arrows for history.
 "#;
 
-        if !self.no_color {
-            println!("{}", help_text.cyan());
+        let formatted_help = if !self.no_color {
+            format!("{}", help_text.cyan())
         } else {
-            println!("{}", help_text);
-        }
+            help_text.to_string()
+        };
+        self.print_message(&formatted_help).await;
     }
 }

@@ -8,9 +8,10 @@ use std::str::FromStr;
 
 /// ESL client-side debug levels (0-7)
 /// Matches the original fs_cli esl_global_set_default_logger levels
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
 pub enum EslDebugLevel {
-    None = 0,    // No debug output
+    #[default]
+    None = 0, // No debug output
     Error = 1,   // Error messages only
     Warning = 2, // Error and warning messages
     Info = 3,    // Error, warning, and info messages
@@ -59,10 +60,10 @@ impl EslDebugLevel {
             EslDebugLevel::Error => "error",
             EslDebugLevel::Warning => "warn",
             EslDebugLevel::Info => "info",
-            EslDebugLevel::Debug
-            | EslDebugLevel::Debug5
-            | EslDebugLevel::Debug6
-            | EslDebugLevel::Debug7 => "debug",
+            EslDebugLevel::Debug | EslDebugLevel::Debug5 | EslDebugLevel::Debug6 => {
+                "fs_cli_rs=debug,freeswitch_esl_rs=debug,rustyline=warn"
+            }
+            EslDebugLevel::Debug7 => "debug",
         }
     }
 
@@ -71,12 +72,6 @@ impl EslDebugLevel {
         if *self >= level {
             eprintln!("[ESL_DEBUG:{}] {}", level.as_str(), message);
         }
-    }
-}
-
-impl Default for EslDebugLevel {
-    fn default() -> Self {
-        EslDebugLevel::None
     }
 }
 

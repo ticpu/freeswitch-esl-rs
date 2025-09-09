@@ -15,7 +15,7 @@
 //!     let mut handle = EslHandle::connect("localhost", 8021, "ClueCon").await?;
 //!     
 //!     let response = handle.api("status").await?;
-//!     println!("Status: {}", response.body());
+//!     println!("Status: {}", response.body().unwrap_or(&"No body".to_string()));
 //!     
 //!     Ok(())
 //! }

@@ -8,8 +8,10 @@ use clap::Parser;
 use colored::*;
 use freeswitch_esl_rs::{EslEventType, EslHandle, EventFormat};
 use rustyline::history::FileHistory;
-use rustyline::{Cmd, Editor, KeyCode, KeyEvent, Modifiers};
+use rustyline::{Cmd, Editor, ExternalPrinter, KeyCode, KeyEvent, Modifiers};
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{timeout, Duration};
 use tracing::{error, info, warn};
 
@@ -77,7 +79,7 @@ fn setup_function_key_bindings(rl: &mut Editor<FsCliCompleter, FileHistory>) -> 
 }
 
 /// Interactive FreeSWITCH CLI client
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// FreeSWITCH hostname or IP address
@@ -191,13 +193,13 @@ async fn main() -> Result<()> {
     // Execute single command or start interactive mode
     if let Some(ref command) = args.execute {
         execute_single_command(&mut handle, command, &args).await?;
+        // Clean disconnect
+        info!("Disconnecting from FreeSWITCH...");
+        handle.disconnect().await?;
     } else {
-        run_interactive_mode(&mut handle, &args).await?;
+        run_interactive_mode(handle, &args).await?;
+        // Handle is consumed by run_interactive_mode, no need to disconnect
     }
-
-    // Clean disconnect
-    info!("Disconnecting from FreeSWITCH...");
-    handle.disconnect().await?;
 
     Ok(())
 }
@@ -272,13 +274,19 @@ async fn subscribe_to_events(handle: &mut EslHandle) -> Result<()> {
 async fn enable_logging(handle: &mut EslHandle, log_level: LogLevel) -> Result<()> {
     info!("Enabling logging at level: {}", log_level.as_str());
 
-    let log_command = if log_level == LogLevel::NoLog {
-        "nolog".to_string()
+    use freeswitch_esl_rs::command::EslCommand;
+
+    let cmd = if log_level == LogLevel::NoLog {
+        EslCommand::Api {
+            command: "nolog".to_string(),
+        }
     } else {
-        format!("log {}", log_level.as_str())
+        EslCommand::Log {
+            level: log_level.as_str().to_string(),
+        }
     };
 
-    let response = handle.api(&log_command).await?;
+    let response = handle.send_command(cmd).await?;
 
     if !response.is_success() {
         if let Some(reply) = response.reply_text() {
@@ -296,8 +304,13 @@ async fn execute_single_command(handle: &mut EslHandle, command: &str, args: &Ar
     Ok(())
 }
 
-/// Run interactive CLI mode
-async fn run_interactive_mode(handle: &mut EslHandle, args: &Args) -> Result<()> {
+/// Run the readline loop in a blocking thread
+fn run_readline_loop(
+    cmd_tx: mpsc::UnboundedSender<String>,
+    quit_tx: oneshot::Sender<()>,
+    printer_tx: oneshot::Sender<Arc<Mutex<dyn ExternalPrinter + Send>>>,
+    args: &Args,
+) -> Result<()> {
     // Set up readline editor
     let mut rl = Editor::<FsCliCompleter, FileHistory>::new()?;
 
@@ -307,6 +320,13 @@ async fn run_interactive_mode(handle: &mut EslHandle, args: &Args) -> Result<()>
 
     // Set up function key bindings
     setup_function_key_bindings(&mut rl)?;
+
+    // Create external printer for background log output
+    let printer = rl.create_external_printer()?;
+    let printer_arc = Arc::new(Mutex::new(printer));
+
+    // Send printer to main thread
+    let _ = printer_tx.send(printer_arc);
 
     // Load history
     let history_file = args.history_file.clone().unwrap_or_else(|| {
@@ -321,23 +341,10 @@ async fn run_interactive_mode(handle: &mut EslHandle, args: &Args) -> Result<()>
         }
     }
 
-    let processor = CommandProcessor::new(args.no_color, args.debug);
-
-    println!("FreeSWITCH CLI ready. Type 'help' for commands, 'quit' to exit.\n");
-
-    // Main interactive REPL loop
+    // Readline loop
     loop {
-        // Check for pending log events and display them
-        if !args.quiet {
-            if let Err(e) = LogDisplay::check_and_display_logs(handle, args.no_color).await {
-                warn!("Error checking for log events: {}", e);
-            }
-        }
-
-        // Create prompt
         let prompt = format!("freeswitch@{}> ", args.host);
 
-        // Get user input using readline
         match rl.readline(&prompt) {
             Ok(line) => {
                 let line = line.trim();
@@ -348,54 +355,33 @@ async fn run_interactive_mode(handle: &mut EslHandle, args: &Args) -> Result<()>
                 // Add to history
                 let _ = rl.add_history_entry(line);
 
-                // Handle client-side commands first (start with /)
-                if line.starts_with('/') {
-                    match line {
-                        "/quit" | "/exit" | "/bye" => {
-                            println!("Goodbye!");
-                            break;
-                        }
-                        _ => {
-                            // Let the command processor handle other /commands
-                            if let Err(e) = processor.execute_command(handle, line).await {
-                                processor.handle_error(e);
-                            }
-                            continue;
-                        }
-                    }
+                // Handle quit commands
+                if matches!(line, "/quit" | "/exit" | "/bye") {
+                    println!("Goodbye!");
+                    let _ = quit_tx.send(());
+                    break;
                 }
 
-                // Handle other built-in commands
-                match line {
-                    "clear" => {
-                        print!("\x1B[2J\x1B[1;1H");
-                        continue;
+                // Handle history command locally (since we have access to rl here)
+                if line == "history" {
+                    println!("Command History:");
+                    let history = rl.history();
+                    for (i, entry) in history
+                        .iter()
+                        .enumerate()
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .take(20)
+                    {
+                        println!("  {}: {}", i + 1, entry);
                     }
-                    "history" => {
-                        processor.show_history(&rl);
-                        continue;
-                    }
-                    "help" => {
-                        processor.show_help();
-                        continue;
-                    }
-                    _ => {
-                        // Check for function key shortcuts (F1-F12) typed manually
-                        if let Some(fn_command) = parse_function_key(line) {
-                            if let Err(e) = processor.execute_command(handle, fn_command).await {
-                                processor.handle_error(e);
-                            }
-                            continue;
-                        }
+                    continue;
+                }
 
-                        // Function key commands are automatically executed (no special handling needed)
-                        // since they're inserted directly by the key binding system
-
-                        // Execute FreeSWITCH command and show output immediately
-                        if let Err(e) = processor.execute_command(handle, line).await {
-                            processor.handle_error(e);
-                        }
-                    }
+                // Send command to main thread
+                if cmd_tx.send(line.to_string()).is_err() {
+                    break; // Main thread has closed
                 }
             }
             Err(rustyline::error::ReadlineError::Interrupted) => {
@@ -404,6 +390,7 @@ async fn run_interactive_mode(handle: &mut EslHandle, args: &Args) -> Result<()>
             }
             Err(rustyline::error::ReadlineError::Eof) => {
                 println!("Goodbye!");
+                let _ = quit_tx.send(());
                 break;
             }
             Err(e) => {
@@ -417,6 +404,146 @@ async fn run_interactive_mode(handle: &mut EslHandle, args: &Args) -> Result<()>
     if let Err(e) = rl.save_history(&history_file) {
         warn!("Could not save history: {}", e);
     }
+
+    Ok(())
+}
+
+/// Run interactive CLI mode
+async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
+    let mut processor = CommandProcessor::new(args.no_color, args.debug);
+
+    // Create channels for communication between rustyline thread and main async thread
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
+    let (quit_tx, mut quit_rx) = oneshot::channel::<()>();
+    let (printer_tx, printer_rx) = oneshot::channel::<Arc<Mutex<dyn ExternalPrinter + Send>>>();
+
+    println!("FreeSWITCH CLI ready. Type 'help' for commands, '/quit' to exit.\n");
+
+    // Spawn rustyline in a blocking thread
+    let args_clone = args.clone();
+    let readline_handle = tokio::task::spawn_blocking(move || {
+        run_readline_loop(cmd_tx, quit_tx, printer_tx, &args_clone)
+    });
+
+    // Wait for external printer to be ready
+    let external_printer = match printer_rx.await {
+        Ok(printer) => Some(printer),
+        Err(_) => {
+            error!("Failed to receive external printer");
+            None
+        }
+    };
+
+    // Set the external printer on the command processor
+    processor.set_printer(external_printer.clone());
+
+    // Wrap handle in Arc<Mutex> for sharing between tasks
+    let handle_arc = Arc::new(Mutex::new(handle));
+    let log_handle = if !args.quiet {
+        let handle_clone = handle_arc.clone();
+        let no_color = args.no_color;
+        let printer_clone = external_printer.clone();
+        Some(tokio::spawn(async move {
+            loop {
+                {
+                    let mut h = handle_clone.lock().await;
+                    if let Err(e) =
+                        LogDisplay::check_and_display_logs(&mut h, no_color, printer_clone.clone())
+                            .await
+                    {
+                        warn!("Error in background log monitoring: {}", e);
+                    }
+                }
+                // Small delay to prevent excessive CPU usage
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }))
+    } else {
+        None
+    };
+
+    // Main command processing loop
+    loop {
+        tokio::select! {
+            // Handle commands from readline thread
+            Some(command) = cmd_rx.recv() => {
+                let mut handle = handle_arc.lock().await;
+
+                // Handle client-side commands first (start with /)
+                if command.starts_with('/') {
+                    match command.as_str() {
+                        "/help" => {
+                            processor.show_help().await;
+                            continue;
+                        }
+                        _ => {
+                            // Let the command processor handle other /commands
+                            if let Err(e) = processor.execute_command(&mut handle, &command).await {
+                                processor.handle_error(e).await;
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                // Handle other built-in commands
+                match command.as_str() {
+                    "clear" => {
+                        // Use external printer for clear screen sequence
+                        if let Some(printer_arc) = &external_printer {
+                            if let Ok(mut p) = printer_arc.try_lock() {
+                                let _ = p.print("\x1B[2J\x1B[1;1H".to_string());
+                            } else {
+                                print!("\x1B[2J\x1B[1;1H");
+                            }
+                        } else {
+                            print!("\x1B[2J\x1B[1;1H");
+                        }
+                        continue;
+                    }
+                    "help" => {
+                        processor.show_help().await;
+                        continue;
+                    }
+                    _ => {
+                        // Check for function key shortcuts (F1-F12) typed manually
+                        if let Some(fn_command) = parse_function_key(&command) {
+                            if let Err(e) = processor.execute_command(&mut handle, fn_command).await {
+                                processor.handle_error(e).await;
+                            }
+                            continue;
+                        }
+
+                        // Execute FreeSWITCH command and show output immediately
+                        if let Err(e) = processor.execute_command(&mut handle, &command).await {
+                            processor.handle_error(e).await;
+                        }
+                    }
+                }
+            }
+            // Handle quit signal from readline thread
+            _ = &mut quit_rx => {
+                break;
+            }
+        }
+    }
+
+    // Clean up background tasks
+    if let Some(handle) = log_handle {
+        handle.abort();
+    }
+
+    // Wait for readline thread to finish
+    if let Err(e) = readline_handle.await {
+        warn!("Error waiting for readline thread: {}", e);
+    }
+
+    // Clean disconnect
+    info!("Disconnecting from FreeSWITCH...");
+    let mut handle = Arc::try_unwrap(handle_arc)
+        .map_err(|_| anyhow::anyhow!("Failed to unwrap handle"))?
+        .into_inner();
+    handle.disconnect().await?;
 
     Ok(())
 }

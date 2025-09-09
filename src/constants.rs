@@ -1,7 +1,7 @@
 //! Protocol constants and configuration values
 
 /// Default FreeSWITCH ESL port for inbound connections
-pub const DEFAULT_ESL_PORT: u16 = 8022;
+pub const DEFAULT_ESL_PORT: u16 = 8021;
 
 /// Default password for ESL authentication
 pub const DEFAULT_PASSWORD: &str = "ClueCon";
