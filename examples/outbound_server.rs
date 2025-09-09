@@ -8,32 +8,30 @@
 //! To test this, configure FreeSWITCH with:
 //! <action application="socket" data="localhost:8040 async full"/>
 
-use freeswitch_esl_rs::{command::AppCommand, EslError, EslEventType, EslHandle, EventFormat};
+use freeswitch_esl_rs::{EslError, EslEventType, EslHandle, EventFormat, command::AppCommand};
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    tracing_subscriber::init();
+    tracing_subscriber::fmt::init();
 
     let bind_addr = "0.0.0.0:8040";
     info!("Starting outbound ESL server on {}", bind_addr);
 
-    let listener = TcpListener::bind(bind_addr).await?;
-    info!("Listening for outbound connections from FreeSWITCH...");
-
     loop {
-        match EslHandle::accept_outbound(listener.try_clone().unwrap()).await {
+        let listener = TcpListener::bind(bind_addr).await?;
+        info!("Listening for outbound connections from FreeSWITCH...");
+
+        match EslHandle::accept_outbound(listener).await {
             Ok(mut handle) => {
                 info!("Accepted new outbound connection");
 
-                // Spawn a task to handle this connection
-                tokio::spawn(async move {
-                    if let Err(e) = handle_call(&mut handle).await {
-                        error!("Error handling call: {}", e);
-                    }
-                });
+                // Handle this connection
+                if let Err(e) = handle_call(&mut handle).await {
+                    error!("Error handling call: {}", e);
+                }
             }
             Err(e) => {
                 error!("Failed to accept connection: {}", e);
@@ -99,7 +97,6 @@ async fn handle_call(handle: &mut EslHandle) -> Result<(), EslError> {
 
     // Main call handling loop
     let mut dtmf_buffer = String::new();
-    let mut playback_finished = false;
 
     while let Some(event) = handle.recv_event().await? {
         debug!("Received event: {:?}", event.event_type());
@@ -110,7 +107,6 @@ async fn handle_call(handle: &mut EslHandle) -> Result<(), EslError> {
                 break;
             }
             Some(EslEventType::PlaybackStop) => {
-                playback_finished = true;
                 info!("Playback finished");
 
                 // Prompt for DTMF input

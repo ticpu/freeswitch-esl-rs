@@ -4,17 +4,19 @@
 //!
 //! Usage: cargo run --example event_listener
 
-use freeswitch_esl_rs::{EslError, EslEventType, EslHandle, EventFormat};
+use freeswitch_esl_rs::{
+    EslError, EslEventType, EslHandle, EventFormat, constants::DEFAULT_ESL_PORT,
+};
 use std::collections::HashMap;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    tracing_subscriber::init();
+    tracing_subscriber::fmt::init();
 
     // Connect to FreeSWITCH
-    let mut handle = match EslHandle::connect("localhost", 8022, "ClueCon").await {
+    let mut handle = match EslHandle::connect("localhost", DEFAULT_ESL_PORT, "ClueCon").await {
         Ok(handle) => {
             info!("Successfully connected to FreeSWITCH");
             handle
@@ -151,9 +153,9 @@ async fn handle_channel_create(
 
         let call_info = CallInfo {
             uuid: uuid.clone(),
-            caller_id,
-            destination,
-            direction,
+            caller_id: caller_id.clone(),
+            destination: destination.clone(),
+            direction: direction.clone(),
             start_time: std::time::Instant::now(),
             answered_time: None,
             hangup_time: None,
@@ -163,13 +165,7 @@ async fn handle_channel_create(
 
         info!(
             "📞 New call created: {} -> {} ({})",
-            event
-                .header("Caller-Caller-ID-Number")
-                .unwrap_or(&"Unknown".to_string()),
-            event
-                .header("Caller-Destination-Number")
-                .unwrap_or(&"Unknown".to_string()),
-            direction
+            caller_id, destination, direction
         );
     }
 
@@ -206,9 +202,8 @@ async fn handle_channel_hangup(
         if let Some(call_info) = active_calls.get_mut(uuid) {
             call_info.hangup_time = Some(std::time::Instant::now());
 
-            let cause = event
-                .header("Hangup-Cause")
-                .unwrap_or(&"UNKNOWN".to_string());
+            let unknown_cause = "UNKNOWN".to_string();
+            let cause = event.header("Hangup-Cause").unwrap_or(&unknown_cause);
             let total_duration = call_info.start_time.elapsed();
             let talk_time = if let Some(answer_time) = call_info.answered_time {
                 Some(answer_time.elapsed())

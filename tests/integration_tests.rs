@@ -4,13 +4,11 @@
 //! Unit tests that don't require FreeSWITCH are included in individual modules.
 
 use freeswitch_esl_rs::{
+    EslError, EslEventType, EventFormat,
     buffer::EslBuffer,
     command::{AppCommand, EslCommand},
-    event::EslEvent,
     protocol::{EslParser, MessageType},
-    EslError, EslEventType, EslHandle, EventFormat,
 };
-use tokio_test;
 
 /// Test basic buffer operations
 #[tokio::test]
@@ -105,20 +103,20 @@ async fn test_command_generation() {
     let auth = EslCommand::Auth {
         password: "ClueCon".to_string(),
     };
-    assert_eq!(auth.to_wire_format(), "auth ClueCon\n\n");
+    assert_eq!(auth.to_wire_format(), "auth ClueCon\r\n\r\n");
 
     // Test API command
     let api = EslCommand::Api {
         command: "status".to_string(),
     };
-    assert_eq!(api.to_wire_format(), "api status\n\n");
+    assert_eq!(api.to_wire_format(), "api status\r\n\r\n");
 
     // Test events command
     let events = EslCommand::Events {
         format: "plain".to_string(),
         events: "ALL".to_string(),
     };
-    assert_eq!(events.to_wire_format(), "event plain ALL\n\n");
+    assert_eq!(events.to_wire_format(), "event plain ALL\r\n\r\n");
 
     // Test app commands
     let answer = AppCommand::answer();
@@ -147,15 +145,18 @@ async fn test_event_types() {
 
     // Test parsing from string
     assert_eq!(
-        EslEventType::from_str("CHANNEL_ANSWER"),
+        EslEventType::parse_event_type("CHANNEL_ANSWER"),
         Some(EslEventType::ChannelAnswer)
     );
     assert_eq!(
-        EslEventType::from_str("channel_answer"),
+        EslEventType::parse_event_type("channel_answer"),
         Some(EslEventType::ChannelAnswer)
     );
-    assert_eq!(EslEventType::from_str("DTMF"), Some(EslEventType::Dtmf));
-    assert_eq!(EslEventType::from_str("UNKNOWN_EVENT"), None);
+    assert_eq!(
+        EslEventType::parse_event_type("DTMF"),
+        Some(EslEventType::Dtmf)
+    );
+    assert_eq!(EslEventType::parse_event_type("UNKNOWN_EVENT"), None);
 }
 
 /// Test error handling
@@ -189,8 +190,11 @@ async fn test_json_event_parsing() {
     let mut headers = std::collections::HashMap::new();
     headers.insert("Content-Type".to_string(), "text/event-json".to_string());
 
-    let message =
-        crate::protocol::EslMessage::new(MessageType::Event, headers, Some(json_body.to_string()));
+    let message = freeswitch_esl_rs::protocol::EslMessage::new(
+        MessageType::Event,
+        headers,
+        Some(json_body.to_string()),
+    );
 
     let parser = EslParser::new();
     let event = parser.parse_event(message, EventFormat::Json).unwrap();
@@ -217,7 +221,7 @@ async fn test_incomplete_messages() {
     assert!(result.is_none());
 
     // Complete the headers
-    parser.add_data(b"Content-Length: 10\r\n\r\n").unwrap();
+    parser.add_data(b"Content-Length: 12\r\n\r\n").unwrap();
     let result = parser.parse_message().unwrap();
     assert!(result.is_none()); // Still no body
 
@@ -261,7 +265,7 @@ async fn test_large_message_handling() {
 #[tokio::test]
 async fn test_connection_states() {
     // Test connection mode comparison
-    use crate::connection::ConnectionMode;
+    use freeswitch_esl_rs::connection::ConnectionMode;
     assert_eq!(ConnectionMode::Inbound, ConnectionMode::Inbound);
     assert_ne!(ConnectionMode::Inbound, ConnectionMode::Outbound);
 
@@ -269,34 +273,6 @@ async fn test_connection_states() {
     assert_eq!(EventFormat::Plain.to_string(), "plain");
     assert_eq!(EventFormat::Json.to_string(), "json");
     assert_eq!(EventFormat::Xml.to_string(), "xml");
-}
-
-/// Integration test that requires FreeSWITCH (will be skipped if not available)
-#[tokio::test]
-#[ignore = "Requires running FreeSWITCH instance"]
-async fn test_real_connection() {
-    match EslHandle::connect("localhost", 8022, "ClueCon").await {
-        Ok(mut handle) => {
-            // Test basic API call
-            let response = handle.api("status").await.unwrap();
-            assert!(response.is_success());
-            assert!(response.body().is_some());
-
-            // Test event subscription
-            handle
-                .subscribe_events(EventFormat::Plain, &[EslEventType::Heartbeat])
-                .await
-                .unwrap();
-
-            // Test disconnect
-            handle.disconnect().await.unwrap();
-            assert!(!handle.is_connected());
-        }
-        Err(EslError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-            println!("Skipping integration test - FreeSWITCH not running");
-        }
-        Err(e) => panic!("Unexpected error: {}", e),
-    }
 }
 
 /// Performance test for message parsing

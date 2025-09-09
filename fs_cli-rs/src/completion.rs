@@ -108,7 +108,6 @@ impl FsCliCompleter {
         ]
     }
 
-
     /// Get command completions for a given input
     fn complete_command(&self, line: &str, pos: usize) -> rustyline::Result<(usize, Vec<Pair>)> {
         let commands = Self::get_fs_commands();
@@ -116,14 +115,14 @@ impl FsCliCompleter {
         // Find the current word being completed
         let line_bytes = line.as_bytes();
         let mut start = pos;
-        
+
         // Find start of current word (go back to last space or start)
         while start > 0 && line_bytes[start - 1] != b' ' {
             start -= 1;
         }
-        
+
         let current_word = &line[start..pos];
-        
+
         // Find matching commands
         let matches: Vec<Pair> = commands
             .into_iter()
@@ -151,7 +150,7 @@ impl FsCliCompleter {
                 } else {
                     remaining
                 };
-                
+
                 Pair {
                     display: next_word.to_string(),
                     replacement: next_word[current_word.len()..].to_string(),
@@ -210,7 +209,7 @@ impl Highlighter for FsCliCompleter {
         if default {
             Borrowed(prompt)
         } else {
-            Borrowed(prompt)
+            Owned(format!("\x1b[1m{}\x1b[0m", prompt)) // Bold prompt when not default
         }
     }
 

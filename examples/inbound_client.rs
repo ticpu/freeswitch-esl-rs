@@ -4,16 +4,16 @@
 //!
 //! Usage: cargo run --example inbound_client
 
-use freeswitch_esl_rs::{EslError, EslHandle};
+use freeswitch_esl_rs::{EslError, EslHandle, constants::DEFAULT_ESL_PORT};
 use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    tracing_subscriber::init();
+    tracing_subscriber::fmt::init();
 
     // Connect to FreeSWITCH
-    let mut handle = match EslHandle::connect("localhost", 8022, "ClueCon").await {
+    let mut handle = match EslHandle::connect("localhost", DEFAULT_ESL_PORT, "ClueCon").await {
         Ok(handle) => {
             info!("Successfully connected to FreeSWITCH");
             handle
