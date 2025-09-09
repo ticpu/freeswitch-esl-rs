@@ -4,13 +4,13 @@ Interactive FreeSWITCH CLI client written in Rust using the `freeswitch-esl-rs` 
 
 ## Features
 
-- 🚀 **Async/Modern**: Built with Tokio for high performance
-- 📝 **Readline Support**: Full command history, editing, and tab completion
-- 🎨 **Colorized Output**: Beautiful colored output (can be disabled)
-- ⚡ **Tab Completion**: Smart completion for FreeSWITCH commands
-- 📚 **Command History**: Persistent history with search
-- 🔧 **Flexible Connection**: Support for custom host/port/password/user
-- 📊 **Real-time Logging**: Optional debug logging support
+- **Async/Modern**: Built with Tokio for high performance
+- **Readline Support**: Full command history, editing, and tab completion
+- **Colorized Output**: Beautiful colored output (can be disabled)
+- **Tab Completion**: Smart completion for FreeSWITCH commands
+- **Command History**: Persistent history with search
+- **Flexible Connection**: Support for custom host/port/password/user
+- **Real-time Logging**: Optional debug logging support
 
 ## Installation
 
@@ -29,7 +29,7 @@ cargo build --release
 ./target/release/fs_cli
 
 # Connect to remote FreeSWITCH
-./target/release/fs_cli -H 192.168.1.100 -P 8022 -p mypassword
+./target/release/fs_cli -H 192.168.1.100 -P 8021 -p mypassword
 
 # Connect with username authentication
 ./target/release/fs_cli -H localhost -u admin -p secret
@@ -38,38 +38,38 @@ cargo build --release
 ### Command Line Options
 
 ```
-fs_cli-rs 0.1.0
-Interactive FreeSWITCH CLI client
+Interactive FreeSWITCH CLI client using ESL
 
-USAGE:
-    fs_cli [OPTIONS]
+Usage: fs_cli [OPTIONS]
 
-OPTIONS:
-    -H, --host <HOST>              FreeSWITCH hostname or IP address [default: localhost]
-    -P, --port <PORT>              FreeSWITCH ESL port [default: 8022]
-    -p, --password <PASSWORD>      ESL password [default: ClueCon]
-    -u, --user <USER>              Username for authentication (optional)
-    -d, --debug                    Enable debug logging
-        --no-color                 Disable colored output
-    -x <EXECUTE>                   Execute single command and exit
-        --history-file <HISTORY_FILE>  History file path
-    -t, --timeout <TIMEOUT>        Connection timeout in seconds [default: 10]
-        --events                   Subscribe to events on startup
-    -h, --help                     Print help information
-    -V, --version                  Print version information
+Options:
+  -H, --host <HOST>                  FreeSWITCH hostname or IP address [default: localhost]
+  -P, --port <PORT>                  FreeSWITCH ESL port [default: 8021]
+  -p, --password <PASSWORD>          ESL password [default: ClueCon]
+  -u, --user <USER>                  Username for authentication (optional)
+  -d, --debug <DEBUG>                ESL debug level (0-7, higher = more verbose) [default: 0]
+      --color <COLOR>                Color mode for output (never, tag, line) [default: line]
+  -x <EXECUTE>                       Execute single command and exit
+      --history-file <HISTORY_FILE>  History file path
+  -t, --timeout <TIMEOUT>            Connection timeout in seconds [default: 10]
+      --events                       Subscribe to events on startup
+  -l, --log-level <LOG_LEVEL>        Log level for FreeSWITCH logs [default: debug]
+      --quiet                        Disable automatic log subscription on startup
+  -h, --help                         Print help
+  -V, --version                      Print version
 ```
 
 ### Examples
 
 ```bash
 # Execute single command and exit (fs_cli compatibility)
-./target/release/fs_cli -P 8022 -x "sofia status"
+./target/release/fs_cli -P 8021 -x "sofia status"
 
 # Execute single command with custom password
 ./target/release/fs_cli -p mypassword -x "status"
 
-# Connect with debug logging
-./target/release/fs_cli -d
+# Connect with debug logging (level 5)
+./target/release/fs_cli -d 5
 
 # Connect and subscribe to events
 ./target/release/fs_cli --events
@@ -78,7 +78,7 @@ OPTIONS:
 ./target/release/fs_cli --history-file /tmp/my_fs_history
 
 # Disable colors for scripting
-./target/release/fs_cli --no-color -x "show channels"
+./target/release/fs_cli --color never -x "show channels"
 ```
 
 ## Interactive Usage
@@ -153,19 +153,6 @@ Some commands have enhanced formatting:
 - **version** - Clean version output
 - **uptime** - Extract just uptime info from status
 
-## Logging
-
-Enable debug logging to see detailed ESL protocol information:
-
-```bash
-./target/release/fs_cli -d
-```
-
-This will show:
-- Connection establishment
-- Command execution timing
-- ESL protocol messages
-- Error details
 
 ## History
 
@@ -176,23 +163,6 @@ The history includes:
 - Timestamps
 - Deduplication of consecutive identical commands
 
-## Configuration
-
-### FreeSWITCH ESL Configuration
-
-Ensure your FreeSWITCH has ESL enabled in `autoload_configs/event_socket.conf.xml`:
-
-```xml
-<configuration name="event_socket.conf" description="Socket Client">
-  <settings>
-    <param name="nat-map" value="false"/>
-    <param name="listen-ip" value="127.0.0.1"/>
-    <param name="listen-port" value="8022"/>
-    <param name="password" value="ClueCon"/>
-    <param name="apply-inbound-acl" value="loopback.auto"/>
-  </settings>
-</configuration>
-```
 
 ## Development
 

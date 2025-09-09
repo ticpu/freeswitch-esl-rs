@@ -1,8 +1,8 @@
 [package]
 name = "fs_cli-rs"
-version = "0.1.0"
+version = "0.1.3"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "Interactive FreeSWITCH CLI client using ESL"
 license = "MIT OR Apache-2.0"
 

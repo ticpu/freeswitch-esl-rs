@@ -21,15 +21,6 @@ Thumbs.db
 *.tmp
 /tmp/
 
-# Documentation builds
-/target/doc/
-
 # Backup files
 *.bak
 *.orig
-
-# FreeSWITCH specific
-*.wav
-*.mp3
-*.gsm
-/recordings/

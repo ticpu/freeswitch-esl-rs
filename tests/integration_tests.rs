@@ -4,10 +4,10 @@
 //! Unit tests that don't require FreeSWITCH are included in individual modules.
 
 use freeswitch_esl_rs::{
-    EslError, EslEventType, EventFormat,
     buffer::EslBuffer,
     command::{AppCommand, EslCommand},
     protocol::{EslParser, MessageType},
+    EslError, EslEventType, EventFormat,
 };
 
 /// Test basic buffer operations

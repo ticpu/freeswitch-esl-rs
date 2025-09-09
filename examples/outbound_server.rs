@@ -8,7 +8,7 @@
 //! To test this, configure FreeSWITCH with:
 //! <action application="socket" data="localhost:8040 async full"/>
 
-use freeswitch_esl_rs::{EslError, EslEventType, EslHandle, EventFormat, command::AppCommand};
+use freeswitch_esl_rs::{command::AppCommand, EslError, EslEventType, EslHandle, EventFormat};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info};
 

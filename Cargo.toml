@@ -1,10 +1,10 @@
 [package]
 name = "freeswitch-esl-rs"
-version = "0.1.0"
-edition = "2024"
-authors = ["jerome <jerome@example.com>"]
+version = "0.1.3"
+edition = "2021"
+authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "FreeSWITCH Event Socket Library (ESL) client for Rust"
-license = "MIT OR Apache-2.0"
+license = "MPL-2.0"
 repository = "https://github.com/yourusername/freeswitch-esl-rs"
 keywords = ["freeswitch", "esl", "voip", "telephony"]
 categories = ["network-programming", "api-bindings"]
@@ -28,7 +28,7 @@ name = "inbound_client"
 path = "examples/inbound_client.rs"
 
 [[example]]
-name = "outbound_server" 
+name = "outbound_server"
 path = "examples/outbound_server.rs"
 
 [[example]]

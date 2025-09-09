@@ -5,7 +5,6 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use colored::*;
 use freeswitch_esl_rs::{EslEventType, EslHandle, EventFormat};
 use rustyline::history::FileHistory;
 use rustyline::{Cmd, Editor, ExternalPrinter, KeyCode, KeyEvent, Modifiers};
@@ -20,7 +19,7 @@ mod completion;
 mod esl_debug;
 mod log_display;
 
-use commands::{CommandProcessor, LogLevel, ColorMode};
+use commands::{ColorMode, CommandProcessor, LogLevel};
 use completion::FsCliCompleter;
 use esl_debug::EslDebugLevel;
 use log_display::LogDisplay;
@@ -64,7 +63,7 @@ fn parse_function_key(input: &str) -> Option<&'static str> {
     }
 }
 
-/// Set up function key bindings for readline  
+/// Set up function key bindings for readline
 fn setup_function_key_bindings(rl: &mut Editor<FsCliCompleter, FileHistory>) -> Result<()> {
     let fnkeys = get_default_fnkeys();
 
@@ -114,9 +113,17 @@ struct Args {
     #[arg(long)]
     history_file: Option<PathBuf>,
 
-    /// Connection timeout in seconds
-    #[arg(short, long, default_value_t = 10)]
+    /// Connection timeout in milliseconds
+    #[arg(short = 'T', long = "connect-timeout", default_value_t = 2000)]
     timeout: u64,
+
+    /// Retry connection on failure
+    #[arg(short, long)]
+    retry: bool,
+
+    /// Reconnect on connection loss
+    #[arg(short = 'R', long)]
+    reconnect: bool,
 
     /// Subscribe to events on startup
     #[arg(long)]
@@ -138,10 +145,10 @@ async fn main() -> Result<()> {
     // Initialize logging
     setup_logging(args.debug)?;
 
-    // Connect to FreeSWITCH
+    // Connect to FreeSWITCH with optional retry
     args.debug
         .debug_print(EslDebugLevel::Debug, "About to connect to FreeSWITCH");
-    let mut handle = match connect_to_freeswitch(&args).await {
+    let mut handle = match connect_to_freeswitch_with_retry(&args).await {
         Ok(handle) => {
             args.debug
                 .debug_print(EslDebugLevel::Debug, "Successfully connected to FreeSWITCH");
@@ -161,7 +168,7 @@ async fn main() -> Result<()> {
                         );
                     }
                     std::io::ErrorKind::TimedOut => {
-                        eprintln!("Connection timed out after {} seconds", args.timeout);
+                        eprintln!("Connection timed out after {} ms", args.timeout);
                     }
                     _ => {
                         eprintln!("Connection error: {}", io_err);
@@ -224,14 +231,14 @@ async fn connect_to_freeswitch(args: &Args) -> Result<EslHandle> {
     let connect_result = if let Some(ref user) = args.user {
         info!("Using user authentication: {}", user);
         timeout(
-            Duration::from_secs(args.timeout),
+            Duration::from_millis(args.timeout),
             EslHandle::connect_with_user(&args.host, args.port, user, &args.password),
         )
         .await
     } else {
         info!("Using password authentication");
         timeout(
-            Duration::from_secs(args.timeout),
+            Duration::from_millis(args.timeout),
             EslHandle::connect(&args.host, args.port, &args.password),
         )
         .await
@@ -241,13 +248,69 @@ async fn connect_to_freeswitch(args: &Args) -> Result<EslHandle> {
         .context("Connection timed out")?
         .context("Failed to connect to FreeSWITCH")?;
 
-    if args.color != ColorMode::Never {
-        println!("{}", "✓ Connected successfully".green());
-    } else {
-        println!("Connected successfully");
+    Ok(handle)
+}
+
+/// Connect to FreeSWITCH with optional retry logic
+async fn connect_to_freeswitch_with_retry(args: &Args) -> Result<EslHandle> {
+    if !args.retry {
+        return connect_to_freeswitch(args).await;
     }
 
-    Ok(handle)
+    info!("Retry mode enabled - will retry every {} ms", args.timeout);
+
+    loop {
+        match connect_to_freeswitch(args).await {
+            Ok(handle) => return Ok(handle),
+            Err(e) => {
+                warn!("Connection attempt failed: {}", e);
+                info!("Retrying in {} ms...", args.timeout);
+                tokio::time::sleep(Duration::from_millis(args.timeout)).await;
+            }
+        }
+    }
+}
+
+/// Check if error indicates connection loss
+fn is_connection_error(error: &anyhow::Error) -> bool {
+    if let Some(io_err) = error.downcast_ref::<std::io::Error>() {
+        matches!(
+            io_err.kind(),
+            std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::TimedOut
+                | std::io::ErrorKind::UnexpectedEof
+        )
+    } else {
+        false
+    }
+}
+
+/// Attempt to reconnect if connection is lost and reconnect is enabled
+async fn handle_reconnection(handle_arc: &Arc<Mutex<EslHandle>>, args: &Args) -> Result<()> {
+    if !args.reconnect {
+        return Err(anyhow::anyhow!("Connection lost and reconnect disabled"));
+    }
+
+    warn!("Connection lost, attempting to reconnect...");
+
+    loop {
+        match connect_to_freeswitch(args).await {
+            Ok(new_handle) => {
+                info!("Reconnected successfully");
+                let mut handle = handle_arc.lock().await;
+                *handle = new_handle;
+                return Ok(());
+            }
+            Err(e) => {
+                warn!("Reconnection attempt failed: {}", e);
+                info!("Retrying reconnection in {} ms...", args.timeout);
+                tokio::time::sleep(Duration::from_millis(args.timeout)).await;
+            }
+        }
+    }
 }
 
 /// Subscribe to events for monitoring
@@ -443,15 +506,29 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
         let handle_clone = handle_arc.clone();
         let color_mode = args.color;
         let printer_clone = external_printer.clone();
+        let args_clone = args.clone();
         Some(tokio::spawn(async move {
             loop {
                 {
                     let mut h = handle_clone.lock().await;
-                    if let Err(e) =
-                        LogDisplay::check_and_display_logs(&mut h, color_mode, printer_clone.clone())
-                            .await
+                    if let Err(e) = LogDisplay::check_and_display_logs(
+                        &mut h,
+                        color_mode,
+                        printer_clone.clone(),
+                    )
+                    .await
                     {
-                        warn!("Error in background log monitoring: {}", e);
+                        if is_connection_error(&e) && args_clone.reconnect {
+                            warn!("Connection lost in log monitoring, attempting reconnect...");
+                            drop(h); // Release the lock before reconnection
+                            if let Err(reconnect_err) =
+                                handle_reconnection(&handle_clone, &args_clone).await
+                            {
+                                warn!("Failed to reconnect in log monitoring: {}", reconnect_err);
+                            }
+                        } else {
+                            warn!("Error in background log monitoring: {}", e);
+                        }
                     }
                 }
                 // Small delay to prevent excessive CPU usage
@@ -479,7 +556,20 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
                         _ => {
                             // Let the command processor handle other /commands
                             if let Err(e) = processor.execute_command(&mut handle, &command).await {
-                                processor.handle_error(e).await;
+                                if is_connection_error(&e) {
+                                    drop(handle); // Release the lock before reconnection
+                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, args).await {
+                                        processor.handle_error(reconnect_err).await;
+                                        continue;
+                                    }
+                                    // Retry the command after successful reconnection
+                                    let mut handle = handle_arc.lock().await;
+                                    if let Err(retry_err) = processor.execute_command(&mut handle, &command).await {
+                                        processor.handle_error(retry_err).await;
+                                    }
+                                } else {
+                                    processor.handle_error(e).await;
+                                }
                             }
                             continue;
                         }
@@ -509,14 +599,40 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
                         // Check for function key shortcuts (F1-F12) typed manually
                         if let Some(fn_command) = parse_function_key(&command) {
                             if let Err(e) = processor.execute_command(&mut handle, fn_command).await {
-                                processor.handle_error(e).await;
+                                if is_connection_error(&e) {
+                                    drop(handle); // Release the lock before reconnection
+                                    if let Err(reconnect_err) = handle_reconnection(&handle_arc, args).await {
+                                        processor.handle_error(reconnect_err).await;
+                                        continue;
+                                    }
+                                    // Retry the command after successful reconnection
+                                    let mut handle = handle_arc.lock().await;
+                                    if let Err(retry_err) = processor.execute_command(&mut handle, fn_command).await {
+                                        processor.handle_error(retry_err).await;
+                                    }
+                                } else {
+                                    processor.handle_error(e).await;
+                                }
                             }
                             continue;
                         }
 
                         // Execute FreeSWITCH command and show output immediately
                         if let Err(e) = processor.execute_command(&mut handle, &command).await {
-                            processor.handle_error(e).await;
+                            if is_connection_error(&e) {
+                                drop(handle); // Release the lock before reconnection
+                                if let Err(reconnect_err) = handle_reconnection(&handle_arc, args).await {
+                                    processor.handle_error(reconnect_err).await;
+                                    continue;
+                                }
+                                // Retry the command after successful reconnection
+                                let mut handle = handle_arc.lock().await;
+                                if let Err(retry_err) = processor.execute_command(&mut handle, &command).await {
+                                    processor.handle_error(retry_err).await;
+                                }
+                            } else {
+                                processor.handle_error(e).await;
+                            }
                         }
                     }
                 }
@@ -540,10 +656,23 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
 
     // Clean disconnect
     info!("Disconnecting from FreeSWITCH...");
-    let mut handle = Arc::try_unwrap(handle_arc)
-        .map_err(|_| anyhow::anyhow!("Failed to unwrap handle"))?
-        .into_inner();
-    handle.disconnect().await?;
+
+    // Try to unwrap the Arc, but handle the case where other references exist
+    match Arc::try_unwrap(handle_arc) {
+        Ok(mutex) => {
+            let mut handle = mutex.into_inner();
+            if let Err(e) = handle.disconnect().await {
+                warn!("Error during clean disconnect: {}", e);
+            }
+        }
+        Err(arc) => {
+            // If we can't unwrap, just disconnect through the Arc
+            let mut handle = arc.lock().await;
+            if let Err(e) = handle.disconnect().await {
+                warn!("Error during disconnect: {}", e);
+            }
+        }
+    }
 
     Ok(())
 }

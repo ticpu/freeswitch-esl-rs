@@ -300,7 +300,22 @@ impl EslParser {
         Ok(event)
     }
 
-    /// Parse XML event  
+    /// Extract XML attribute from a line
+    fn extract_xml_attribute(line: &str) -> Option<(String, String)> {
+        let eq_pos = line.find('=')?;
+        let start = line.find('"')?;
+        let end = line.rfind('"')?;
+
+        if start != end {
+            let key = line[1..eq_pos].trim();
+            let value = &line[start + 1..end];
+            Some((key.to_string(), value.to_string()))
+        } else {
+            None
+        }
+    }
+
+    /// Parse XML event
     fn parse_xml_event(&self, message: EslMessage) -> EslResult<EslEvent> {
         let body = message
             .body
@@ -316,14 +331,8 @@ impl EslParser {
         for line in lines {
             let line = line.trim();
             if line.starts_with('<') && line.ends_with('>') && line.contains("=") {
-                // Extract attribute-like data
-                if let Some(eq_pos) = line.find('=')
-                    && let Some(start) = line.find('"')
-                    && let Some(end) = line.rfind('"')
-                {
-                    let key = line[1..eq_pos].trim();
-                    let value = &line[start + 1..end];
-                    event.headers.insert(key.to_string(), value.to_string());
+                if let Some((key, value)) = Self::extract_xml_attribute(line) {
+                    event.headers.insert(key, value);
                 }
             }
         }

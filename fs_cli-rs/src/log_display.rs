@@ -1,5 +1,6 @@
 //! Log display functionality for fs_cli-rs
 
+use crate::commands::ColorMode;
 use anyhow::Result;
 use colored::*;
 use freeswitch_esl_rs::{EslEvent, EslHandle};
@@ -8,7 +9,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use tracing::debug;
-use crate::commands::ColorMode;
 
 /// Log display helper functions
 pub struct LogDisplay;
@@ -101,15 +101,15 @@ impl LogDisplay {
     /// Apply color based on log level
     fn colorize_by_level(text: &str, log_level: u32) -> ColoredString {
         match log_level {
-            0 => text.white().bold(), // CONSOLE
-            1 => text.red().bold(),   // ALERT
-            2 => text.red().bold(),   // CRIT
-            3 => text.red(),          // ERR
-            4 => text.yellow(),       // WARNING
-            5 => text.cyan(),         // NOTICE
-            6 => text.green(),        // INFO - green like real fs_cli
-            7 => text.bright_black(), // DEBUG - dim like real fs_cli
-            _ => text.bright_black(), // DEBUG1-10
+            0 => text.white().bold(),    // CONSOLE
+            1 => text.red().bold(),      // ALERT
+            2 => text.red().bold(),      // CRIT
+            3 => text.red(),             // ERR
+            4 => text.yellow(),          // WARNING
+            5 => text.cyan(),            // NOTICE
+            6 => text.green(),           // INFO - green like real fs_cli
+            7 => text.yellow().dimmed(), // DEBUG - dark yellow
+            _ => text.yellow().dimmed(), // DEBUG1-10
         }
     }
 

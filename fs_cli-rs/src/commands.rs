@@ -25,7 +25,10 @@ impl FromStr for ColorMode {
             "never" => Ok(ColorMode::Never),
             "tag" => Ok(ColorMode::Tag),
             "line" => Ok(ColorMode::Line),
-            _ => Err(format!("Invalid color mode: {}. Valid options: never, tag, line", s)),
+            _ => Err(format!(
+                "Invalid color mode: {}. Valid options: never, tag, line",
+                s
+            )),
         }
     }
 }
@@ -414,7 +417,7 @@ impl CommandProcessor {
             "complete" => "show complete",
             _ => {
                 return Ok(Some(format!("Unknown show command: {}\n\
-                Available: channels, calls, registrations, modules, interfaces, api, application, codec, file, timer, tasks", 
+                Available: channels, calls, registrations, modules, interfaces, api, application, codec, file, timer, tasks",
                 subcommand)));
             }
         };
@@ -459,7 +462,7 @@ Control Commands:
 
 Function Key Shortcuts:
   F1  = help                F7  = /log console
-  F2  = status              F8  = /log debug  
+  F2  = status              F8  = /log debug
   F3  = show channels       F9  = sofia status profile internal
   F4  = show calls          F10 = fsctl pause
   F5  = sofia status        F11 = fsctl resume
@@ -468,7 +471,7 @@ Function Key Shortcuts:
 Built-in Commands:
   /help                     - Show this help
   /quit, /exit, /bye        - Exit the CLI
-  history                   - Show command history  
+  history                   - Show command history
   clear                     - Clear screen
 
 You can execute any FreeSWITCH API command directly.

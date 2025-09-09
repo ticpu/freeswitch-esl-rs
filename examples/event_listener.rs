@@ -5,7 +5,7 @@
 //! Usage: cargo run --example event_listener
 
 use freeswitch_esl_rs::{
-    EslError, EslEventType, EslHandle, EventFormat, constants::DEFAULT_ESL_PORT,
+    constants::DEFAULT_ESL_PORT, EslError, EslEventType, EslHandle, EventFormat,
 };
 use std::collections::HashMap;
 use tracing::{debug, error, info};
