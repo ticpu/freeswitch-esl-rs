@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "FreeSWITCH Event Socket Library (ESL) client for Rust"
 license = "MPL-2.0"
-repository = "https://github.com/yourusername/freeswitch-esl-rs"
+repository = "https://github.com/ticpu/freeswitch-esl-rs"
 keywords = ["freeswitch", "esl", "voip", "telephony"]
 categories = ["network-programming", "api-bindings"]
 
