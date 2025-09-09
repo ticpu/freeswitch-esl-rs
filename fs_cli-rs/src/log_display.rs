@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use tracing::debug;
+use crate::commands::ColorMode;
 
 /// Log display helper functions
 pub struct LogDisplay;
@@ -16,7 +17,7 @@ impl LogDisplay {
     /// Check for pending log events and display them using ExternalPrinter
     pub async fn check_and_display_logs(
         handle: &mut EslHandle,
-        no_color: bool,
+        color_mode: ColorMode,
         printer: Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
     ) -> Result<()> {
         // First, check for immediately available events
@@ -24,7 +25,7 @@ impl LogDisplay {
             debug!("Received event with headers: {:?}", event.headers);
             if Self::is_log_event(&event) {
                 debug!("Found log event!");
-                Self::display_log_event(&event, no_color, &printer).await;
+                Self::display_log_event(&event, color_mode, &printer).await;
             } else {
                 debug!("Received non-log event: {:?}", event.event_type);
                 if let Some(ct) = event.headers.get("Content-Type") {
@@ -38,7 +39,7 @@ impl LogDisplay {
             debug!("Received delayed event with headers: {:?}", event.headers);
             if Self::is_log_event(&event) {
                 debug!("Found delayed log event!");
-                Self::display_log_event(&event, no_color, &printer).await;
+                Self::display_log_event(&event, color_mode, &printer).await;
             } else {
                 debug!("Received delayed non-log event: {:?}", event.event_type);
                 if let Some(ct) = event.headers.get("Content-Type") {
@@ -61,7 +62,7 @@ impl LogDisplay {
     /// Display a log event with appropriate formatting and colors using ExternalPrinter
     async fn display_log_event(
         event: &EslEvent,
-        no_color: bool,
+        color_mode: ColorMode,
         printer: &Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
     ) {
         // Extract log level
@@ -78,10 +79,10 @@ impl LogDisplay {
         }
 
         // Format and display the log message
-        let formatted_message = if no_color {
-            message.trim().to_string()
-        } else {
-            Self::format_colored_log(message.trim(), log_level)
+        let formatted_message = match color_mode {
+            ColorMode::Never => message.trim().to_string(),
+            ColorMode::Tag => Self::format_colored_log_tag_only(message.trim(), log_level),
+            ColorMode::Line => Self::format_colored_log_full_line(message.trim(), log_level),
         };
 
         // Use ExternalPrinter if available, otherwise fallback to println!
@@ -112,8 +113,8 @@ impl LogDisplay {
         }
     }
 
-    /// Format colored log message preserving colors
-    fn format_colored_log(message: &str, log_level: u32) -> String {
+    /// Format colored log message with only tag colorized
+    fn format_colored_log_tag_only(message: &str, log_level: u32) -> String {
         // Parse the message to find the log level tag and colorize it specifically
         if let Some(level_start) = message.find('[') {
             if let Some(level_end) = message[level_start..].find(']') {
@@ -128,7 +129,12 @@ impl LogDisplay {
             }
         }
 
-        // Fallback: color the entire message
+        // Fallback: no coloring if tag not found
+        message.to_string()
+    }
+
+    /// Format colored log message with entire line colorized
+    fn format_colored_log_full_line(message: &str, log_level: u32) -> String {
         let colored_message = Self::colorize_by_level(message, log_level);
         format!("{}", colored_message)
     }

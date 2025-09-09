@@ -20,7 +20,7 @@ mod completion;
 mod esl_debug;
 mod log_display;
 
-use commands::{CommandProcessor, LogLevel};
+use commands::{CommandProcessor, LogLevel, ColorMode};
 use completion::FsCliCompleter;
 use esl_debug::EslDebugLevel;
 use log_display::LogDisplay;
@@ -102,9 +102,9 @@ struct Args {
     #[arg(short, long, default_value_t = EslDebugLevel::None)]
     debug: EslDebugLevel,
 
-    /// Disable colored output
-    #[arg(long)]
-    no_color: bool,
+    /// Color mode for output (never, tag, line)
+    #[arg(long, default_value = "line")]
+    color: ColorMode,
 
     /// Execute single command and exit
     #[arg(short = 'x')]
@@ -241,7 +241,7 @@ async fn connect_to_freeswitch(args: &Args) -> Result<EslHandle> {
         .context("Connection timed out")?
         .context("Failed to connect to FreeSWITCH")?;
 
-    if !args.no_color {
+    if args.color != ColorMode::Never {
         println!("{}", "✓ Connected successfully".green());
     } else {
         println!("Connected successfully");
@@ -299,7 +299,7 @@ async fn enable_logging(handle: &mut EslHandle, log_level: LogLevel) -> Result<(
 
 /// Execute a single command and exit
 async fn execute_single_command(handle: &mut EslHandle, command: &str, args: &Args) -> Result<()> {
-    let processor = CommandProcessor::new(args.no_color, args.debug);
+    let processor = CommandProcessor::new(args.color, args.debug);
     processor.execute_command(handle, command).await?;
     Ok(())
 }
@@ -410,7 +410,7 @@ fn run_readline_loop(
 
 /// Run interactive CLI mode
 async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
-    let mut processor = CommandProcessor::new(args.no_color, args.debug);
+    let mut processor = CommandProcessor::new(args.color, args.debug);
 
     // Create channels for communication between rustyline thread and main async thread
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
@@ -441,14 +441,14 @@ async fn run_interactive_mode(handle: EslHandle, args: &Args) -> Result<()> {
     let handle_arc = Arc::new(Mutex::new(handle));
     let log_handle = if !args.quiet {
         let handle_clone = handle_arc.clone();
-        let no_color = args.no_color;
+        let color_mode = args.color;
         let printer_clone = external_printer.clone();
         Some(tokio::spawn(async move {
             loop {
                 {
                     let mut h = handle_clone.lock().await;
                     if let Err(e) =
-                        LogDisplay::check_and_display_logs(&mut h, no_color, printer_clone.clone())
+                        LogDisplay::check_and_display_logs(&mut h, color_mode, printer_clone.clone())
                             .await
                     {
                         warn!("Error in background log monitoring: {}", e);

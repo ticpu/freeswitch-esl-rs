@@ -9,6 +9,37 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Color mode for log display
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColorMode {
+    Never,
+    Tag,
+    Line,
+}
+
+impl FromStr for ColorMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, String> {
+        match s.to_lowercase().as_str() {
+            "never" => Ok(ColorMode::Never),
+            "tag" => Ok(ColorMode::Tag),
+            "line" => Ok(ColorMode::Line),
+            _ => Err(format!("Invalid color mode: {}. Valid options: never, tag, line", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for ColorMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ColorMode::Never => write!(f, "never"),
+            ColorMode::Tag => write!(f, "tag"),
+            ColorMode::Line => write!(f, "line"),
+        }
+    }
+}
+
 /// FreeSWITCH log levels
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LogLevel {
@@ -125,19 +156,24 @@ impl LogLevel {
 
 /// Command processor for FreeSWITCH CLI commands
 pub struct CommandProcessor {
-    no_color: bool,
+    color_mode: ColorMode,
     debug_level: EslDebugLevel,
     printer: Option<Arc<Mutex<dyn ExternalPrinter + Send>>>,
 }
 
 impl CommandProcessor {
     /// Create new command processor
-    pub fn new(no_color: bool, debug_level: EslDebugLevel) -> Self {
+    pub fn new(color_mode: ColorMode, debug_level: EslDebugLevel) -> Self {
         Self {
-            no_color,
+            color_mode,
             debug_level,
             printer: None,
         }
+    }
+
+    /// Check if colors should be disabled
+    fn no_color(&self) -> bool {
+        self.color_mode == ColorMode::Never
     }
 
     /// Set external printer for coordinated output
@@ -175,7 +211,7 @@ impl CommandProcessor {
 
     /// Handle command execution errors with proper formatting
     pub async fn handle_error(&self, error: Error) {
-        let error_msg = if !self.no_color {
+        let error_msg = if !self.no_color() {
             format!("{}: {}", "Error".red().bold(), error)
         } else {
             format!("Error: {}", error)
@@ -201,7 +237,7 @@ impl CommandProcessor {
             Ok(response) => {
                 if !response.is_success() {
                     if let Some(reply) = response.reply_text() {
-                        let error_msg = if !self.no_color {
+                        let error_msg = if !self.no_color() {
                             format!("{}: {}", "API Error".red().bold(), reply)
                         } else {
                             format!("API Error: {}", reply)
@@ -439,7 +475,7 @@ You can execute any FreeSWITCH API command directly.
 Use Tab for command completion and Up/Down arrows for history.
 "#;
 
-        let formatted_help = if !self.no_color {
+        let formatted_help = if !self.no_color() {
             format!("{}", help_text.cyan())
         } else {
             help_text.to_string()
