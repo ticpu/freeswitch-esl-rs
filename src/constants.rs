@@ -6,14 +6,20 @@ pub const DEFAULT_ESL_PORT: u16 = 8021;
 /// Default password for ESL authentication
 pub const DEFAULT_PASSWORD: &str = "ClueCon";
 
-/// Socket buffer size for reading from TCP stream (64KB)
+/// Socket buffer size for reading from TCP stream (64KB) - standard TCP receive window
 pub const SOCKET_BUF_SIZE: usize = 65536;
 
-/// Buffer chunk size for packet processing (3.2MB)
-pub const BUF_CHUNK: usize = 65536 * 50;
+/// Buffer allocation size (64KB) - used for both initial allocation and growth increments
+/// Handles 99% of ESL messages without reallocation
+pub const BUF_CHUNK: usize = 64 * 1024;
 
-/// Initial buffer size (6.5MB)  
-pub const BUF_START: usize = 65536 * 100;
+/// Maximum single message size (8MB) - validates Content-Length header
+/// No legitimate ESL message should exceed this (largest is sofia status ~1-2MB)
+pub const MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
+
+/// Maximum total buffer size (16MB) - safety limit to prevent runaway memory
+/// Should hold 2 max messages + overhead. Indicates a bug if exceeded.
+pub const MAX_BUFFER_SIZE: usize = 16 * 1024 * 1024;
 
 /// Maximum reply size for command responses (1KB)
 pub const MAX_REPLY_SIZE: usize = 1024;

@@ -147,6 +147,9 @@ impl EslParser {
                 let terminator = HEADER_TERMINATOR.as_bytes();
 
                 if let Some(headers_data) = self.buffer.extract_until_pattern(terminator) {
+                    // Compact buffer to free consumed header data
+                    self.buffer.compact();
+
                     // Parse headers
                     let headers_str = String::from_utf8(headers_data)
                         .map_err(|_| EslError::protocol_error("Invalid UTF-8 in headers"))?;
@@ -169,6 +172,14 @@ impl EslParser {
                                 .map_err(|_| EslError::InvalidHeader {
                                     header: format!("Content-Length: {}", length_str),
                                 })?;
+
+                        // Validate message size to prevent protocol errors or memory exhaustion
+                        if length > MAX_MESSAGE_SIZE {
+                            return Err(EslError::protocol_error(&format!(
+                                "Message too large: Content-Length {} exceeds limit {}. Protocol error or corrupted data.",
+                                length, MAX_MESSAGE_SIZE
+                            )));
+                        }
 
                         if length > 0 {
                             // Transition to waiting for body
@@ -202,6 +213,9 @@ impl EslParser {
                 body_length,
             } => {
                 if let Some(body_data) = self.buffer.extract_bytes(*body_length) {
+                    // Compact buffer to free consumed body data
+                    self.buffer.compact();
+
                     let body_str = String::from_utf8(body_data)
                         .map_err(|_| EslError::protocol_error("Invalid UTF-8 in body"))?;
 

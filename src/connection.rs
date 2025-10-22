@@ -241,8 +241,27 @@ impl EslHandle {
             .await
             .map_err(EslError::Io)?;
 
-        // Wait for response
-        let message = self.recv_message().await?;
+        // Wait for response, filtering out log events
+        let message = loop {
+            let message = self.recv_message().await?;
+            match message.message_type {
+                MessageType::ApiResponse | MessageType::CommandReply => break message,
+                MessageType::Event => {
+                    // This is a log event or other event, ignore it and continue waiting
+                    debug!("Ignoring event message while waiting for command response: {:?}", message.message_type);
+                    continue;
+                }
+                MessageType::Disconnect => {
+                    warn!("Received disconnect notice while waiting for command response");
+                    self.connected = false;
+                    return Err(EslError::ConnectionClosed);
+                }
+                _ => {
+                    debug!("Ignoring unexpected message type while waiting for command response: {:?}", message.message_type);
+                    continue;
+                }
+            }
+        };
         let response = message.into_response();
 
         debug!("Received response: success={}", response.is_success());

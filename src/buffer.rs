@@ -16,7 +16,7 @@ impl EslBuffer {
     /// Create new buffer with default capacity
     pub fn new() -> Self {
         Self {
-            buffer: BytesMut::with_capacity(BUF_START),
+            buffer: BytesMut::with_capacity(BUF_CHUNK),
             position: 0,
         }
     }
@@ -47,7 +47,15 @@ impl EslBuffer {
     /// Extend buffer with more data
     pub fn extend_from_slice(&mut self, data: &[u8]) {
         if self.buffer.remaining_mut() < data.len() {
-            self.buffer.reserve(data.len().max(BUF_CHUNK));
+            let old_cap = self.buffer.capacity();
+            let new_space = data.len().max(BUF_CHUNK);
+            self.buffer.reserve(new_space);
+            tracing::debug!(
+                "Buffer grew from {} to {} bytes (added {} bytes)",
+                old_cap,
+                self.buffer.capacity(),
+                self.buffer.capacity() - old_cap
+            );
         }
         self.buffer.extend_from_slice(data);
     }
@@ -136,9 +144,12 @@ impl EslBuffer {
 
     /// Check if buffer size exceeds reasonable limits
     pub fn check_size_limits(&self) -> EslResult<()> {
-        const MAX_BUFFER_SIZE: usize = 50 * 1024 * 1024; // 50MB
-
         if self.buffer.len() > MAX_BUFFER_SIZE {
+            tracing::error!(
+                "Buffer overflow: {} bytes accumulated (limit {}). Memory leak or protocol desync.",
+                self.buffer.len(),
+                MAX_BUFFER_SIZE
+            );
             return Err(EslError::BufferOverflow {
                 size: self.buffer.len(),
                 limit: MAX_BUFFER_SIZE,
