@@ -417,11 +417,22 @@ impl EslHandle {
             }
 
             trace!("[RECV] Buffer empty, reading from socket");
-            let bytes_read = self
-                .stream
-                .read(&mut self.read_buffer)
-                .await
-                .map_err(EslError::Io)?;
+            // Add timeout to socket read to prevent hanging when outer timeout fires
+            let read_result = timeout(
+                Duration::from_millis(DEFAULT_TIMEOUT_MS),
+                self.stream.read(&mut self.read_buffer),
+            )
+            .await;
+
+            let bytes_read = match read_result {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => return Err(EslError::Io(e)),
+                Err(_) => {
+                    return Err(EslError::Timeout {
+                        timeout_ms: DEFAULT_TIMEOUT_MS,
+                    })
+                }
+            };
 
             trace!("[RECV] Read {} bytes from socket", bytes_read);
             if bytes_read == 0 {

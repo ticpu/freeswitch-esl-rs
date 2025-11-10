@@ -49,8 +49,8 @@ pub const HEADER_UNIQUE_ID: &str = "Unique-ID";
 pub const HEADER_CALLER_UUID: &str = "Caller-Unique-ID";
 pub const HEADER_JOB_UUID: &str = "Job-UUID";
 
-/// Connection timeout in milliseconds  
-pub const DEFAULT_TIMEOUT_MS: u64 = 25000;
+/// Connection timeout in milliseconds
+pub const DEFAULT_TIMEOUT_MS: u64 = 2000;
 
 /// Maximum number of queued events before dropping
 pub const MAX_EVENT_QUEUE_SIZE: usize = 1000;

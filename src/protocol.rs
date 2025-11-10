@@ -175,7 +175,7 @@ impl EslParser {
 
                         // Validate message size to prevent protocol errors or memory exhaustion
                         if length > MAX_MESSAGE_SIZE {
-                            return Err(EslError::protocol_error(&format!(
+                            return Err(EslError::protocol_error(format!(
                                 "Message too large: Content-Length {} exceeds limit {}. Protocol error or corrupted data.",
                                 length, MAX_MESSAGE_SIZE
                             )));
