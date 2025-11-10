@@ -7,7 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     command::{EslCommand, EslResponse},
@@ -51,16 +51,37 @@ impl EslHandle {
     pub async fn connect(host: &str, port: u16, password: &str) -> EslResult<Self> {
         info!("Connecting to FreeSWITCH at {}:{}", host, port);
 
-        let stream = timeout(
+        debug!(
+            "[CONNECT] Starting TCP connect with {}ms timeout",
+            DEFAULT_TIMEOUT_MS
+        );
+        let tcp_result = timeout(
             Duration::from_millis(DEFAULT_TIMEOUT_MS),
             TcpStream::connect((host, port)),
         )
-        .await
-        .map_err(|_| EslError::Timeout {
-            timeout_ms: DEFAULT_TIMEOUT_MS,
-        })?
-        .map_err(EslError::Io)?;
+        .await;
 
+        let stream = match tcp_result {
+            Ok(Ok(s)) => {
+                debug!("[CONNECT] TCP connection established");
+                s
+            }
+            Ok(Err(e)) => {
+                warn!("[CONNECT] TCP connect failed: {}", e);
+                return Err(EslError::Io(e));
+            }
+            Err(_) => {
+                warn!(
+                    "[CONNECT] TCP connect timed out after {}ms",
+                    DEFAULT_TIMEOUT_MS
+                );
+                return Err(EslError::Timeout {
+                    timeout_ms: DEFAULT_TIMEOUT_MS,
+                });
+            }
+        };
+
+        debug!("[CONNECT] Creating ESL handle");
         let mut handle = Self {
             stream,
             parser: EslParser::new(),
@@ -72,7 +93,7 @@ impl EslHandle {
             event_format: EventFormat::Plain,
         };
 
-        // Wait for auth request and authenticate
+        debug!("[CONNECT] Starting authentication");
         handle.authenticate(password).await?;
 
         info!("Successfully connected and authenticated to FreeSWITCH");
@@ -154,11 +175,8 @@ impl EslHandle {
         if self.connected {
             info!("Disconnecting from FreeSWITCH");
 
-            // Send exit command
-            let _ = self.send_command(EslCommand::Exit).await;
-
-            // Close the connection
-            let _ = self.stream.shutdown().await;
+            // Just drop the stream - don't call shutdown() which can hang
+            // This matches the behavior of the C ESL library which just calls closesocket()
             self.connected = false;
             self.authenticated = false;
         }
@@ -169,17 +187,23 @@ impl EslHandle {
     async fn authenticate(&mut self, password: &str) -> EslResult<()> {
         debug!("Starting authentication");
 
-        // Wait for auth request
+        debug!("[AUTH] Waiting for auth request from FreeSWITCH");
         let message = self.recv_message().await?;
+        debug!("[AUTH] Received message type: {:?}", message.message_type);
+
         if message.message_type != MessageType::AuthRequest {
             return Err(EslError::protocol_error("Expected auth request"));
         }
 
-        // Send authentication
+        debug!("[AUTH] Sending auth command");
         let auth_cmd = EslCommand::Auth {
             password: password.to_string(),
         };
         let response = self.send_command(auth_cmd).await?;
+        debug!(
+            "[AUTH] Received auth response: success={}",
+            response.is_success()
+        );
 
         if !response.is_success() {
             return Err(EslError::auth_failed(
@@ -248,7 +272,10 @@ impl EslHandle {
                 MessageType::ApiResponse | MessageType::CommandReply => break message,
                 MessageType::Event => {
                     // This is a log event or other event, ignore it and continue waiting
-                    debug!("Ignoring event message while waiting for command response: {:?}", message.message_type);
+                    debug!(
+                        "Ignoring event message while waiting for command response: {:?}",
+                        message.message_type
+                    );
                     continue;
                 }
                 MessageType::Disconnect => {
@@ -257,7 +284,10 @@ impl EslHandle {
                     return Err(EslError::ConnectionClosed);
                 }
                 _ => {
-                    debug!("Ignoring unexpected message type while waiting for command response: {:?}", message.message_type);
+                    debug!(
+                        "Ignoring unexpected message type while waiting for command response: {:?}",
+                        message.message_type
+                    );
                     continue;
                 }
             }
@@ -379,16 +409,21 @@ impl EslHandle {
         loop {
             // Try to parse existing buffer first
             if let Some(message) = self.parser.parse_message()? {
+                trace!(
+                    "[RECV] Parsed message from buffer: {:?}",
+                    message.message_type
+                );
                 return Ok(message);
             }
 
-            // Read more data
+            trace!("[RECV] Buffer empty, reading from socket");
             let bytes_read = self
                 .stream
                 .read(&mut self.read_buffer)
                 .await
                 .map_err(EslError::Io)?;
 
+            trace!("[RECV] Read {} bytes from socket", bytes_read);
             if bytes_read == 0 {
                 return Err(EslError::ConnectionClosed);
             }
