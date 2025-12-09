@@ -34,3 +34,7 @@ path = "examples/outbound_server.rs"
 [[example]]
 name = "event_listener"
 path = "examples/event_listener.rs"
+
+[[example]]
+name = "event_filter"
+path = "examples/event_filter.rs"
