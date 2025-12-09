@@ -101,12 +101,22 @@ impl EslHandle {
     }
 
     /// Connect with user authentication
+    ///
+    /// The user must be in the format `user@domain` (e.g., `admin@default`).
+    /// FreeSWITCH requires the domain to look up the user in the directory.
     pub async fn connect_with_user(
         host: &str,
         port: u16,
         user: &str,
         password: &str,
     ) -> EslResult<Self> {
+        if !user.contains('@') {
+            return Err(EslError::auth_failed(format!(
+                "Invalid username format '{}': must be user@domain (e.g., admin@default)",
+                user
+            )));
+        }
+
         info!(
             "Connecting to FreeSWITCH at {}:{} with user {}",
             host, port, user
