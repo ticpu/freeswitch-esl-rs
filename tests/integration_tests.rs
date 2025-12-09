@@ -31,12 +31,12 @@ async fn test_buffer_operations() {
     assert_eq!(buffer.data(), b"World");
 
     // Test pattern finding
-    buffer.extend_from_slice(b"\r\n\r\nBody");
-    let pos = buffer.find_pattern(b"\r\n\r\n");
+    buffer.extend_from_slice(b"\n\nBody");
+    let pos = buffer.find_pattern(b"\n\n");
     assert!(pos.is_some());
 
     // Extract until pattern
-    let before_pattern = buffer.extract_until_pattern(b"\r\n\r\n").unwrap();
+    let before_pattern = buffer.extract_until_pattern(b"\n\n").unwrap();
     assert_eq!(before_pattern, b"World");
     assert_eq!(buffer.data(), b"Body");
 }
@@ -47,7 +47,7 @@ async fn test_protocol_parsing() {
     let mut parser = EslParser::new();
 
     // Test auth request parsing
-    let auth_data = b"Content-Type: auth/request\r\n\r\n";
+    let auth_data = b"Content-Type: auth/request\n\n";
     parser.add_data(auth_data).unwrap();
 
     let message = parser.parse_message().unwrap().unwrap();
@@ -59,8 +59,7 @@ async fn test_protocol_parsing() {
     );
 
     // Test API response with body
-    let api_data =
-        b"Content-Type: api/response\r\nReply-Text: +OK accepted\r\nContent-Length: 2\r\n\r\nOK";
+    let api_data = b"Content-Type: api/response\nReply-Text: +OK accepted\nContent-Length: 2\n\nOK";
     parser.add_data(api_data).unwrap();
 
     let message = parser.parse_message().unwrap().unwrap();
@@ -74,11 +73,11 @@ async fn test_protocol_parsing() {
 async fn test_event_parsing() {
     let mut parser = EslParser::new();
 
-    let event_data = b"Content-Type: text/event-plain\r\n\
-                      Event-Name: CHANNEL_ANSWER\r\n\
-                      Unique-ID: test-uuid-123\r\n\
-                      Caller-Caller-ID-Number: 1000\r\n\
-                      Caller-Destination-Number: 2000\r\n\r\n";
+    let event_data = b"Content-Type: text/event-plain\n\
+                      Event-Name: CHANNEL_ANSWER\n\
+                      Unique-ID: test-uuid-123\n\
+                      Caller-Caller-ID-Number: 1000\n\
+                      Caller-Destination-Number: 2000\n\n";
 
     parser.add_data(event_data).unwrap();
     let message = parser.parse_message().unwrap().unwrap();
@@ -103,20 +102,20 @@ async fn test_command_generation() {
     let auth = EslCommand::Auth {
         password: "ClueCon".to_string(),
     };
-    assert_eq!(auth.to_wire_format(), "auth ClueCon\r\n\r\n");
+    assert_eq!(auth.to_wire_format(), "auth ClueCon\n\n");
 
     // Test API command
     let api = EslCommand::Api {
         command: "status".to_string(),
     };
-    assert_eq!(api.to_wire_format(), "api status\r\n\r\n");
+    assert_eq!(api.to_wire_format(), "api status\n\n");
 
     // Test events command
     let events = EslCommand::Events {
         format: "plain".to_string(),
         events: "ALL".to_string(),
     };
-    assert_eq!(events.to_wire_format(), "event plain ALL\r\n\r\n");
+    assert_eq!(events.to_wire_format(), "event plain ALL\n\n");
 
     // Test app commands
     let answer = AppCommand::answer();
@@ -216,12 +215,12 @@ async fn test_incomplete_messages() {
     let mut parser = EslParser::new();
 
     // Add partial header
-    parser.add_data(b"Content-Type: api/response\r\n").unwrap();
+    parser.add_data(b"Content-Type: api/response\n").unwrap();
     let result = parser.parse_message().unwrap();
     assert!(result.is_none());
 
     // Complete the headers
-    parser.add_data(b"Content-Length: 12\r\n\r\n").unwrap();
+    parser.add_data(b"Content-Length: 12\n\n").unwrap();
     let result = parser.parse_message().unwrap();
     assert!(result.is_none()); // Still no body
 
@@ -247,7 +246,7 @@ async fn test_large_message_handling() {
     // Create a large message
     let large_body = "x".repeat(1024 * 1024); // 1MB body
     let header = format!(
-        "Content-Type: api/response\r\nContent-Length: {}\r\n\r\n",
+        "Content-Type: api/response\nContent-Length: {}\n\n",
         large_body.len()
     );
 
@@ -279,12 +278,12 @@ async fn test_connection_states() {
 #[tokio::test]
 async fn test_parsing_performance() {
     let mut parser = EslParser::new();
-    let test_message = b"Content-Type: text/event-plain\r\n\
-                        Event-Name: CHANNEL_CREATE\r\n\
-                        Unique-ID: perf-test-uuid\r\n\
-                        Test-Header-1: Value1\r\n\
-                        Test-Header-2: Value2\r\n\
-                        Test-Header-3: Value3\r\n\r\n";
+    let test_message = b"Content-Type: text/event-plain\n\
+                        Event-Name: CHANNEL_CREATE\n\
+                        Unique-ID: perf-test-uuid\n\
+                        Test-Header-1: Value1\n\
+                        Test-Header-2: Value2\n\
+                        Test-Header-3: Value3\n\n";
 
     let start = std::time::Instant::now();
 
@@ -317,7 +316,7 @@ async fn test_buffer_stress() {
 
     // Add lots of data in chunks
     for i in 0..1000 {
-        let data = format!("chunk-{}-{}\r\n", i, "x".repeat(100));
+        let data = format!("chunk-{}-{}\n", i, "x".repeat(100));
         buffer.extend_from_slice(data.as_bytes());
     }
 

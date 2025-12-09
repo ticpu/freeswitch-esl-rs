@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn test_parse_auth_request() {
         let mut parser = EslParser::new();
-        let data = b"Content-Type: auth/request\r\n\r\n";
+        let data = b"Content-Type: auth/request\n\n";
 
         parser.add_data(data).unwrap();
         let message = parser.parse_message().unwrap().unwrap();
@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn test_parse_api_response() {
         let mut parser = EslParser::new();
-        let data = b"Content-Type: api/response\r\nContent-Length: 2\r\n\r\nOK";
+        let data = b"Content-Type: api/response\nContent-Length: 2\n\nOK";
 
         parser.add_data(data).unwrap();
         let message = parser.parse_message().unwrap().unwrap();
@@ -425,7 +425,8 @@ mod tests {
     #[test]
     fn test_parse_event() {
         let mut parser = EslParser::new();
-        let data = b"Content-Type: text/event-plain\r\nEvent-Name: CHANNEL_ANSWER\r\nUnique-ID: test-uuid\r\n\r\n";
+        let data =
+            b"Content-Type: text/event-plain\nEvent-Name: CHANNEL_ANSWER\nUnique-ID: test-uuid\n\n";
 
         parser.add_data(data).unwrap();
         let message = parser.parse_message().unwrap().unwrap();
@@ -438,7 +439,7 @@ mod tests {
     #[test]
     fn test_incomplete_message() {
         let mut parser = EslParser::new();
-        let data = b"Content-Type: api/response\r\nContent-Length: 10\r\n\r\ntest"; // Only 4 bytes instead of 10
+        let data = b"Content-Type: api/response\nContent-Length: 10\n\ntest"; // Only 4 bytes instead of 10
 
         parser.add_data(data).unwrap();
         let result = parser.parse_message().unwrap();

@@ -246,10 +246,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             args.host, args.port, user
         );
     } else {
-        eprintln!(
-            "Connecting to FreeSWITCH at {}:{}...",
-            args.host, args.port
-        );
+        eprintln!("Connecting to FreeSWITCH at {}:{}...", args.host, args.port);
     }
 
     let connect_result = if let Some(ref user) = args.user {

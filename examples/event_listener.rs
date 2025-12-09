@@ -205,11 +205,7 @@ async fn handle_channel_hangup(
             let unknown_cause = "UNKNOWN".to_string();
             let cause = event.header("Hangup-Cause").unwrap_or(&unknown_cause);
             let total_duration = call_info.start_time.elapsed();
-            let talk_time = if let Some(answer_time) = call_info.answered_time {
-                Some(answer_time.elapsed())
-            } else {
-                None
-            };
+            let talk_time = call_info.answered_time.map(|t| t.elapsed());
 
             if let Some(talk_duration) = talk_time {
                 info!(
