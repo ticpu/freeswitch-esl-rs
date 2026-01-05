@@ -176,6 +176,50 @@ async fn test_error_handling() {
     assert!(!auth_error.is_connection_error());
 }
 
+/// Test connection error detection for disconnect scenarios
+#[tokio::test]
+async fn test_connection_error_detection() {
+    // ConnectionClosed should be detected as a connection error
+    let closed_error = EslError::ConnectionClosed;
+    assert!(closed_error.is_connection_error());
+    assert!(!closed_error.is_recoverable());
+
+    // NotConnected should be detected as a connection error
+    let not_connected_error = EslError::NotConnected;
+    assert!(not_connected_error.is_connection_error());
+    assert!(!not_connected_error.is_recoverable());
+
+    // IO errors with various kinds should be connection errors
+    for error_kind in [
+        std::io::ErrorKind::ConnectionReset,
+        std::io::ErrorKind::ConnectionAborted,
+        std::io::ErrorKind::BrokenPipe,
+        std::io::ErrorKind::UnexpectedEof,
+    ] {
+        let io_error = std::io::Error::new(error_kind, "test error");
+        let esl_error = EslError::from(io_error);
+        assert!(
+            esl_error.is_connection_error(),
+            "{:?} should be a connection error",
+            error_kind
+        );
+    }
+}
+
+/// Test disconnect notice message parsing
+#[tokio::test]
+async fn test_disconnect_notice_parsing() {
+    let mut parser = EslParser::new();
+
+    // FreeSWITCH sends this when the connection is being closed
+    let disconnect_data = b"Content-Type: text/disconnect-notice\n\n";
+
+    parser.add_data(disconnect_data).unwrap();
+    let message = parser.parse_message().unwrap().unwrap();
+
+    assert_eq!(message.message_type, MessageType::Disconnect);
+}
+
 /// Test JSON event parsing
 #[tokio::test]
 async fn test_json_event_parsing() {
