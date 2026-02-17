@@ -362,3 +362,88 @@ async fn test_url_decoded_headers() {
         Some(&"Test User (123)".to_string())
     );
 }
+
+#[tokio::test]
+async fn test_command_timeout() {
+    let (_mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    // Set a very short command timeout
+    client.set_command_timeout(Duration::from_millis(200));
+
+    // Send a command but mock never replies — should timeout
+    let result = client
+        .api("status")
+        .await;
+
+    match result {
+        Err(EslError::Timeout { .. }) => {}
+        Err(e) => panic!("Expected Timeout, got: {}", e),
+        Ok(_) => panic!("Expected timeout error, got success"),
+    }
+}
+
+#[tokio::test]
+async fn test_command_timeout_default() {
+    let (_mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    // Default timeout should be 5 seconds — verify a command still works
+    // by having the mock reply within that window
+    // (This test just verifies the default doesn't break normal flow)
+    let (mut mock, client2, _events2) = setup_connected_pair("ClueCon").await;
+
+    let api_task = tokio::spawn(async move {
+        client2
+            .api("status")
+            .await
+    });
+
+    let _cmd = mock
+        .read_command()
+        .await;
+    mock.reply_api("OK")
+        .await;
+
+    let result = api_task
+        .await
+        .unwrap();
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_command_timeout_cleanup() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    // Set short timeout
+    client.set_command_timeout(Duration::from_millis(200));
+
+    // First command times out (mock doesn't reply)
+    let result = client
+        .api("status")
+        .await;
+    assert!(matches!(result, Err(EslError::Timeout { .. })));
+
+    // Second command should still work — pending_reply slot was cleaned up
+    let api_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("version")
+                .await
+        }
+    });
+
+    // Mock reads the timed-out command then the new one
+    let _cmd1 = mock
+        .read_command()
+        .await;
+    let _cmd2 = mock
+        .read_command()
+        .await;
+    mock.reply_api("1.0")
+        .await;
+
+    let result = api_task
+        .await
+        .unwrap();
+    assert!(result.is_ok());
+}
