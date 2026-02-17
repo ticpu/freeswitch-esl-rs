@@ -59,7 +59,7 @@ pub mod protocol;
 
 pub use command::{CommandBuilder, EslResponse};
 pub use connection::{
-    ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslEventStream, EslHandle,
+    ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslEventStream,
 };
 pub use error::{EslError, EslResult};
 pub use event::{EslEvent, EslEventType, EventFormat};

@@ -15,7 +15,7 @@
 //!   # With userauth (user@domain format required)
 //!   cargo run --example event_filter -- -u admin@default -p secret -e ALL
 
-use freeswitch_esl_rs::{EslError, EslEventType, EslHandle, EventFormat};
+use freeswitch_esl_rs::{EslClient, EslError, EslEventType, EventFormat};
 
 fn print_usage() {
     eprintln!(
@@ -100,7 +100,7 @@ impl Default for Args {
 fn parse_args() -> Result<Args, String> {
     let args: Vec<String> = std::env::args().collect();
     let mut result = Args::default();
-    result.events.clear(); // Clear default, will add from args
+    result.events.clear();
 
     let mut i = 1;
     while i < args.len() {
@@ -166,12 +166,10 @@ fn parse_args() -> Result<Args, String> {
         i += 1;
     }
 
-    // Default to CHANNEL_CREATE if no events specified
     if result.events.is_empty() {
         result.events.push("CHANNEL_CREATE".to_string());
     }
 
-    // Require filter if specified
     if result.filter_header.is_some() != result.filter_value.is_some() {
         return Err("Both --filter and --value must be specified together".to_string());
     }
@@ -250,13 +248,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let connect_result = if let Some(ref user) = args.user {
-        EslHandle::connect_with_user(&args.host, args.port, user, &args.password).await
+        EslClient::connect_with_user(&args.host, args.port, user, &args.password).await
     } else {
-        EslHandle::connect(&args.host, args.port, &args.password).await
+        EslClient::connect(&args.host, args.port, &args.password).await
     };
 
-    let mut handle = match connect_result {
-        Ok(h) => h,
+    let (client, mut events) = match connect_result {
+        Ok(pair) => pair,
         Err(EslError::AuthenticationFailed { ref reason }) => {
             eprintln!("Authentication failed: {}", reason);
             std::process::exit(1);
@@ -276,7 +274,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Connected successfully");
 
-    // Parse and subscribe to events
     let event_types: Result<Vec<EslEventType>, String> =
         args.events.iter().map(|e| parse_event_type(e)).collect();
 
@@ -295,46 +292,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     eprintln!("Subscribing to events: {:?}", args.events);
-    handle.subscribe_events(format, &event_types).await?;
+    client.subscribe_events(format, &event_types).await?;
 
-    // Apply filter if specified
     if let (Some(header), Some(value)) = (&args.filter_header, &args.filter_value) {
         eprintln!("Applying filter: {} = {}", header, value);
-        handle.filter_events(header, value).await?;
+        client.filter_events(header, value).await?;
     }
 
     eprintln!("Listening for events... (Ctrl+C to exit)\n");
 
-    // Main event loop
-    loop {
-        match handle.recv_event().await {
-            Ok(Some(event)) => {
-                let output = if args.json_output {
-                    format_event_json(&event)
-                } else if args.raw_output {
-                    format_event_full(&event)
-                } else if args.quiet {
-                    format_event_summary(&event)
-                } else {
-                    format_event_full(&event)
-                };
-                println!("{}", output);
-            }
-            Ok(None) => {
-                eprintln!("Connection closed by server");
-                break;
-            }
-            Err(EslError::Timeout { .. }) => {
-                // Timeout is fine, just continue
-                continue;
-            }
-            Err(e) => {
-                eprintln!("Error receiving event: {}", e);
-                break;
-            }
-        }
+    while let Some(event) = events.recv().await {
+        let output = if args.json_output {
+            format_event_json(&event)
+        } else if args.raw_output {
+            format_event_full(&event)
+        } else if args.quiet {
+            format_event_summary(&event)
+        } else {
+            format_event_full(&event)
+        };
+        println!("{}", output);
     }
 
-    handle.disconnect().await?;
+    eprintln!("Connection closed by server");
+    client.disconnect().await?;
+
     Ok(())
 }
