@@ -57,6 +57,7 @@ pub mod constants;
 pub mod error;
 pub mod event;
 pub mod protocol;
+pub mod variables;
 
 pub use app::dptools::AppCommand;
 pub use command::{CommandBuilder, EslResponse};
