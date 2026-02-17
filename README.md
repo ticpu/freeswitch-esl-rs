@@ -134,6 +134,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### `api` vs `bgapi`
+
+`api()` blocks until FreeSWITCH finishes the command — subject to the command timeout
+(default 5s, `set_command_timeout()` to adjust). `bgapi()` returns immediately with a
+Job-UUID; the result arrives later as a `BACKGROUND_JOB` event. You must subscribe to
+this event type and correlate by UUID:
+
+```rust
+client.subscribe_events(EventFormat::Plain, &[
+    EslEventType::BackgroundJob,
+]).await?;
+
+let response = client.bgapi("originate user/1000 &park").await?;
+let job_uuid = response.job_uuid().expect("bgapi returns Job-UUID");
+
+// Later, in the event loop:
+if event.is_event_type(EslEventType::BackgroundJob) {
+    if event.job_uuid() == Some(&job_uuid) {
+        let result = event.body().map(|s| s.as_str()).unwrap_or("");
+        // result is e.g. "+OK <channel-uuid>" or "-ERR ..."
+    }
+}
+```
+
+Use `bgapi` for slow commands (`originate`, `conference`) to avoid blocking the ESL
+command pipeline and hitting the command timeout.
+
 ## Requirements
 
 - Rust 1.70+
