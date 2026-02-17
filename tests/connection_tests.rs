@@ -384,7 +384,7 @@ async fn test_command_timeout() {
 
 #[tokio::test]
 async fn test_command_timeout_default() {
-    let (_mock, client, _events) = setup_connected_pair("ClueCon").await;
+    let (_mock, _client, _events) = setup_connected_pair("ClueCon").await;
 
     // Default timeout should be 5 seconds — verify a command still works
     // by having the mock reply within that window

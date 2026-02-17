@@ -61,11 +61,16 @@ pub enum ConnectionMode {
     Outbound,
 }
 
+/// Default command timeout in milliseconds (5 seconds)
+const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 5000;
+
 /// Shared state between EslClient and the reader task
 struct SharedState {
     pending_reply: Mutex<Option<oneshot::Sender<EslMessage>>>,
     /// Liveness timeout in milliseconds (0 = disabled)
     liveness_timeout_ms: AtomicU64,
+    /// Command response timeout in milliseconds
+    command_timeout_ms: AtomicU64,
 }
 
 /// ESL client handle (Clone + Send)
@@ -457,6 +462,7 @@ impl EslClient {
         let shared = Arc::new(SharedState {
             pending_reply: Mutex::new(None),
             liveness_timeout_ms: AtomicU64::new(0),
+            command_timeout_ms: AtomicU64::new(DEFAULT_COMMAND_TIMEOUT_MS),
         });
 
         let (status_tx, status_rx) = watch::channel(ConnectionStatus::Connected);
@@ -526,9 +532,28 @@ impl EslClient {
         // Drop writer lock so other operations can proceed
         drop(writer);
 
-        // Wait for reply from reader task
-        let message = rx
+        // Wait for reply from reader task with command timeout
+        let timeout_ms = self
+            .shared
+            .command_timeout_ms
+            .load(Ordering::Relaxed);
+        let message = timeout(Duration::from_millis(timeout_ms), rx)
             .await
+            .map_err(|_| {
+                // Timeout — clean up the pending reply slot so the reader
+                // doesn't later try to send to a closed oneshot
+                let shared = self
+                    .shared
+                    .clone();
+                tokio::spawn(async move {
+                    let mut pending = shared
+                        .pending_reply
+                        .lock()
+                        .await;
+                    pending.take();
+                });
+                EslError::Timeout { timeout_ms }
+            })?
             .map_err(|_| EslError::ConnectionClosed)?;
         let response = message.into_response();
 
@@ -675,6 +700,17 @@ impl EslClient {
     pub fn set_liveness_timeout(&self, duration: Duration) {
         self.shared
             .liveness_timeout_ms
+            .store(duration.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// Set command response timeout (default: 5 seconds).
+    ///
+    /// Applies to `send_command()`, `api()`, `bgapi()`, `subscribe_events()`,
+    /// and all other methods that send a command and await a reply.
+    /// For long-running API calls (e.g., `originate`), increase this value.
+    pub fn set_command_timeout(&self, duration: Duration) {
+        self.shared
+            .command_timeout_ms
             .store(duration.as_millis() as u64, Ordering::Relaxed);
     }
 
