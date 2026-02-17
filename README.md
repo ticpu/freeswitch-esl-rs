@@ -161,6 +161,58 @@ if event.is_event_type(EslEventType::BackgroundJob) {
 Use `bgapi` for slow commands (`originate`, `conference`) to avoid blocking the ESL
 command pipeline and hitting the command timeout.
 
+### Command Builders
+
+The `commands` module provides typed builders for FreeSWITCH API commands. All
+types implement `Display` (producing the command string) and have no dependency on
+`EslClient` — they are pure string builders suitable for unit testing without a
+FreeSWITCH connection.
+
+```rust
+use freeswitch_esl_rs::commands::{Originate, Endpoint, ApplicationList, Application,
+    DialplanType, Variables, VariablesType, UuidKill, ConferenceDtmf};
+
+// Originate with typed endpoint and application
+let ep = Endpoint::Generic {
+    uri: "sofia/gateway/gw1/18005551212".into(),
+    variables: None,
+};
+let apps = ApplicationList(vec![Application::new("conference", Some("room1"))]);
+let cmd = Originate {
+    endpoint: ep,
+    applications: apps,
+    dialplan: Some(DialplanType::Inline),
+    context: None, cid_name: None, cid_num: None, timeout: None,
+};
+client.bgapi(&cmd.to_string()).await?;
+
+// Round-trip: parse ↔ display
+let parsed: Originate = cmd.to_string().parse().unwrap();
+assert_eq!(parsed.to_string(), cmd.to_string());
+
+// UUID commands
+let kill = UuidKill { uuid: channel_id.into(), cause: Some("NORMAL_CLEARING".into()) };
+client.api(&kill.to_string()).await?;
+
+// Conference commands
+let dtmf = ConferenceDtmf { name: "room1".into(), member: "all".into(), dtmf: "1".into() };
+client.api(&dtmf.to_string()).await?;
+```
+
+The `variables` module parses FreeSWITCH structured channel variable formats:
+
+```rust
+use freeswitch_esl_rs::variables::{EslArray, MultipartBody};
+
+// Parse ARRAY:: format from channel variables
+let arr = EslArray::parse("ARRAY::item1|:item2|:item3").unwrap();
+assert_eq!(arr.items(), &["item1", "item2", "item3"]);
+
+// Extract PIDF+XML from SIP multipart body
+let body = MultipartBody::parse(event.header("variable_sip_multipart").unwrap()).unwrap();
+let pidf = body.by_mime_type("application/pidf+xml");
+```
+
 ## Requirements
 
 - Rust 1.70+

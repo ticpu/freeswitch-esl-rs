@@ -62,8 +62,13 @@ pub mod variables;
 
 pub use app::dptools::AppCommand;
 pub use command::{CommandBuilder, EslResponse};
+pub use commands::{
+    ConferenceDtmf, ConferenceHold, ConferenceMute, Originate, UuidAnswer, UuidBridge, UuidDeflect,
+    UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar, UuidTransfer,
+};
 pub use connection::{
     ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslEventStream,
 };
 pub use error::{EslError, EslResult};
 pub use event::{EslEvent, EslEventType, EventFormat};
+pub use variables::{EslArray, MultipartBody, MultipartItem};
