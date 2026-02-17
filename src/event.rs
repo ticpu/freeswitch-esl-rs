@@ -378,3 +378,34 @@ impl Default for EslEvent {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_notify_in_parse() {
+        assert_eq!(
+            EslEventType::parse_event_type("NOTIFY_IN"),
+            Some(EslEventType::NotifyIn)
+        );
+        assert_eq!(
+            EslEventType::parse_event_type("notify_in"),
+            Some(EslEventType::NotifyIn)
+        );
+    }
+
+    #[test]
+    fn test_notify_in_display() {
+        assert_eq!(EslEventType::NotifyIn.to_string(), "NOTIFY_IN");
+    }
+
+    #[test]
+    fn test_notify_in_distinct_from_notify() {
+        assert_ne!(EslEventType::Notify, EslEventType::NotifyIn);
+        assert_ne!(
+            EslEventType::Notify.to_string(),
+            EslEventType::NotifyIn.to_string()
+        );
+    }
+}

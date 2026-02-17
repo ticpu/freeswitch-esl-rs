@@ -608,4 +608,47 @@ mod tests {
 
         assert!(result.is_none()); // Should return None for incomplete message
     }
+
+    #[test]
+    fn test_notify_in_event_with_pl_data() {
+        let mut parser = EslParser::new();
+        // NOTIFY_IN event with percent-encoded pl_data containing JSON
+        let json_payload = r#"{"Invite":"INVITE urn:service:sos SIP/2.0","InviteTimestamp":"2025-01-15T12:00:00Z"}"#;
+        let encoded_payload =
+            percent_encoding::utf8_percent_encode(json_payload, percent_encoding::NON_ALPHANUMERIC)
+                .to_string();
+        let body = format!(
+            "Event-Name: NOTIFY_IN\nevent: emergency-AbandonedCall\npl_data: {}\nsip_content_type: application%2Fjson\ngateway_name: ng911-bcf\n\n",
+            encoded_payload
+        );
+        let envelope = format!(
+            "Content-Length: {}\nContent-Type: text/event-plain\n\n",
+            body.len()
+        );
+        let data = format!("{}{}", envelope, body);
+
+        parser
+            .add_data(data.as_bytes())
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        let event = parser
+            .parse_event(message, EventFormat::Plain)
+            .unwrap();
+
+        assert_eq!(event.event_type, Some(EslEventType::NotifyIn));
+        assert_eq!(
+            event.header("event"),
+            Some(&"emergency-AbandonedCall".to_string())
+        );
+        // pl_data must be percent-decoded back to raw JSON
+        assert_eq!(event.header("pl_data"), Some(&json_payload.to_string()));
+        assert_eq!(
+            event.header("sip_content_type"),
+            Some(&"application/json".to_string())
+        );
+        assert_eq!(event.header("gateway_name"), Some(&"ng911-bcf".to_string()));
+    }
 }
