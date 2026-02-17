@@ -52,6 +52,7 @@
 pub mod app;
 pub mod buffer;
 pub mod command;
+pub mod commands;
 pub mod connection;
 pub mod constants;
 pub mod error;
