@@ -7,6 +7,7 @@ use crate::{
     error::{EslError, EslResult},
     event::{EslEvent, EslEventType, EventFormat},
 };
+use percent_encoding::percent_decode_str;
 use std::collections::HashMap;
 
 /// ESL message types
@@ -78,22 +79,24 @@ impl EslMessage {
         EslResponse::new(self.headers, self.body)
     }
 
-    /// Convert to EslEvent
+    /// Convert to EslEvent, parsing based on Content-Type
     pub fn into_event(self) -> EslResult<EslEvent> {
         if self.message_type != MessageType::Event {
             return Err(EslError::protocol_error("Message is not an event"));
         }
 
-        let mut event = EslEvent::new();
-        event.headers = self.headers;
-        event.body = self.body;
+        let parser = EslParser::new();
+        let format = self
+            .headers
+            .get(HEADER_CONTENT_TYPE)
+            .map(|ct| match ct.as_str() {
+                CONTENT_TYPE_TEXT_EVENT_JSON => EventFormat::Json,
+                CONTENT_TYPE_TEXT_EVENT_XML => EventFormat::Xml,
+                _ => EventFormat::Plain,
+            })
+            .unwrap_or(EventFormat::Plain);
 
-        // Parse event type from Event-Name header
-        if let Some(event_name) = event.header(HEADER_EVENT_NAME) {
-            event.event_type = EslEventType::parse_event_type(event_name);
-        }
-
-        Ok(event)
+        parser.parse_event(self, format)
     }
 
     /// Check if this is a successful response
@@ -265,18 +268,58 @@ impl EslParser {
     }
 
     /// Parse plain text event
+    ///
+    /// FreeSWITCH text/event-plain wire format uses a two-part structure:
+    /// - Outer envelope: Content-Length + Content-Type headers
+    /// - Body: URL-encoded key: value lines (the actual event headers)
+    ///
+    /// If the event body itself contains a Content-Length, there's an inner
+    /// body after the event headers.
     fn parse_plain_event(&self, message: EslMessage) -> EslResult<EslEvent> {
         if message.message_type != MessageType::Event {
             return Err(EslError::protocol_error("Not an event message"));
         }
 
+        let body = message
+            .body
+            .as_deref()
+            .ok_or_else(|| EslError::protocol_error("Plain event missing body"))?;
+
         let mut event = EslEvent::new();
 
-        // For plain events, headers contain the event data
-        event.headers = message.headers;
-        event.body = message.body;
+        // Split event body into headers and optional inner body.
+        // Event headers are terminated by \n\n; anything after is the inner body.
+        let (header_section, inner_body) = if let Some(pos) = body.find("\n\n") {
+            (&body[..pos], Some(&body[pos + 2..]))
+        } else {
+            (body, None)
+        };
 
-        // Extract event type from Event-Name header
+        // Parse event headers from the body, percent-decoding values
+        for line in header_section.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(colon_pos) = line.find(':') {
+                let key = line[..colon_pos].trim().to_string();
+                let raw_value = line[colon_pos + 1..].trim();
+                let value = percent_decode_str(raw_value)
+                    .decode_utf8()
+                    .map(|s| s.into_owned())
+                    .unwrap_or_else(|_| raw_value.to_string());
+                event.headers.insert(key, value);
+            }
+        }
+
+        // If the event headers contain their own Content-Length, the inner body
+        // is that many bytes after the header section
+        if let Some(ib) = inner_body {
+            if !ib.is_empty() {
+                event.body = Some(ib.to_string());
+            }
+        }
+
         if let Some(event_name) = event.header(HEADER_EVENT_NAME) {
             event.event_type = EslEventType::parse_event_type(event_name);
         }
@@ -423,17 +466,72 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_event() {
+    fn test_parse_event_plain() {
         let mut parser = EslParser::new();
-        let data =
-            b"Content-Type: text/event-plain\nEvent-Name: CHANNEL_ANSWER\nUnique-ID: test-uuid\n\n";
+        // Correct two-part wire format: outer envelope + body with event headers
+        let body = "Event-Name: CHANNEL_ANSWER\nUnique-ID: test-uuid\n\n";
+        let envelope = format!(
+            "Content-Length: {}\nContent-Type: text/event-plain\n\n",
+            body.len()
+        );
+        let data = format!("{}{}", envelope, body);
 
-        parser.add_data(data).unwrap();
+        parser.add_data(data.as_bytes()).unwrap();
         let message = parser.parse_message().unwrap().unwrap();
         let event = parser.parse_event(message, EventFormat::Plain).unwrap();
 
         assert_eq!(event.event_type, Some(EslEventType::ChannelAnswer));
         assert_eq!(event.unique_id(), Some(&"test-uuid".to_string()));
+    }
+
+    #[test]
+    fn test_parse_event_plain_percent_decoding() {
+        let mut parser = EslParser::new();
+        let body = "Event-Name: HEARTBEAT\nUp-Time: 0%20years%2C%200%20days\nEvent-Info: System%20Ready\n\n";
+        let envelope = format!(
+            "Content-Length: {}\nContent-Type: text/event-plain\n\n",
+            body.len()
+        );
+        let data = format!("{}{}", envelope, body);
+
+        parser.add_data(data.as_bytes()).unwrap();
+        let message = parser.parse_message().unwrap().unwrap();
+        let event = parser.parse_event(message, EventFormat::Plain).unwrap();
+
+        assert_eq!(event.event_type, Some(EslEventType::Heartbeat));
+        assert_eq!(
+            event.header("Up-Time"),
+            Some(&"0 years, 0 days".to_string())
+        );
+        assert_eq!(
+            event.header("Event-Info"),
+            Some(&"System Ready".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_event_plain_with_inner_body() {
+        let mut parser = EslParser::new();
+        // Event with inner body (e.g., BACKGROUND_JOB result)
+        let inner_body = "+OK Status\n";
+        let event_headers = format!(
+            "Event-Name: BACKGROUND_JOB\nJob-UUID: abc-123\nContent-Length: {}\n",
+            inner_body.len()
+        );
+        let body = format!("{}\n{}", event_headers, inner_body);
+        let envelope = format!(
+            "Content-Length: {}\nContent-Type: text/event-plain\n\n",
+            body.len()
+        );
+        let data = format!("{}{}", envelope, body);
+
+        parser.add_data(data.as_bytes()).unwrap();
+        let message = parser.parse_message().unwrap().unwrap();
+        let event = parser.parse_event(message, EventFormat::Plain).unwrap();
+
+        assert_eq!(event.event_type, Some(EslEventType::BackgroundJob));
+        assert_eq!(event.header("Job-UUID"), Some(&"abc-123".to_string()));
+        assert_eq!(event.body(), Some(&"+OK Status\n".to_string()));
     }
 
     #[test]
