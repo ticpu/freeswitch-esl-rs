@@ -36,16 +36,30 @@ git push --tags
 
 ## Design Principles
 
+### Transport layer (connection, protocol, event)
+
 - **Split reader/writer**: Background reader task + channel-based event delivery.
   `EslClient` is Clone+Send for commands; `EslEventStream` for events.
 - **Liveness detection**: Any inbound TCP traffic resets the timer. HEARTBEAT
   subscription ensures idle-connection traffic. `set_liveness_timeout()` to enable.
+- **Command timeout**: Default 5s timeout on all commands. `set_command_timeout()`.
+  Cleans up pending reply slot on timeout so subsequent commands aren't blocked.
 - **No automatic reconnection**: The library detects disconnection via
   `ConnectionStatus`/`DisconnectReason`. The caller controls reconnection strategy.
 - **Error classification**: `is_connection_error()` / `is_recoverable()` let callers
   decide handling without matching every variant.
 - **Correct wire format**: Events use two-part framing (outer envelope + body).
   Header values are percent-decoded. Event format determined from Content-Type.
+
+### Command builders (commands/, app/, variables/)
+
+- **Pure `Display`/`FromStr`**: No transport coupling. Builders produce strings,
+  `EslClient` calls `.to_string()`. Enables round-trip unit testing without ESL.
+- **`app/`** = sendmsg-based dptools (answer, hangup, bridge, etc.)
+- **`commands/`** = API command strings for `api()`/`bgapi()` (originate, uuid_*, conference)
+- **`variables/`** = channel variable format parsers (ARRAY::, SIP multipart)
+- **Foundation for extension**: Application-specific crates (NGCS, X-Call-Info, SIP
+  URI) can depend on these base types without reimplementing escaping or parsing.
 
 ## Development Methodology — TDD
 
