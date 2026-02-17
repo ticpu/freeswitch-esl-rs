@@ -49,6 +49,7 @@
 //! }
 //! ```
 
+pub mod app;
 pub mod buffer;
 pub mod command;
 pub mod connection;
@@ -57,6 +58,7 @@ pub mod error;
 pub mod event;
 pub mod protocol;
 
+pub use app::dptools::AppCommand;
 pub use command::{CommandBuilder, EslResponse};
 pub use connection::{
     ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslEventStream,

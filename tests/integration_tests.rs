@@ -5,9 +5,9 @@
 
 use freeswitch_esl_rs::{
     buffer::EslBuffer,
-    command::{AppCommand, EslCommand},
+    command::EslCommand,
     protocol::{EslParser, MessageType},
-    EslError, EslEventType, EventFormat,
+    AppCommand, EslError, EslEventType, EventFormat,
 };
 
 #[tokio::test]
