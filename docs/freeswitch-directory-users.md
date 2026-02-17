@@ -184,10 +184,10 @@ Allowed-LOG: true
 ## Connecting with freeswitch-esl-rs
 
 ```rust
-use freeswitch_esl_rs::EslHandle;
+use freeswitch_esl_rs::EslClient;
 
-// Connect with userauth
-let handle = EslHandle::connect_with_user(
+// Connect with userauth — returns (EslClient, EslEventStream)
+let (client, mut events) = EslClient::connect_with_user(
     "localhost",
     8021,
     "admin@default",      // user@domain format required
