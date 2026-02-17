@@ -267,7 +267,13 @@ impl EslHandle {
         }
 
         let command_str = command.to_wire_format();
-        debug!("Sending command: {}", command_str.trim());
+        match &command {
+            EslCommand::Auth { .. } => debug!("Sending command: auth [REDACTED]"),
+            EslCommand::UserAuth { user, .. } => {
+                debug!("Sending command: userauth {}:[REDACTED]", user)
+            }
+            _ => debug!("Sending command: {}", command_str.trim()),
+        }
 
         // Send command
         self.stream
