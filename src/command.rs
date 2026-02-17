@@ -41,17 +41,22 @@ impl EslResponse {
 
     /// Get response body
     pub fn body(&self) -> Option<&String> {
-        self.body.as_ref()
+        self.body
+            .as_ref()
     }
 
     /// Get response body as string, empty if None
     pub fn body_string(&self) -> String {
-        self.body.as_ref().cloned().unwrap_or_default()
+        self.body
+            .as_ref()
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Get header value
     pub fn header(&self, name: &str) -> Option<&String> {
-        self.headers.get(name)
+        self.headers
+            .get(name)
     }
 
     /// Get all headers
@@ -61,12 +66,14 @@ impl EslResponse {
 
     /// Get reply text
     pub fn reply_text(&self) -> Option<&String> {
-        self.headers.get(HEADER_REPLY_TEXT)
+        self.headers
+            .get(HEADER_REPLY_TEXT)
     }
 
     /// Get job UUID for background commands
     pub fn job_uuid(&self) -> Option<&String> {
-        self.headers.get(HEADER_JOB_UUID)
+        self.headers
+            .get(HEADER_JOB_UUID)
     }
 
     /// Convert to result based on success status
@@ -102,7 +109,8 @@ impl CommandBuilder {
 
     /// Add header to command
     pub fn header(mut self, name: &str, value: &str) -> Self {
-        self.headers.insert(name.to_string(), value.to_string());
+        self.headers
+            .insert(name.to_string(), value.to_string());
         self
     }
 
@@ -203,7 +211,9 @@ impl EslCommand {
             EslCommand::SendMsg { uuid, event } => {
                 let mut builder = CommandBuilder::new(&format!(
                     "sendmsg{}",
-                    uuid.as_ref().map(|u| format!(" {}", u)).unwrap_or_default()
+                    uuid.as_ref()
+                        .map(|u| format!(" {}", u))
+                        .unwrap_or_default()
                 ));
 
                 // Add event headers

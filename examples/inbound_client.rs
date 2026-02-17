@@ -29,7 +29,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Executing API commands...");
 
-    match client.api("status").await {
+    match client
+        .api("status")
+        .await
+    {
         Ok(response) => {
             info!("FreeSWITCH Status:");
             if let Some(body) = response.body() {
@@ -39,7 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => error!("Failed to get status: {}", e),
     }
 
-    match client.api("show channels count").await {
+    match client
+        .api("show channels count")
+        .await
+    {
         Ok(response) => {
             info!("Channel Count:");
             if let Some(body) = response.body() {
@@ -49,7 +55,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => error!("Failed to get channel count: {}", e),
     }
 
-    match client.api("sofia status").await {
+    match client
+        .api("sofia status")
+        .await
+    {
         Ok(response) => {
             info!("Sofia Status:");
             if let Some(body) = response.body() {
@@ -59,7 +68,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => error!("Failed to get Sofia status: {}", e),
     }
 
-    match client.bgapi("version").await {
+    match client
+        .bgapi("version")
+        .await
+    {
         Ok(response) => {
             info!("Background API command sent");
             if let Some(job_uuid) = response.job_uuid() {
@@ -71,7 +83,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let vars = ["hostname", "domain", "local_ip_v4", "switch_serial"];
     for var in &vars {
-        match client.api(&format!("global_getvar {}", var)).await {
+        match client
+            .api(&format!("global_getvar {}", var))
+            .await
+        {
             Ok(response) => {
                 if let Some(body) = response.body() {
                     info!("{}: {}", var, body.trim());
@@ -82,7 +97,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!("Disconnecting...");
-    client.disconnect().await?;
+    client
+        .disconnect()
+        .await?;
     info!("Disconnected successfully");
 
     Ok(())

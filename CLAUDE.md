@@ -1,0 +1,59 @@
+## Project Type
+
+This is a **library-first** crate. There is an examples/ folder buildable binaries
+`Cargo.lock` is gitignored per Cargo convention for libraries.
+
+## Build & Test Workflow
+
+**Always run `cargo fmt` before every commit.** The pre-commit hook enforces formatting.
+
+```sh
+cargo fmt
+cargo check --message-format=short
+cargo clippy --fix --allow-dirty --message-format=short
+cargo test --lib
+```
+
+## Release Workflow
+
+Before tagging a release:
+
+```sh
+cargo clippy --release -- -D warnings
+cargo test --release
+cargo build --release
+```
+
+Tag with a signed annotated tag. Include a brief changelog in the tag message:
+
+```sh
+git tag -as v0.X.0 -m "v0.X.0
+
+- Brief changelog entry
+- Another change"
+git push --tags
+```
+
+## Design Principles
+
+- **Split reader/writer**: Background reader task + channel-based event delivery.
+  `EslClient` is Clone+Send for commands; `EslEventStream` for events.
+- **Liveness detection**: Any inbound TCP traffic resets the timer. HEARTBEAT
+  subscription ensures idle-connection traffic. `set_liveness_timeout()` to enable.
+- **No automatic reconnection**: The library detects disconnection via
+  `ConnectionStatus`/`DisconnectReason`. The caller controls reconnection strategy.
+- **Error classification**: `is_connection_error()` / `is_recoverable()` let callers
+  decide handling without matching every variant.
+- **Correct wire format**: Events use two-part framing (outer envelope + body).
+  Header values are percent-decoded. Event format determined from Content-Type.
+
+## Development Methodology — TDD
+
+This project follows test-driven development:
+
+1. Write failing tests that reproduce the bug or specify the new behavior
+2. Confirm tests fail (`cargo test --lib`)
+3. `cargo fmt && git commit --no-verify` (red phase — clippy/tests will fail, but code must be formatted)
+4. Implement the fix/feature
+5. Confirm all tests pass
+6. Commit the implementation (hooks run normally)

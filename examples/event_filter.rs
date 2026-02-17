@@ -100,7 +100,9 @@ impl Default for Args {
 fn parse_args() -> Result<Args, String> {
     let args: Vec<String> = std::env::args().collect();
     let mut result = Args::default();
-    result.events.clear();
+    result
+        .events
+        .clear();
 
     let mut i = 1;
     while i < args.len() {
@@ -111,7 +113,10 @@ fn parse_args() -> Result<Args, String> {
             }
             "-H" | "--host" => {
                 i += 1;
-                result.host = args.get(i).ok_or("Missing host value")?.clone();
+                result.host = args
+                    .get(i)
+                    .ok_or("Missing host value")?
+                    .clone();
             }
             "-P" | "--port" => {
                 i += 1;
@@ -123,11 +128,17 @@ fn parse_args() -> Result<Args, String> {
             }
             "-p" | "--password" => {
                 i += 1;
-                result.password = args.get(i).ok_or("Missing password value")?.clone();
+                result.password = args
+                    .get(i)
+                    .ok_or("Missing password value")?
+                    .clone();
             }
             "-u" | "--user" => {
                 i += 1;
-                let user = args.get(i).ok_or("Missing user value")?.clone();
+                let user = args
+                    .get(i)
+                    .ok_or("Missing user value")?
+                    .clone();
                 if !user.contains('@') {
                     return Err(format!(
                         "Invalid user format '{}': must be user@domain (e.g., admin@default)",
@@ -140,15 +151,27 @@ fn parse_args() -> Result<Args, String> {
                 i += 1;
                 result
                     .events
-                    .push(args.get(i).ok_or("Missing event value")?.clone());
+                    .push(
+                        args.get(i)
+                            .ok_or("Missing event value")?
+                            .clone(),
+                    );
             }
             "-f" | "--filter" => {
                 i += 1;
-                result.filter_header = Some(args.get(i).ok_or("Missing filter header")?.clone());
+                result.filter_header = Some(
+                    args.get(i)
+                        .ok_or("Missing filter header")?
+                        .clone(),
+                );
             }
             "-v" | "--value" => {
                 i += 1;
-                result.filter_value = Some(args.get(i).ok_or("Missing filter value")?.clone());
+                result.filter_value = Some(
+                    args.get(i)
+                        .ok_or("Missing filter value")?
+                        .clone(),
+                );
             }
             "-j" | "--json" => {
                 result.json_output = true;
@@ -166,11 +189,22 @@ fn parse_args() -> Result<Args, String> {
         i += 1;
     }
 
-    if result.events.is_empty() {
-        result.events.push("CHANNEL_CREATE".to_string());
+    if result
+        .events
+        .is_empty()
+    {
+        result
+            .events
+            .push("CHANNEL_CREATE".to_string());
     }
 
-    if result.filter_header.is_some() != result.filter_value.is_some() {
+    if result
+        .filter_header
+        .is_some()
+        != result
+            .filter_value
+            .is_some()
+    {
         return Err("Both --filter and --value must be specified together".to_string());
     }
 
@@ -274,8 +308,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Connected successfully");
 
-    let event_types: Result<Vec<EslEventType>, String> =
-        args.events.iter().map(|e| parse_event_type(e)).collect();
+    let event_types: Result<Vec<EslEventType>, String> = args
+        .events
+        .iter()
+        .map(|e| parse_event_type(e))
+        .collect();
 
     let event_types = match event_types {
         Ok(types) => types,
@@ -292,16 +329,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     eprintln!("Subscribing to events: {:?}", args.events);
-    client.subscribe_events(format, &event_types).await?;
+    client
+        .subscribe_events(format, &event_types)
+        .await?;
 
     if let (Some(header), Some(value)) = (&args.filter_header, &args.filter_value) {
         eprintln!("Applying filter: {} = {}", header, value);
-        client.filter_events(header, value).await?;
+        client
+            .filter_events(header, value)
+            .await?;
     }
 
     eprintln!("Listening for events... (Ctrl+C to exit)\n");
 
-    while let Some(event) = events.recv().await {
+    while let Some(event) = events
+        .recv()
+        .await
+    {
         let output = if args.json_output {
             format_event_json(&event)
         } else if args.raw_output {
@@ -315,7 +359,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     eprintln!("Connection closed by server");
-    client.disconnect().await?;
+    client
+        .disconnect()
+        .await?;
 
     Ok(())
 }

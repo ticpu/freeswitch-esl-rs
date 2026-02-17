@@ -46,15 +46,21 @@ async fn test_recv_event_plain() {
     });
 
     // Mock reads the subscribe command and replies
-    let _cmd = mock.read_command().await;
-    mock.reply_ok().await;
-    subscribe_task.await.unwrap();
+    let _cmd = mock
+        .read_command()
+        .await;
+    mock.reply_ok()
+        .await;
+    subscribe_task
+        .await
+        .unwrap();
 
     // Send an event from mock
     let mut headers = HashMap::new();
     headers.insert("Unique-ID".to_string(), "test-uuid-abc".to_string());
     headers.insert("Caller-Caller-ID-Number".to_string(), "1001".to_string());
-    mock.send_event_plain("CHANNEL_CREATE", &headers).await;
+    mock.send_event_plain("CHANNEL_CREATE", &headers)
+        .await;
 
     // Receive event
     let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
@@ -73,20 +79,31 @@ async fn test_concurrent_command_and_events() {
     // Send an event from mock first (before any command)
     let mut headers = HashMap::new();
     headers.insert("Unique-ID".to_string(), "event-uuid".to_string());
-    mock.send_event_plain("CHANNEL_CREATE", &headers).await;
+    mock.send_event_plain("CHANNEL_CREATE", &headers)
+        .await;
 
     // Now send an api command
     let api_task = tokio::spawn({
         let client = client.clone();
-        async move { client.api("status").await.unwrap() }
+        async move {
+            client
+                .api("status")
+                .await
+                .unwrap()
+        }
     });
 
     // Mock reads the api command and replies
-    let cmd = mock.read_command().await;
+    let cmd = mock
+        .read_command()
+        .await;
     assert!(cmd.starts_with("api status"));
-    mock.reply_api("UP 0 years").await;
+    mock.reply_api("UP 0 years")
+        .await;
 
-    let response = api_task.await.unwrap();
+    let response = api_task
+        .await
+        .unwrap();
     assert_eq!(response.body(), Some(&"UP 0 years".to_string()));
 
     // The event should still be available
@@ -122,7 +139,8 @@ async fn test_tcp_disconnect() {
     let (mock, _client, mut events) = setup_connected_pair("ClueCon").await;
 
     // Drop the mock's TCP connection
-    mock.drop_connection().await;
+    mock.drop_connection()
+        .await;
 
     // events.recv() should return None
     let result = tokio::time::timeout(Duration::from_secs(5), events.recv())
@@ -141,13 +159,16 @@ async fn test_tcp_disconnect() {
 async fn test_command_after_disconnect() {
     let (mock, client, mut events) = setup_connected_pair("ClueCon").await;
 
-    mock.drop_connection().await;
+    mock.drop_connection()
+        .await;
 
     // Wait for the reader to detect the disconnect
     let _ = tokio::time::timeout(Duration::from_secs(5), events.recv()).await;
 
     // Commands should fail with NotConnected
-    let result = client.api("status").await;
+    let result = client
+        .api("status")
+        .await;
     assert!(result.is_err());
     match result.unwrap_err() {
         EslError::NotConnected => {}
@@ -187,7 +208,8 @@ async fn test_liveness_reset_by_traffic() {
     let mock_task = tokio::spawn(async move {
         for _ in 0..3 {
             tokio::time::sleep(Duration::from_secs(2)).await;
-            mock.send_heartbeat().await;
+            mock.send_heartbeat()
+                .await;
         }
         // After sending 3 heartbeats, stop — liveness should expire
         mock
@@ -209,7 +231,9 @@ async fn test_liveness_reset_by_traffic() {
     assert_eq!(count, 3);
 
     // Now wait for liveness expiry (no more traffic)
-    let _mock = mock_task.await.unwrap();
+    let _mock = mock_task
+        .await
+        .unwrap();
     let result = tokio::time::timeout(Duration::from_secs(10), events.recv())
         .await
         .expect("timeout");
@@ -246,23 +270,41 @@ async fn test_client_clone() {
     let client2 = client.clone();
 
     // Send command from clone
-    let task = tokio::spawn(async move { client2.api("status").await });
+    let task = tokio::spawn(async move {
+        client2
+            .api("status")
+            .await
+    });
 
-    let cmd = mock.read_command().await;
+    let cmd = mock
+        .read_command()
+        .await;
     assert!(cmd.starts_with("api status"));
-    mock.reply_api("OK").await;
+    mock.reply_api("OK")
+        .await;
 
-    let result = task.await.unwrap();
+    let result = task
+        .await
+        .unwrap();
     assert!(result.is_ok());
 
     // Original client should also work
-    let task2 = tokio::spawn(async move { client.api("version").await });
+    let task2 = tokio::spawn(async move {
+        client
+            .api("version")
+            .await
+    });
 
-    let cmd2 = mock.read_command().await;
+    let cmd2 = mock
+        .read_command()
+        .await;
     assert!(cmd2.starts_with("api version"));
-    mock.reply_api("1.0").await;
+    mock.reply_api("1.0")
+        .await;
 
-    let result2 = task2.await.unwrap();
+    let result2 = task2
+        .await
+        .unwrap();
     assert!(result2.is_ok());
 }
 
@@ -270,7 +312,8 @@ async fn test_client_clone() {
 async fn test_heartbeat_event_headers() {
     let (mut mock, _client, mut events) = setup_connected_pair("ClueCon").await;
 
-    mock.send_heartbeat().await;
+    mock.send_heartbeat()
+        .await;
 
     let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
         .await
@@ -301,7 +344,8 @@ async fn test_url_decoded_headers() {
         "variable_sip_from_display".to_string(),
         "Test User (123)".to_string(),
     );
-    mock.send_event_plain("CHANNEL_CREATE", &headers).await;
+    mock.send_event_plain("CHANNEL_CREATE", &headers)
+        .await;
 
     let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
         .await

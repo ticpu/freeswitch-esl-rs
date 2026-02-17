@@ -245,7 +245,11 @@ async fn reader_loop(
                         let event_result = parser.parse_event(message, format);
                         match event_result {
                             Ok(event) => {
-                                if event_tx.send(event).await.is_err() {
+                                if event_tx
+                                    .send(event)
+                                    .await
+                                    .is_err()
+                                {
                                     debug!("Event channel closed, reader exiting");
                                     return;
                                 }
@@ -256,7 +260,10 @@ async fn reader_loop(
                         }
                     }
                     MessageType::CommandReply | MessageType::ApiResponse => {
-                        let mut pending = shared.pending_reply.lock().await;
+                        let mut pending = shared
+                            .pending_reply
+                            .lock()
+                            .await;
                         if let Some(tx) = pending.take() {
                             let _ = tx.send(message);
                         } else {
@@ -330,7 +337,9 @@ async fn reader_loop(
             }
             Err(_) => {
                 // Timeout — check liveness
-                let threshold_ms = shared.liveness_timeout_ms.load(Ordering::Relaxed);
+                let threshold_ms = shared
+                    .liveness_timeout_ms
+                    .load(Ordering::Relaxed);
                 if threshold_ms > 0 {
                     let elapsed = last_recv.elapsed();
                     if elapsed > Duration::from_millis(threshold_ms) {
@@ -432,7 +441,10 @@ impl EslClient {
     pub async fn accept_outbound(listener: &TcpListener) -> EslResult<(Self, EslEventStream)> {
         info!("Waiting for outbound connection from FreeSWITCH");
 
-        let (stream, addr) = listener.accept().await.map_err(EslError::Io)?;
+        let (stream, addr) = listener
+            .accept()
+            .await
+            .map_err(EslError::Io)?;
         info!("Accepted outbound connection from {}", addr);
 
         Ok(Self::split_and_spawn(stream, EslParser::new()))
@@ -489,12 +501,19 @@ impl EslClient {
         }
 
         // Lock writer — serializes concurrent commands (ESL is sequential)
-        let mut writer = self.writer.lock().await;
+        let mut writer = self
+            .writer
+            .lock()
+            .await;
 
         // Set up reply channel
         let (tx, rx) = oneshot::channel();
         {
-            let mut pending = self.shared.pending_reply.lock().await;
+            let mut pending = self
+                .shared
+                .pending_reply
+                .lock()
+                .await;
             *pending = Some(tx);
         }
 
@@ -508,7 +527,9 @@ impl EslClient {
         drop(writer);
 
         // Wait for reply from reader task
-        let message = rx.await.map_err(|_| EslError::ConnectionClosed)?;
+        let message = rx
+            .await
+            .map_err(|_| EslError::ConnectionClosed)?;
         let response = message.into_response();
 
         debug!("Received response: success={}", response.is_success());
@@ -520,7 +541,8 @@ impl EslClient {
         let cmd = EslCommand::Api {
             command: command.to_string(),
         };
-        self.send_command(cmd).await
+        self.send_command(cmd)
+            .await
     }
 
     /// Execute background API command
@@ -528,7 +550,8 @@ impl EslClient {
         let cmd = EslCommand::BgApi {
             command: command.to_string(),
         };
-        self.send_command(cmd).await
+        self.send_command(cmd)
+            .await
     }
 
     /// Subscribe to events
@@ -552,7 +575,9 @@ impl EslClient {
             events: events_str,
         };
 
-        let response = self.send_command(cmd).await?;
+        let response = self
+            .send_command(cmd)
+            .await?;
         if !response.is_success() {
             return Err(EslError::CommandFailed {
                 reply_text: response
@@ -573,7 +598,9 @@ impl EslClient {
             value: value.to_string(),
         };
 
-        let response = self.send_command(cmd).await?;
+        let response = self
+            .send_command(cmd)
+            .await?;
         response.into_result()?;
 
         debug!("Set event filter: {} = {}", header, value);
@@ -592,7 +619,8 @@ impl EslClient {
             args: args.map(|s| s.to_string()),
             uuid: uuid.map(|s| s.to_string()),
         };
-        self.send_command(cmd).await
+        self.send_command(cmd)
+            .await
     }
 
     /// Send message to channel
@@ -601,7 +629,8 @@ impl EslClient {
             uuid: uuid.map(|s| s.to_string()),
             event,
         };
-        self.send_command(cmd).await
+        self.send_command(cmd)
+            .await
     }
 
     /// Set liveness timeout. Any inbound TCP traffic resets the timer.
@@ -614,19 +643,32 @@ impl EslClient {
 
     /// Check if the connection is alive
     pub fn is_connected(&self) -> bool {
-        matches!(*self.status_rx.borrow(), ConnectionStatus::Connected)
+        matches!(
+            *self
+                .status_rx
+                .borrow(),
+            ConnectionStatus::Connected
+        )
     }
 
     /// Get current connection status
     pub fn status(&self) -> ConnectionStatus {
-        self.status_rx.borrow().clone()
+        self.status_rx
+            .borrow()
+            .clone()
     }
 
     /// Disconnect from FreeSWITCH by shutting down the write half
     pub async fn disconnect(&self) -> EslResult<()> {
         info!("Client requested disconnect");
-        let mut writer = self.writer.lock().await;
-        writer.shutdown().await.map_err(EslError::Io)?;
+        let mut writer = self
+            .writer
+            .lock()
+            .await;
+        writer
+            .shutdown()
+            .await
+            .map_err(EslError::Io)?;
         Ok(())
     }
 }
@@ -634,17 +676,26 @@ impl EslClient {
 impl EslEventStream {
     /// Receive the next event, or None if the connection is closed
     pub async fn recv(&mut self) -> Option<EslEvent> {
-        self.rx.recv().await
+        self.rx
+            .recv()
+            .await
     }
 
     /// Check if the connection is alive
     pub fn is_connected(&self) -> bool {
-        matches!(*self.status_rx.borrow(), ConnectionStatus::Connected)
+        matches!(
+            *self
+                .status_rx
+                .borrow(),
+            ConnectionStatus::Connected
+        )
     }
 
     /// Get current connection status
     pub fn status(&self) -> ConnectionStatus {
-        self.status_rx.borrow().clone()
+        self.status_rx
+            .borrow()
+            .clone()
     }
 }
 

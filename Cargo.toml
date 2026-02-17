@@ -1,6 +1,6 @@
 [package]
 name = "freeswitch-esl-rs"
-version = "0.1.5"
+version = "1.0.0"
 edition = "2021"
 authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "FreeSWITCH Event Socket Library (ESL) client for Rust"

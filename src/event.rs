@@ -208,7 +208,10 @@ impl fmt::Display for EslEventType {
 impl EslEventType {
     /// Parse event type from string name
     pub fn parse_event_type(s: &str) -> Option<Self> {
-        match s.to_uppercase().as_str() {
+        match s
+            .to_uppercase()
+            .as_str()
+        {
             "CUSTOM" => Some(EslEventType::Custom),
             "CLONE" => Some(EslEventType::Clone),
             "CHANNEL_CREATE" => Some(EslEventType::ChannelCreate),
@@ -332,17 +335,20 @@ impl EslEvent {
 
     /// Get header value by name
     pub fn header(&self, name: &str) -> Option<&String> {
-        self.headers.get(name)
+        self.headers
+            .get(name)
     }
 
     /// Set header value
     pub fn set_header(&mut self, name: String, value: String) {
-        self.headers.insert(name, value);
+        self.headers
+            .insert(name, value);
     }
 
     /// Get event body
     pub fn body(&self) -> Option<&String> {
-        self.body.as_ref()
+        self.body
+            .as_ref()
     }
 
     /// Set event body

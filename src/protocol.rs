@@ -71,7 +71,8 @@ impl EslMessage {
 
     /// Get header value
     pub fn header(&self, name: &str) -> Option<&String> {
-        self.headers.get(name)
+        self.headers
+            .get(name)
     }
 
     /// Convert to EslResponse
@@ -137,8 +138,10 @@ impl EslParser {
 
     /// Add data to the parser buffer
     pub fn add_data(&mut self, data: &[u8]) -> EslResult<()> {
-        self.buffer.extend_from_slice(data);
-        self.buffer.check_size_limits()?;
+        self.buffer
+            .extend_from_slice(data);
+        self.buffer
+            .check_size_limits()?;
         Ok(())
     }
 
@@ -149,9 +152,13 @@ impl EslParser {
                 // Check if we have complete headers
                 let terminator = HEADER_TERMINATOR.as_bytes();
 
-                if let Some(headers_data) = self.buffer.extract_until_pattern(terminator) {
+                if let Some(headers_data) = self
+                    .buffer
+                    .extract_until_pattern(terminator)
+                {
                     // Compact buffer to free consumed header data
-                    self.buffer.compact();
+                    self.buffer
+                        .compact();
 
                     // Parse headers
                     let headers_str = String::from_utf8(headers_data)
@@ -168,13 +175,12 @@ impl EslParser {
 
                     // Check if we need a body
                     if let Some(length_str) = headers.get(HEADER_CONTENT_LENGTH) {
-                        let length: usize =
-                            length_str
-                                .trim()
-                                .parse()
-                                .map_err(|_| EslError::InvalidHeader {
-                                    header: format!("Content-Length: {}", length_str),
-                                })?;
+                        let length: usize = length_str
+                            .trim()
+                            .parse()
+                            .map_err(|_| EslError::InvalidHeader {
+                                header: format!("Content-Length: {}", length_str),
+                            })?;
 
                         // Validate message size to prevent protocol errors or memory exhaustion
                         if length > MAX_MESSAGE_SIZE {
@@ -215,9 +221,13 @@ impl EslParser {
                 headers,
                 body_length,
             } => {
-                if let Some(body_data) = self.buffer.extract_bytes(*body_length) {
+                if let Some(body_data) = self
+                    .buffer
+                    .extract_bytes(*body_length)
+                {
                     // Compact buffer to free consumed body data
-                    self.buffer.compact();
+                    self.buffer
+                        .compact();
 
                     let body_str = String::from_utf8(body_data)
                         .map_err(|_| EslError::protocol_error("Invalid UTF-8 in body"))?;
@@ -245,8 +255,12 @@ impl EslParser {
             }
 
             if let Some(colon_pos) = line.find(':') {
-                let key = line[..colon_pos].trim().to_string();
-                let value = line[colon_pos + 1..].trim().to_string();
+                let key = line[..colon_pos]
+                    .trim()
+                    .to_string();
+                let value = line[colon_pos + 1..]
+                    .trim()
+                    .to_string();
                 headers.insert(key, value);
             } else {
                 return Err(EslError::InvalidHeader {
@@ -302,13 +316,17 @@ impl EslParser {
                 continue;
             }
             if let Some(colon_pos) = line.find(':') {
-                let key = line[..colon_pos].trim().to_string();
+                let key = line[..colon_pos]
+                    .trim()
+                    .to_string();
                 let raw_value = line[colon_pos + 1..].trim();
                 let value = percent_decode_str(raw_value)
                     .decode_utf8()
                     .map(|s| s.into_owned())
                     .unwrap_or_else(|_| raw_value.to_string());
-                event.headers.insert(key, value);
+                event
+                    .headers
+                    .insert(key, value);
             }
         }
 
@@ -345,7 +363,9 @@ impl EslParser {
                     serde_json::Value::String(s) => s.clone(),
                     _ => value.to_string(),
                 };
-                event.headers.insert(key.clone(), value_str);
+                event
+                    .headers
+                    .insert(key.clone(), value_str);
             }
 
             // Extract event type
@@ -389,7 +409,9 @@ impl EslParser {
             let line = line.trim();
             if line.starts_with('<') && line.ends_with('>') && line.contains("=") {
                 if let Some((key, value)) = Self::extract_xml_attribute(line) {
-                    event.headers.insert(key, value);
+                    event
+                        .headers
+                        .insert(key, value);
                 }
             }
         }
@@ -404,17 +426,20 @@ impl EslParser {
 
     /// Get current buffer length
     pub fn buffer_len(&self) -> usize {
-        self.buffer.len()
+        self.buffer
+            .len()
     }
 
     /// Compact the internal buffer
     pub fn compact_buffer(&mut self) {
-        self.buffer.compact();
+        self.buffer
+            .compact();
     }
 
     /// Clear the buffer
     pub fn clear_buffer(&mut self) {
-        self.buffer.clear();
+        self.buffer
+            .clear();
     }
 }
 
@@ -432,7 +457,9 @@ mod tests {
     fn test_parse_headers() {
         let parser = EslParser::new();
         let headers_str = "Content-Type: auth/request\r\nContent-Length: 0";
-        let headers = parser.parse_headers(headers_str).unwrap();
+        let headers = parser
+            .parse_headers(headers_str)
+            .unwrap();
 
         assert_eq!(
             headers.get("Content-Type"),
@@ -446,11 +473,18 @@ mod tests {
         let mut parser = EslParser::new();
         let data = b"Content-Type: auth/request\n\n";
 
-        parser.add_data(data).unwrap();
-        let message = parser.parse_message().unwrap().unwrap();
+        parser
+            .add_data(data)
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
 
         assert_eq!(message.message_type, MessageType::AuthRequest);
-        assert!(message.body.is_none());
+        assert!(message
+            .body
+            .is_none());
     }
 
     #[test]
@@ -458,8 +492,13 @@ mod tests {
         let mut parser = EslParser::new();
         let data = b"Content-Type: api/response\nContent-Length: 2\n\nOK";
 
-        parser.add_data(data).unwrap();
-        let message = parser.parse_message().unwrap().unwrap();
+        parser
+            .add_data(data)
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
 
         assert_eq!(message.message_type, MessageType::ApiResponse);
         assert_eq!(message.body, Some("OK".to_string()));
@@ -476,9 +515,16 @@ mod tests {
         );
         let data = format!("{}{}", envelope, body);
 
-        parser.add_data(data.as_bytes()).unwrap();
-        let message = parser.parse_message().unwrap().unwrap();
-        let event = parser.parse_event(message, EventFormat::Plain).unwrap();
+        parser
+            .add_data(data.as_bytes())
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        let event = parser
+            .parse_event(message, EventFormat::Plain)
+            .unwrap();
 
         assert_eq!(event.event_type, Some(EslEventType::ChannelAnswer));
         assert_eq!(event.unique_id(), Some(&"test-uuid".to_string()));
@@ -494,9 +540,16 @@ mod tests {
         );
         let data = format!("{}{}", envelope, body);
 
-        parser.add_data(data.as_bytes()).unwrap();
-        let message = parser.parse_message().unwrap().unwrap();
-        let event = parser.parse_event(message, EventFormat::Plain).unwrap();
+        parser
+            .add_data(data.as_bytes())
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        let event = parser
+            .parse_event(message, EventFormat::Plain)
+            .unwrap();
 
         assert_eq!(event.event_type, Some(EslEventType::Heartbeat));
         assert_eq!(
@@ -525,9 +578,16 @@ mod tests {
         );
         let data = format!("{}{}", envelope, body);
 
-        parser.add_data(data.as_bytes()).unwrap();
-        let message = parser.parse_message().unwrap().unwrap();
-        let event = parser.parse_event(message, EventFormat::Plain).unwrap();
+        parser
+            .add_data(data.as_bytes())
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        let event = parser
+            .parse_event(message, EventFormat::Plain)
+            .unwrap();
 
         assert_eq!(event.event_type, Some(EslEventType::BackgroundJob));
         assert_eq!(event.header("Job-UUID"), Some(&"abc-123".to_string()));
@@ -539,8 +599,12 @@ mod tests {
         let mut parser = EslParser::new();
         let data = b"Content-Type: api/response\nContent-Length: 10\n\ntest"; // Only 4 bytes instead of 10
 
-        parser.add_data(data).unwrap();
-        let result = parser.parse_message().unwrap();
+        parser
+            .add_data(data)
+            .unwrap();
+        let result = parser
+            .parse_message()
+            .unwrap();
 
         assert!(result.is_none()); // Should return None for incomplete message
     }

@@ -17,7 +17,9 @@ pub struct MockClient {
 
 impl MockEslServer {
     pub async fn start(password: &str) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
         Self {
             listener,
             password: password.to_string(),
@@ -25,28 +27,43 @@ impl MockEslServer {
     }
 
     pub fn addr(&self) -> SocketAddr {
-        self.listener.local_addr().unwrap()
+        self.listener
+            .local_addr()
+            .unwrap()
     }
 
     pub fn port(&self) -> u16 {
-        self.addr().port()
+        self.addr()
+            .port()
     }
 
     /// Accept a connection and perform the auth handshake
     pub async fn accept(&self) -> MockClient {
-        let (stream, _addr) = self.listener.accept().await.unwrap();
+        let (stream, _addr) = self
+            .listener
+            .accept()
+            .await
+            .unwrap();
         let mut client = MockClient { stream };
 
         // Send auth request
-        client.send_raw("Content-Type: auth/request\n\n").await;
+        client
+            .send_raw("Content-Type: auth/request\n\n")
+            .await;
 
         // Read auth command
-        let cmd = client.read_command().await;
+        let cmd = client
+            .read_command()
+            .await;
         let expected = format!("auth {}\n\n", self.password);
         if cmd == expected {
-            client.reply_ok().await;
+            client
+                .reply_ok()
+                .await;
         } else {
-            client.reply_err("Invalid password").await;
+            client
+                .reply_err("Invalid password")
+                .await;
         }
 
         client
@@ -55,7 +72,10 @@ impl MockEslServer {
 
 impl MockClient {
     pub async fn send_raw(&mut self, data: &str) {
-        self.stream.write_all(data.as_bytes()).await.unwrap();
+        self.stream
+            .write_all(data.as_bytes())
+            .await
+            .unwrap();
     }
 
     /// Send a text/event-plain event with correct two-part wire format
@@ -77,7 +97,8 @@ impl MockClient {
             "Content-Length: {}\nContent-Type: text/event-plain\n\n",
             body.len()
         );
-        self.send_raw(&format!("{}{}", envelope, body)).await;
+        self.send_raw(&format!("{}{}", envelope, body))
+            .await;
     }
 
     /// Send a HEARTBEAT event with realistic headers
@@ -93,7 +114,8 @@ impl MockClient {
         headers.insert("Session-Count".to_string(), "5".to_string());
         headers.insert("Max-Sessions".to_string(), "1000".to_string());
         headers.insert("Heartbeat-Interval".to_string(), "20".to_string());
-        self.send_event_plain("HEARTBEAT", &headers).await;
+        self.send_event_plain("HEARTBEAT", &headers)
+            .await;
     }
 
     /// Send a disconnect notice
@@ -103,7 +125,8 @@ impl MockClient {
             message.len(),
             message
         );
-        self.send_raw(&data).await;
+        self.send_raw(&data)
+            .await;
     }
 
     /// Read a command from the client (reads until \n\n)
@@ -113,7 +136,10 @@ impl MockClient {
 
         loop {
             let mut line = String::new();
-            let n = reader.read_line(&mut line).await.unwrap();
+            let n = reader
+                .read_line(&mut line)
+                .await
+                .unwrap();
             if n == 0 {
                 break;
             }
@@ -139,13 +165,15 @@ impl MockClient {
             body.len(),
             body
         );
-        self.send_raw(&data).await;
+        self.send_raw(&data)
+            .await;
     }
 
     /// Send a -ERR command reply
     pub async fn reply_err(&mut self, text: &str) {
         let msg = format!("Content-Type: command/reply\nReply-Text: -ERR {}\n\n", text);
-        self.send_raw(&msg).await;
+        self.send_raw(&msg)
+            .await;
     }
 
     /// Drop the TCP connection

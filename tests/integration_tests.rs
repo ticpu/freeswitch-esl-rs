@@ -30,7 +30,9 @@ async fn test_buffer_operations() {
     let pos = buffer.find_pattern(b"\n\n");
     assert!(pos.is_some());
 
-    let before_pattern = buffer.extract_until_pattern(b"\n\n").unwrap();
+    let before_pattern = buffer
+        .extract_until_pattern(b"\n\n")
+        .unwrap();
     assert_eq!(before_pattern, b"World");
     assert_eq!(buffer.data(), b"Body");
 }
@@ -40,20 +42,32 @@ async fn test_protocol_parsing() {
     let mut parser = EslParser::new();
 
     let auth_data = b"Content-Type: auth/request\n\n";
-    parser.add_data(auth_data).unwrap();
+    parser
+        .add_data(auth_data)
+        .unwrap();
 
-    let message = parser.parse_message().unwrap().unwrap();
+    let message = parser
+        .parse_message()
+        .unwrap()
+        .unwrap();
     assert_eq!(message.message_type, MessageType::AuthRequest);
-    assert!(message.body.is_none());
+    assert!(message
+        .body
+        .is_none());
     assert_eq!(
         message.header("Content-Type"),
         Some(&"auth/request".to_string())
     );
 
     let api_data = b"Content-Type: api/response\nReply-Text: +OK accepted\nContent-Length: 2\n\nOK";
-    parser.add_data(api_data).unwrap();
+    parser
+        .add_data(api_data)
+        .unwrap();
 
-    let message = parser.parse_message().unwrap().unwrap();
+    let message = parser
+        .parse_message()
+        .unwrap()
+        .unwrap();
     assert_eq!(message.message_type, MessageType::ApiResponse);
     assert_eq!(message.body, Some("OK".to_string()));
     assert!(message.is_success());
@@ -74,9 +88,16 @@ async fn test_event_parsing() {
     );
     let data = format!("{}{}", envelope, body);
 
-    parser.add_data(data.as_bytes()).unwrap();
-    let message = parser.parse_message().unwrap().unwrap();
-    let event = parser.parse_event(message, EventFormat::Plain).unwrap();
+    parser
+        .add_data(data.as_bytes())
+        .unwrap();
+    let message = parser
+        .parse_message()
+        .unwrap()
+        .unwrap();
+    let event = parser
+        .parse_event(message, EventFormat::Plain)
+        .unwrap();
 
     assert_eq!(event.event_type, Some(EslEventType::ChannelAnswer));
     assert_eq!(event.unique_id(), Some(&"test-uuid-123".to_string()));
@@ -196,8 +217,13 @@ async fn test_disconnect_notice_parsing() {
     let mut parser = EslParser::new();
     let disconnect_data = b"Content-Type: text/disconnect-notice\n\n";
 
-    parser.add_data(disconnect_data).unwrap();
-    let message = parser.parse_message().unwrap().unwrap();
+    parser
+        .add_data(disconnect_data)
+        .unwrap();
+    let message = parser
+        .parse_message()
+        .unwrap()
+        .unwrap();
 
     assert_eq!(message.message_type, MessageType::Disconnect);
 }
@@ -221,7 +247,9 @@ async fn test_json_event_parsing() {
     );
 
     let parser = EslParser::new();
-    let event = parser.parse_event(message, EventFormat::Json).unwrap();
+    let event = parser
+        .parse_event(message, EventFormat::Json)
+        .unwrap();
 
     assert_eq!(event.event_type, Some(EslEventType::ChannelAnswer));
     assert_eq!(
@@ -238,20 +266,36 @@ async fn test_json_event_parsing() {
 async fn test_incomplete_messages() {
     let mut parser = EslParser::new();
 
-    parser.add_data(b"Content-Type: api/response\n").unwrap();
-    let result = parser.parse_message().unwrap();
+    parser
+        .add_data(b"Content-Type: api/response\n")
+        .unwrap();
+    let result = parser
+        .parse_message()
+        .unwrap();
     assert!(result.is_none());
 
-    parser.add_data(b"Content-Length: 12\n\n").unwrap();
-    let result = parser.parse_message().unwrap();
+    parser
+        .add_data(b"Content-Length: 12\n\n")
+        .unwrap();
+    let result = parser
+        .parse_message()
+        .unwrap();
     assert!(result.is_none());
 
-    parser.add_data(b"partial").unwrap();
-    let result = parser.parse_message().unwrap();
+    parser
+        .add_data(b"partial")
+        .unwrap();
+    let result = parser
+        .parse_message()
+        .unwrap();
     assert!(result.is_none());
 
-    parser.add_data(b"_body").unwrap();
-    let result = parser.parse_message().unwrap();
+    parser
+        .add_data(b"_body")
+        .unwrap();
+    let result = parser
+        .parse_message()
+        .unwrap();
     assert!(result.is_some());
 
     let message = result.unwrap();
@@ -268,14 +312,27 @@ async fn test_large_message_handling() {
         large_body.len()
     );
 
-    parser.add_data(header.as_bytes()).unwrap();
-    parser.add_data(large_body.as_bytes()).unwrap();
+    parser
+        .add_data(header.as_bytes())
+        .unwrap();
+    parser
+        .add_data(large_body.as_bytes())
+        .unwrap();
 
-    let result = parser.parse_message().unwrap();
+    let result = parser
+        .parse_message()
+        .unwrap();
     assert!(result.is_some());
 
     let message = result.unwrap();
-    assert_eq!(message.body.as_ref().unwrap().len(), 1024 * 1024);
+    assert_eq!(
+        message
+            .body
+            .as_ref()
+            .unwrap()
+            .len(),
+        1024 * 1024
+    );
 }
 
 #[tokio::test]
@@ -308,8 +365,13 @@ async fn test_parsing_performance() {
     let start = std::time::Instant::now();
 
     for _ in 0..1000 {
-        parser.add_data(test_message.as_bytes()).unwrap();
-        let message = parser.parse_message().unwrap().unwrap();
+        parser
+            .add_data(test_message.as_bytes())
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
         assert_eq!(message.message_type, MessageType::Event);
     }
 

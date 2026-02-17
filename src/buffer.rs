@@ -31,7 +31,9 @@ impl EslBuffer {
 
     /// Get current length of data in buffer
     pub fn len(&self) -> usize {
-        self.buffer.len() - self.position
+        self.buffer
+            .len()
+            - self.position
     }
 
     /// Check if buffer is empty
@@ -41,23 +43,37 @@ impl EslBuffer {
 
     /// Get current capacity
     pub fn capacity(&self) -> usize {
-        self.buffer.capacity()
+        self.buffer
+            .capacity()
     }
 
     /// Extend buffer with more data
     pub fn extend_from_slice(&mut self, data: &[u8]) {
-        if self.buffer.remaining_mut() < data.len() {
-            let old_cap = self.buffer.capacity();
-            let new_space = data.len().max(BUF_CHUNK);
-            self.buffer.reserve(new_space);
+        if self
+            .buffer
+            .remaining_mut()
+            < data.len()
+        {
+            let old_cap = self
+                .buffer
+                .capacity();
+            let new_space = data
+                .len()
+                .max(BUF_CHUNK);
+            self.buffer
+                .reserve(new_space);
             tracing::debug!(
                 "Buffer grew from {} to {} bytes (added {} bytes)",
                 old_cap,
-                self.buffer.capacity(),
-                self.buffer.capacity() - old_cap
+                self.buffer
+                    .capacity(),
+                self.buffer
+                    .capacity()
+                    - old_cap
             );
         }
-        self.buffer.extend_from_slice(data);
+        self.buffer
+            .extend_from_slice(data);
     }
 
     /// Get reference to current data
@@ -124,34 +140,49 @@ impl EslBuffer {
             let remaining_len = self.len();
             if remaining_len > 0 {
                 // Move remaining data to front
-                self.buffer.copy_within(self.position.., 0);
+                self.buffer
+                    .copy_within(self.position.., 0);
             }
-            self.buffer.truncate(remaining_len);
+            self.buffer
+                .truncate(remaining_len);
             self.position = 0;
 
             // Reserve more space if needed
-            if self.buffer.capacity() < BUF_CHUNK {
-                self.buffer.reserve(BUF_CHUNK);
+            if self
+                .buffer
+                .capacity()
+                < BUF_CHUNK
+            {
+                self.buffer
+                    .reserve(BUF_CHUNK);
             }
         }
     }
 
     /// Clear all data from buffer
     pub fn clear(&mut self) {
-        self.buffer.clear();
+        self.buffer
+            .clear();
         self.position = 0;
     }
 
     /// Check if buffer size exceeds reasonable limits
     pub fn check_size_limits(&self) -> EslResult<()> {
-        if self.buffer.len() > MAX_BUFFER_SIZE {
+        if self
+            .buffer
+            .len()
+            > MAX_BUFFER_SIZE
+        {
             tracing::error!(
                 "Buffer overflow: {} bytes accumulated (limit {}). Memory leak or protocol desync.",
-                self.buffer.len(),
+                self.buffer
+                    .len(),
                 MAX_BUFFER_SIZE
             );
             return Err(EslError::BufferOverflow {
-                size: self.buffer.len(),
+                size: self
+                    .buffer
+                    .len(),
                 limit: MAX_BUFFER_SIZE,
             });
         }
@@ -172,8 +203,11 @@ impl EslBuffer {
 
     /// Convert to string (UTF-8)
     pub fn to_string(&self) -> EslResult<String> {
-        String::from_utf8(self.data().to_vec())
-            .map_err(|e| EslError::Utf8Error(std::str::from_utf8(&e.into_bytes()).unwrap_err()))
+        String::from_utf8(
+            self.data()
+                .to_vec(),
+        )
+        .map_err(|e| EslError::Utf8Error(std::str::from_utf8(&e.into_bytes()).unwrap_err()))
     }
 }
 
@@ -223,7 +257,9 @@ mod tests {
         let mut buffer = EslBuffer::new();
         buffer.extend_from_slice(b"Header1: Value1\r\nHeader2: Value2\r\n\r\nBody");
 
-        let headers = buffer.extract_until_pattern(b"\r\n\r\n").unwrap();
+        let headers = buffer
+            .extract_until_pattern(b"\r\n\r\n")
+            .unwrap();
         assert_eq!(headers, b"Header1: Value1\r\nHeader2: Value2");
         assert_eq!(buffer.data(), b"Body");
     }
@@ -233,7 +269,9 @@ mod tests {
         let mut buffer = EslBuffer::new();
         buffer.extend_from_slice(b"Hello World");
 
-        let data = buffer.extract_bytes(5).unwrap();
+        let data = buffer
+            .extract_bytes(5)
+            .unwrap();
         assert_eq!(data, b"Hello");
         assert_eq!(buffer.data(), b" World");
     }

@@ -51,7 +51,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Listening for events... Press Ctrl+C to exit");
 
-    while let Some(event) = events.recv().await {
+    while let Some(event) = events
+        .recv()
+        .await
+    {
         event_count += 1;
         debug!("Received event #{}: {:?}", event_count, event.event_type());
 
@@ -61,7 +64,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!("Connection closed, total events: {}", event_count);
-    client.disconnect().await?;
+    client
+        .disconnect()
+        .await?;
 
     Ok(())
 }
@@ -100,7 +105,9 @@ fn process_event(
             if let Some(uuid) = event.unique_id() {
                 if let Some(call_info) = active_calls.get_mut(uuid) {
                     call_info.answered_time = Some(std::time::Instant::now());
-                    let duration = call_info.start_time.elapsed();
+                    let duration = call_info
+                        .start_time
+                        .elapsed();
                     info!(
                         "Call answered: {} (ring time: {:.2}s)",
                         call_info.caller_id,
@@ -116,7 +123,9 @@ fn process_event(
                         .header("Hangup-Cause")
                         .unwrap_or(&"UNKNOWN".to_string())
                         .clone();
-                    let talk_time = call_info.answered_time.map(|t| t.elapsed());
+                    let talk_time = call_info
+                        .answered_time
+                        .map(|t| t.elapsed());
 
                     if let Some(talk_duration) = talk_time {
                         info!(
