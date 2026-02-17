@@ -17,6 +17,40 @@ use crate::{
     protocol::{EslParser, MessageType},
 };
 
+/// Connection status for ESL client
+#[derive(Debug, Clone)]
+pub enum ConnectionStatus {
+    Connected,
+    Disconnected(DisconnectReason),
+}
+
+/// Reason for disconnection
+#[derive(Debug, Clone)]
+pub enum DisconnectReason {
+    /// Server sent a text/disconnect-notice with Content-Disposition: disconnect
+    ServerNotice,
+    /// Liveness timeout exceeded without any inbound traffic
+    HeartbeatExpired,
+    /// TCP I/O error (io::Error is not Clone, so we store the message)
+    IoError(String),
+    /// Clean EOF on the TCP connection
+    ConnectionClosed,
+    /// Client called disconnect()
+    ClientRequested,
+}
+
+impl std::fmt::Display for DisconnectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DisconnectReason::ServerNotice => write!(f, "server sent disconnect notice"),
+            DisconnectReason::HeartbeatExpired => write!(f, "liveness timeout expired"),
+            DisconnectReason::IoError(msg) => write!(f, "I/O error: {}", msg),
+            DisconnectReason::ConnectionClosed => write!(f, "connection closed"),
+            DisconnectReason::ClientRequested => write!(f, "client requested disconnect"),
+        }
+    }
+}
+
 /// Connection mode for ESL
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionMode {

@@ -64,6 +64,10 @@ pub enum EslError {
     #[error("Connection closed by FreeSWITCH")]
     ConnectionClosed,
 
+    /// Heartbeat/liveness timeout expired
+    #[error("Heartbeat expired after {interval_ms}ms without traffic")]
+    HeartbeatExpired { interval_ms: u64 },
+
     /// Invalid UUID format
     #[error("Invalid UUID format: {uuid}")]
     InvalidUuid { uuid: String },
@@ -106,6 +110,7 @@ impl EslError {
             EslError::NotConnected => false,
             EslError::ConnectionClosed => false,
             EslError::AuthenticationFailed { .. } => false,
+            EslError::HeartbeatExpired { .. } => false,
             EslError::Timeout { .. } => true,
             EslError::CommandFailed { .. } => true,
             EslError::QueueFull => true,
@@ -117,7 +122,10 @@ impl EslError {
     pub fn is_connection_error(&self) -> bool {
         matches!(
             self,
-            EslError::Io(_) | EslError::NotConnected | EslError::ConnectionClosed
+            EslError::Io(_)
+                | EslError::NotConnected
+                | EslError::ConnectionClosed
+                | EslError::HeartbeatExpired { .. }
         )
     }
 }
