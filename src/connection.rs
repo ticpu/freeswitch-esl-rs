@@ -591,6 +591,43 @@ impl EslClient {
         Ok(())
     }
 
+    /// Subscribe to events using raw event name strings.
+    ///
+    /// Use this for event types not covered by `EslEventType`, or for
+    /// forward compatibility with new FreeSWITCH events without a library update.
+    ///
+    /// ```rust,no_run
+    /// # async fn example(client: &freeswitch_esl_rs::EslClient) -> Result<(), freeswitch_esl_rs::EslError> {
+    /// use freeswitch_esl_rs::EventFormat;
+    /// client.subscribe_events_raw(EventFormat::Plain, "NOTIFY_IN CHANNEL_CREATE").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn subscribe_events_raw(&self, format: EventFormat, events: &str) -> EslResult<()> {
+        let cmd = EslCommand::Events {
+            format: format.to_string(),
+            events: events.to_string(),
+        };
+
+        let response = self
+            .send_command(cmd)
+            .await?;
+        if !response.is_success() {
+            return Err(EslError::CommandFailed {
+                reply_text: response
+                    .reply_text()
+                    .cloned()
+                    .unwrap_or_else(|| "Event subscription failed".to_string()),
+            });
+        }
+
+        info!(
+            "Subscribed to raw events '{}' with format {:?}",
+            events, format
+        );
+        Ok(())
+    }
+
     /// Set event filter
     pub async fn filter_events(&self, header: &str, value: &str) -> EslResult<()> {
         let cmd = EslCommand::Filter {
