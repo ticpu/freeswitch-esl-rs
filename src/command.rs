@@ -70,7 +70,11 @@ impl EslResponse {
             .get(HEADER_REPLY_TEXT)
     }
 
-    /// Get job UUID for background commands
+    /// Get job UUID for background commands.
+    ///
+    /// For `bgapi` responses, FreeSWITCH returns the Job-UUID both in the
+    /// `Reply-Text` header (`+OK Job-UUID: <uuid>`) and as a separate
+    /// `Job-UUID` header. This method reads the dedicated header.
     pub fn job_uuid(&self) -> Option<&String> {
         self.headers
             .get(HEADER_JOB_UUID)

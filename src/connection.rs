@@ -570,7 +570,20 @@ impl EslClient {
             .await
     }
 
-    /// Execute background API command
+    /// Execute background API command.
+    ///
+    /// Returns immediately with a `Job-UUID` in the response. The actual result
+    /// arrives later as a [`EslEventType::BackgroundJob`] event — subscribe to it
+    /// and correlate via [`EslEvent::job_uuid`] / [`EslResponse::job_uuid`]:
+    ///
+    /// ```rust,no_run
+    /// # async fn example(client: &freeswitch_esl_rs::EslClient) -> Result<(), freeswitch_esl_rs::EslError> {
+    /// let resp = client.bgapi("originate user/1000 &park").await?;
+    /// let job_uuid = resp.job_uuid().expect("bgapi returns Job-UUID header");
+    /// // Match against event.job_uuid() in the event loop
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn bgapi(&self, command: &str) -> EslResult<EslResponse> {
         let cmd = EslCommand::BgApi {
             command: command.to_string(),
@@ -579,7 +592,20 @@ impl EslClient {
             .await
     }
 
-    /// Subscribe to events
+    /// Subscribe to events by typed enum variants.
+    ///
+    /// For `CUSTOM` event subclasses (e.g., `sofia::register`), use
+    /// [`subscribe_events_raw`](Self::subscribe_events_raw) instead — this method
+    /// sends bare `CUSTOM` which subscribes to **all** custom events:
+    ///
+    /// ```rust,no_run
+    /// # async fn example(client: &freeswitch_esl_rs::EslClient) -> Result<(), freeswitch_esl_rs::EslError> {
+    /// use freeswitch_esl_rs::EventFormat;
+    /// // Subscribe to specific CUSTOM subclasses:
+    /// client.subscribe_events_raw(EventFormat::Plain, "CUSTOM sofia::register sofia::unregister").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn subscribe_events(
         &self,
         format: EventFormat,
