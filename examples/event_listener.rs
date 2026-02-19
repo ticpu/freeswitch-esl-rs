@@ -51,10 +51,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Listening for events... Press Ctrl+C to exit");
 
-    while let Some(event) = events
+    while let Some(result) = events
         .recv()
         .await
     {
+        let event = match result {
+            Ok(event) => event,
+            Err(e) => {
+                error!("Event error: {}", e);
+                continue;
+            }
+        };
         event_count += 1;
         debug!("Received event #{}: {:?}", event_count, event.event_type());
 

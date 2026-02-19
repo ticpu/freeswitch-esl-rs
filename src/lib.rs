@@ -41,7 +41,7 @@
 //!         EslEventType::ChannelHangup
 //!     ]).await?;
 //!
-//!     while let Some(event) = events.recv().await {
+//!     while let Some(Ok(event)) = events.recv().await {
 //!         println!("Received event: {:?}", event.event_type());
 //!     }
 //!
@@ -67,7 +67,8 @@ pub use commands::{
     UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar, UuidTransfer,
 };
 pub use connection::{
-    ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslEventStream,
+    ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions,
+    EslEventStream,
 };
 pub use error::{EslError, EslResult};
 pub use event::{EslEvent, EslEventType, EventFormat};

@@ -1,6 +1,6 @@
 //! Connection management for ESL
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -52,6 +52,35 @@ impl std::fmt::Display for DisconnectReason {
     }
 }
 
+/// Establish a TCP connection with a timeout.
+async fn tcp_connect_with_timeout(host: &str, port: u16) -> EslResult<TcpStream> {
+    let tcp_result = timeout(
+        Duration::from_millis(DEFAULT_TIMEOUT_MS),
+        TcpStream::connect((host, port)),
+    )
+    .await;
+
+    match tcp_result {
+        Ok(Ok(s)) => {
+            debug!("[CONNECT] TCP connection established");
+            Ok(s)
+        }
+        Ok(Err(e)) => {
+            warn!("[CONNECT] TCP connect failed: {}", e);
+            Err(EslError::Io(e))
+        }
+        Err(_) => {
+            warn!(
+                "[CONNECT] TCP connect timed out after {}ms",
+                DEFAULT_TIMEOUT_MS
+            );
+            Err(EslError::Timeout {
+                timeout_ms: DEFAULT_TIMEOUT_MS,
+            })
+        }
+    }
+}
+
 /// Connection mode for ESL
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionMode {
@@ -71,6 +100,26 @@ struct SharedState {
     liveness_timeout_ms: AtomicU64,
     /// Command response timeout in milliseconds
     command_timeout_ms: AtomicU64,
+    /// Set when events have been dropped due to a full queue
+    event_overflow: AtomicBool,
+    /// Total count of dropped events
+    dropped_event_count: AtomicU64,
+}
+
+/// Options for ESL connection configuration.
+///
+/// Controls parameters that are fixed at connection time, such as the event
+/// queue capacity. Use [`Default::default()`] for standard settings.
+pub struct EslConnectOptions {
+    pub event_queue_size: usize,
+}
+
+impl Default for EslConnectOptions {
+    fn default() -> Self {
+        Self {
+            event_queue_size: MAX_EVENT_QUEUE_SIZE,
+        }
+    }
 }
 
 /// ESL client handle (Clone + Send)
@@ -87,8 +136,12 @@ pub struct EslClient {
 /// Event stream receiver (!Clone)
 ///
 /// Receives events from the background reader task via an mpsc channel.
+///
+/// Events are delivered as `Result<EslEvent, EslError>`. An `Err(EslError::QueueFull)`
+/// indicates that one or more events were dropped because the application fell behind.
+/// Use [`EslClient::dropped_event_count`] for the exact count.
 pub struct EslEventStream {
-    rx: mpsc::Receiver<EslEvent>,
+    rx: mpsc::Receiver<Result<EslEvent, EslError>>,
     status_rx: watch::Receiver<ConnectionStatus>,
 }
 
@@ -219,13 +272,79 @@ async fn authenticate_user(
     Ok(())
 }
 
+/// Try to send an event (or error) to the application via try_send.
+///
+/// If the channel is full, drop the item, set the overflow flag, and
+/// increment the dropped counter. Before each dispatch, check the overflow
+/// flag and attempt to deliver a QueueFull error notification first.
+fn dispatch_event(
+    event_tx: &mpsc::Sender<Result<EslEvent, EslError>>,
+    shared: &SharedState,
+    item: Result<EslEvent, EslError>,
+) -> bool {
+    if shared
+        .event_overflow
+        .load(Ordering::Relaxed)
+    {
+        match event_tx.try_send(Err(EslError::QueueFull)) {
+            Ok(()) => {
+                shared
+                    .event_overflow
+                    .store(false, Ordering::Relaxed);
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => return false,
+            Err(mpsc::error::TrySendError::Full(_)) => {}
+        }
+    }
+
+    match event_tx.try_send(item) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Closed(_)) => false,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            shared
+                .event_overflow
+                .store(true, Ordering::Relaxed);
+            shared
+                .dropped_event_count
+                .fetch_add(1, Ordering::Relaxed);
+            warn!("Event queue full, dropping event");
+            true
+        }
+    }
+}
+
 /// Background reader loop
 async fn reader_loop(
+    reader: OwnedReadHalf,
+    parser: EslParser,
+    shared: Arc<SharedState>,
+    status_tx: watch::Sender<ConnectionStatus>,
+    event_tx: mpsc::Sender<Result<EslEvent, EslError>>,
+) {
+    let result = std::panic::AssertUnwindSafe(reader_loop_inner(
+        reader,
+        parser,
+        shared,
+        status_tx.clone(),
+        event_tx,
+    ));
+    if futures::FutureExt::catch_unwind(result)
+        .await
+        .is_err()
+    {
+        tracing::error!("reader task panicked");
+        let _ = status_tx.send(ConnectionStatus::Disconnected(DisconnectReason::IoError(
+            "reader task panicked".to_string(),
+        )));
+    }
+}
+
+async fn reader_loop_inner(
     mut reader: OwnedReadHalf,
     mut parser: EslParser,
     shared: Arc<SharedState>,
     status_tx: watch::Sender<ConnectionStatus>,
-    event_tx: mpsc::Sender<EslEvent>,
+    event_tx: mpsc::Sender<Result<EslEvent, EslError>>,
 ) {
     let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
     let mut last_recv = Instant::now();
@@ -248,20 +367,9 @@ async fn reader_loop(
                             .unwrap_or(EventFormat::Plain);
 
                         let event_result = parser.parse_event(message, format);
-                        match event_result {
-                            Ok(event) => {
-                                if event_tx
-                                    .send(event)
-                                    .await
-                                    .is_err()
-                                {
-                                    debug!("Event channel closed, reader exiting");
-                                    return;
-                                }
-                            }
-                            Err(e) => {
-                                warn!("Failed to parse event: {}", e);
-                            }
+                        if !dispatch_event(&event_tx, &shared, event_result) {
+                            debug!("Event channel closed, reader exiting");
+                            return;
                         }
                     }
                     MessageType::CommandReply | MessageType::ApiResponse => {
@@ -373,31 +481,7 @@ impl EslClient {
     ) -> EslResult<(Self, EslEventStream)> {
         info!("Connecting to FreeSWITCH at {}:{}", host, port);
 
-        let tcp_result = timeout(
-            Duration::from_millis(DEFAULT_TIMEOUT_MS),
-            TcpStream::connect((host, port)),
-        )
-        .await;
-
-        let mut stream = match tcp_result {
-            Ok(Ok(s)) => {
-                debug!("[CONNECT] TCP connection established");
-                s
-            }
-            Ok(Err(e)) => {
-                warn!("[CONNECT] TCP connect failed: {}", e);
-                return Err(EslError::Io(e));
-            }
-            Err(_) => {
-                warn!(
-                    "[CONNECT] TCP connect timed out after {}ms",
-                    DEFAULT_TIMEOUT_MS
-                );
-                return Err(EslError::Timeout {
-                    timeout_ms: DEFAULT_TIMEOUT_MS,
-                });
-            }
-        };
+        let mut stream = tcp_connect_with_timeout(host, port).await?;
 
         let mut parser = EslParser::new();
         let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
@@ -406,6 +490,26 @@ impl EslClient {
 
         info!("Successfully connected and authenticated to FreeSWITCH");
         Ok(Self::split_and_spawn(stream, parser))
+    }
+
+    /// Connect to FreeSWITCH (inbound mode) with password authentication and custom options
+    pub async fn connect_with_options(
+        host: &str,
+        port: u16,
+        password: &str,
+        options: EslConnectOptions,
+    ) -> EslResult<(Self, EslEventStream)> {
+        info!("Connecting to FreeSWITCH at {}:{}", host, port);
+
+        let mut stream = tcp_connect_with_timeout(host, port).await?;
+
+        let mut parser = EslParser::new();
+        let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
+
+        authenticate(&mut stream, &mut parser, &mut read_buffer, password).await?;
+
+        info!("Successfully connected and authenticated to FreeSWITCH");
+        Ok(Self::split_and_spawn_with_options(stream, parser, options))
     }
 
     /// Connect with user authentication
@@ -429,9 +533,7 @@ impl EslClient {
             host, port, user
         );
 
-        let mut stream = TcpStream::connect((host, port))
-            .await
-            .map_err(EslError::Io)?;
+        let mut stream = tcp_connect_with_timeout(host, port).await?;
 
         let mut parser = EslParser::new();
         let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
@@ -440,6 +542,39 @@ impl EslClient {
 
         info!("Successfully connected and authenticated to FreeSWITCH");
         Ok(Self::split_and_spawn(stream, parser))
+    }
+
+    /// Connect with user authentication and custom options
+    ///
+    /// The user must be in the format `user@domain` (e.g., `admin@default`).
+    pub async fn connect_with_user_and_options(
+        host: &str,
+        port: u16,
+        user: &str,
+        password: &str,
+        options: EslConnectOptions,
+    ) -> EslResult<(Self, EslEventStream)> {
+        if !user.contains('@') {
+            return Err(EslError::auth_failed(format!(
+                "Invalid username format '{}': must be user@domain (e.g., admin@default)",
+                user
+            )));
+        }
+
+        info!(
+            "Connecting to FreeSWITCH at {}:{} with user {}",
+            host, port, user
+        );
+
+        let mut stream = tcp_connect_with_timeout(host, port).await?;
+
+        let mut parser = EslParser::new();
+        let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
+
+        authenticate_user(&mut stream, &mut parser, &mut read_buffer, user, password).await?;
+
+        info!("Successfully connected and authenticated to FreeSWITCH");
+        Ok(Self::split_and_spawn_with_options(stream, parser, options))
     }
 
     /// Accept outbound connection from FreeSWITCH
@@ -455,19 +590,49 @@ impl EslClient {
         Ok(Self::split_and_spawn(stream, EslParser::new()))
     }
 
+    /// Accept outbound connection from FreeSWITCH with custom options
+    pub async fn accept_outbound_with_options(
+        listener: &TcpListener,
+        options: EslConnectOptions,
+    ) -> EslResult<(Self, EslEventStream)> {
+        info!("Waiting for outbound connection from FreeSWITCH");
+
+        let (stream, addr) = listener
+            .accept()
+            .await
+            .map_err(EslError::Io)?;
+        info!("Accepted outbound connection from {}", addr);
+
+        Ok(Self::split_and_spawn_with_options(
+            stream,
+            EslParser::new(),
+            options,
+        ))
+    }
+
     /// Split a TcpStream and spawn the reader task
     fn split_and_spawn(stream: TcpStream, parser: EslParser) -> (Self, EslEventStream) {
+        Self::split_and_spawn_with_options(stream, parser, EslConnectOptions::default())
+    }
+
+    fn split_and_spawn_with_options(
+        stream: TcpStream,
+        parser: EslParser,
+        options: EslConnectOptions,
+    ) -> (Self, EslEventStream) {
         let (read_half, write_half) = stream.into_split();
 
         let shared = Arc::new(SharedState {
             pending_reply: Mutex::new(None),
             liveness_timeout_ms: AtomicU64::new(0),
             command_timeout_ms: AtomicU64::new(DEFAULT_COMMAND_TIMEOUT_MS),
+            event_overflow: AtomicBool::new(false),
+            dropped_event_count: AtomicU64::new(0),
         });
 
         let (status_tx, status_rx) = watch::channel(ConnectionStatus::Connected);
         let status_rx2 = status_tx.subscribe();
-        let (event_tx, event_rx) = mpsc::channel(MAX_EVENT_QUEUE_SIZE);
+        let (event_tx, event_rx) = mpsc::channel(options.event_queue_size);
 
         tokio::spawn(reader_loop(
             read_half,
@@ -537,24 +702,19 @@ impl EslClient {
             .shared
             .command_timeout_ms
             .load(Ordering::Relaxed);
-        let message = timeout(Duration::from_millis(timeout_ms), rx)
-            .await
-            .map_err(|_| {
-                // Timeout — clean up the pending reply slot so the reader
-                // doesn't later try to send to a closed oneshot
-                let shared = self
+        let message = match timeout(Duration::from_millis(timeout_ms), rx).await {
+            Ok(Ok(message)) => message,
+            Ok(Err(_)) => return Err(EslError::ConnectionClosed),
+            Err(_) => {
+                let mut pending = self
                     .shared
-                    .clone();
-                tokio::spawn(async move {
-                    let mut pending = shared
-                        .pending_reply
-                        .lock()
-                        .await;
-                    pending.take();
-                });
-                EslError::Timeout { timeout_ms }
-            })?
-            .map_err(|_| EslError::ConnectionClosed)?;
+                    .pending_reply
+                    .lock()
+                    .await;
+                pending.take();
+                return Err(EslError::Timeout { timeout_ms });
+            }
+        };
         let response = message.into_response();
 
         debug!("Received response: success={}", response.is_success());
@@ -721,6 +881,13 @@ impl EslClient {
             .await
     }
 
+    /// Number of events dropped due to a full event queue.
+    pub fn dropped_event_count(&self) -> u64 {
+        self.shared
+            .dropped_event_count
+            .load(Ordering::Relaxed)
+    }
+
     /// Set liveness timeout. Any inbound TCP traffic resets the timer.
     /// Set to zero to disable (default).
     pub fn set_liveness_timeout(&self, duration: Duration) {
@@ -773,8 +940,13 @@ impl EslClient {
 }
 
 impl EslEventStream {
-    /// Receive the next event, or None if the connection is closed
-    pub async fn recv(&mut self) -> Option<EslEvent> {
+    /// Receive the next event, or None if the channel is closed.
+    ///
+    /// Returns `Err(EslError::QueueFull)` if events were dropped because the
+    /// application was not draining events fast enough. This is a one-time
+    /// notification per overflow episode — subsequent calls return real events.
+    /// Parse errors from the reader task are also surfaced here.
+    pub async fn recv(&mut self) -> Option<Result<EslEvent, EslError>> {
         self.rx
             .recv()
             .await

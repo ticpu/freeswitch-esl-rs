@@ -66,10 +66,17 @@ async fn handle_call(
         .send_command(AppCommand::answer())
         .await?;
 
-    while let Some(event) = events
+    while let Some(result) = events
         .recv()
         .await
     {
+        let event = match result {
+            Ok(event) => event,
+            Err(e) => {
+                error!("Event error: {}", e);
+                continue;
+            }
+        };
         debug!("Received event: {:?}", event.event_type());
 
         match event.event_type() {
@@ -92,10 +99,17 @@ async fn handle_call(
 
     let mut dtmf_buffer = String::new();
 
-    while let Some(event) = events
+    while let Some(result) = events
         .recv()
         .await
     {
+        let event = match result {
+            Ok(event) => event,
+            Err(e) => {
+                error!("Event error: {}", e);
+                continue;
+            }
+        };
         debug!("Received event: {:?}", event.event_type());
 
         match event.event_type() {

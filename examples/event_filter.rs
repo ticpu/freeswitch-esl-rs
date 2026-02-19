@@ -342,10 +342,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Listening for events... (Ctrl+C to exit)\n");
 
-    while let Some(event) = events
+    while let Some(result) = events
         .recv()
         .await
     {
+        let event = match result {
+            Ok(event) => event,
+            Err(e) => {
+                eprintln!("Event error: {}", e);
+                continue;
+            }
+        };
         let output = if args.json_output {
             format_event_json(&event)
         } else if args.raw_output {
