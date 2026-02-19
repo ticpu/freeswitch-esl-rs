@@ -2,10 +2,20 @@
 
 mod mock_server;
 
-use freeswitch_esl_rs::{ConnectionStatus, DisconnectReason, EslClient, EslError, EslEventType};
+use freeswitch_esl_rs::{
+    ConnectionStatus, DisconnectReason, EslClient, EslError, EslEvent, EslEventStream, EslEventType,
+};
 use mock_server::{setup_connected_pair, MockEslServer};
 use std::collections::HashMap;
 use std::time::Duration;
+
+async fn recv_event(events: &mut EslEventStream) -> EslEvent {
+    tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .expect("timeout")
+        .expect("channel closed")
+        .expect("event error")
+}
 
 #[tokio::test]
 async fn test_connect_and_authenticate() {
@@ -62,12 +72,7 @@ async fn test_recv_event_plain() {
     mock.send_event_plain("CHANNEL_CREATE", &headers)
         .await;
 
-    // Receive event
-    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
-        .await
-        .expect("timeout waiting for event")
-        .expect("event stream closed");
-
+    let event = recv_event(&mut events).await;
     assert_eq!(event.event_type(), Some(EslEventType::ChannelCreate));
     assert_eq!(event.unique_id(), Some(&"test-uuid-abc".to_string()));
 }
@@ -107,10 +112,7 @@ async fn test_concurrent_command_and_events() {
     assert_eq!(response.body(), Some(&"UP 0 years".to_string()));
 
     // The event should still be available
-    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
-        .await
-        .expect("timeout")
-        .expect("closed");
+    let event = recv_event(&mut events).await;
     assert_eq!(event.event_type(), Some(EslEventType::ChannelCreate));
 }
 
@@ -217,14 +219,16 @@ async fn test_liveness_reset_by_traffic() {
 
     // Receive the 3 heartbeats
     let mut count = 0;
-    while let Some(event) = tokio::time::timeout(Duration::from_secs(10), events.recv())
+    while let Some(result) = tokio::time::timeout(Duration::from_secs(10), events.recv())
         .await
         .expect("timeout")
     {
-        if event.event_type() == Some(EslEventType::Heartbeat) {
-            count += 1;
-            if count >= 3 {
-                break;
+        if let Ok(event) = result {
+            if event.event_type() == Some(EslEventType::Heartbeat) {
+                count += 1;
+                if count >= 3 {
+                    break;
+                }
             }
         }
     }
@@ -315,10 +319,7 @@ async fn test_heartbeat_event_headers() {
     mock.send_heartbeat()
         .await;
 
-    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
-        .await
-        .expect("timeout")
-        .expect("closed");
+    let event = recv_event(&mut events).await;
 
     assert_eq!(event.event_type(), Some(EslEventType::Heartbeat));
     // Values should be percent-decoded
@@ -347,10 +348,7 @@ async fn test_url_decoded_headers() {
     mock.send_event_plain("CHANNEL_CREATE", &headers)
         .await;
 
-    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
-        .await
-        .expect("timeout")
-        .expect("closed");
+    let event = recv_event(&mut events).await;
 
     // Percent-encoded values should be decoded
     assert_eq!(
