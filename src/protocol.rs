@@ -377,47 +377,79 @@ impl EslParser {
         Ok(event)
     }
 
-    /// Extract XML attribute from a line
-    fn extract_xml_attribute(line: &str) -> Option<(String, String)> {
-        let eq_pos = line.find('=')?;
-        let start = line.find('"')?;
-        let end = line.rfind('"')?;
-
-        if start != end {
-            let key = line[1..eq_pos].trim();
-            let value = &line[start + 1..end];
-            Some((key.to_string(), value.to_string()))
-        } else {
-            None
-        }
-    }
-
-    /// Parse XML event
+    /// Parse XML event using quick_xml.
+    ///
+    /// FreeSWITCH XML event format:
+    /// ```xml
+    /// <event>
+    ///   <headers>
+    ///     <Event-Name>HEARTBEAT</Event-Name>
+    ///     <Core-UUID>abc-123</Core-UUID>
+    ///   </headers>
+    ///   <body>...</body>
+    /// </event>
+    /// ```
     fn parse_xml_event(&self, message: EslMessage) -> EslResult<EslEvent> {
+        use quick_xml::events::Event as XmlEvent;
+        use quick_xml::Reader;
+
         let body = message
             .body
             .ok_or_else(|| EslError::protocol_error("XML event missing body"))?;
 
-        // Parse XML - simplified implementation
-        // In a full implementation, you'd use proper XML parsing
+        let mut reader = Reader::from_str(&body);
         let mut event = EslEvent::new();
+        let mut in_headers = false;
+        let mut current_tag: Option<String> = None;
+        let mut in_body = false;
 
-        // For now, just extract text content between XML tags
-        // This is a simplified parser - you might want to use quick-xml properly
-        let lines = body.lines();
-        for line in lines {
-            let line = line.trim();
-            if line.starts_with('<') && line.ends_with('>') && line.contains("=") {
-                if let Some((key, value)) = Self::extract_xml_attribute(line) {
-                    event
-                        .headers
-                        .insert(key, value);
+        loop {
+            match reader.read_event() {
+                Ok(XmlEvent::Start(ref e)) => {
+                    let tag = String::from_utf8_lossy(
+                        e.name()
+                            .as_ref(),
+                    )
+                    .to_string();
+                    match tag.as_str() {
+                        "headers" => in_headers = true,
+                        "body" => in_body = true,
+                        _ if in_headers => current_tag = Some(tag),
+                        _ => {}
+                    }
                 }
+                Ok(XmlEvent::End(ref e)) => {
+                    let tag = String::from_utf8_lossy(
+                        e.name()
+                            .as_ref(),
+                    )
+                    .to_string();
+                    match tag.as_str() {
+                        "headers" => in_headers = false,
+                        "body" => in_body = false,
+                        _ if in_headers => current_tag = None,
+                        _ => {}
+                    }
+                }
+                Ok(XmlEvent::Text(ref e)) => {
+                    let text = e
+                        .unescape()?
+                        .to_string();
+                    if in_body {
+                        event.body = Some(text);
+                    } else if let Some(ref tag) = current_tag {
+                        event
+                            .headers
+                            .insert(tag.clone(), text);
+                    }
+                }
+                Ok(XmlEvent::Eof) => break,
+                Err(e) => return Err(EslError::XmlError(e)),
+                _ => {}
             }
         }
 
-        // Extract event type
-        if let Some(event_name) = event.header("Event-Name") {
+        if let Some(event_name) = event.header(HEADER_EVENT_NAME) {
             event.event_type = EslEventType::parse_event_type(event_name);
         }
 

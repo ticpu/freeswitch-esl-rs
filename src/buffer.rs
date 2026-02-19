@@ -207,7 +207,7 @@ impl EslBuffer {
             self.data()
                 .to_vec(),
         )
-        .map_err(|e| EslError::Utf8Error(std::str::from_utf8(&e.into_bytes()).unwrap_err()))
+        .map_err(|e| EslError::Utf8Error(e.utf8_error()))
     }
 }
 

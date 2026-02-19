@@ -329,7 +329,7 @@ impl ApplicationList {
                 if self
                     .0
                     .len()
-                    > 1
+                    != 1
                 {
                     return Err(OriginateError::TooManyApplications);
                 }
