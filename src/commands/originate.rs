@@ -661,6 +661,24 @@ mod tests {
     }
 
     #[test]
+    fn application_list_empty_xml_errors() {
+        let list = ApplicationList(vec![]);
+        assert!(list
+            .to_string_with_dialplan(&DialplanType::Xml)
+            .is_err());
+    }
+
+    #[test]
+    fn application_list_empty_inline() {
+        let list = ApplicationList(vec![]);
+        assert_eq!(
+            list.to_string_with_dialplan(&DialplanType::Inline)
+                .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
     fn application_list_two_xml_errors() {
         let list = ApplicationList(vec![
             Application::new("testApp1", Some("testArg1")),

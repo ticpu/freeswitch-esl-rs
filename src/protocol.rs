@@ -651,4 +651,70 @@ mod tests {
         );
         assert_eq!(event.header("gateway_name"), Some(&"ng911-bcf".to_string()));
     }
+
+    #[test]
+    fn test_parse_event_xml_heartbeat() {
+        let mut parser = EslParser::new();
+        let xml_body = "\
+<event>\n\
+  <headers>\n\
+    <Event-Name>HEARTBEAT</Event-Name>\n\
+    <Core-UUID>abc-123</Core-UUID>\n\
+    <Up-Time>0 years, 1 day</Up-Time>\n\
+  </headers>\n\
+</event>";
+        let envelope = format!(
+            "Content-Length: {}\nContent-Type: text/event-xml\n\n",
+            xml_body.len()
+        );
+        let data = format!("{}{}", envelope, xml_body);
+
+        parser
+            .add_data(data.as_bytes())
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        let event = parser
+            .parse_event(message, EventFormat::Xml)
+            .unwrap();
+
+        assert_eq!(event.event_type, Some(EslEventType::Heartbeat));
+        assert_eq!(event.header("Core-UUID"), Some(&"abc-123".to_string()));
+        assert_eq!(event.header("Up-Time"), Some(&"0 years, 1 day".to_string()));
+    }
+
+    #[test]
+    fn test_parse_event_xml_with_body() {
+        let mut parser = EslParser::new();
+        let xml_body = "\
+<event>\n\
+  <headers>\n\
+    <Event-Name>BACKGROUND_JOB</Event-Name>\n\
+    <Job-UUID>def-456</Job-UUID>\n\
+  </headers>\n\
+  <body>+OK result data</body>\n\
+</event>";
+        let envelope = format!(
+            "Content-Length: {}\nContent-Type: text/event-xml\n\n",
+            xml_body.len()
+        );
+        let data = format!("{}{}", envelope, xml_body);
+
+        parser
+            .add_data(data.as_bytes())
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        let event = parser
+            .parse_event(message, EventFormat::Xml)
+            .unwrap();
+
+        assert_eq!(event.event_type, Some(EslEventType::BackgroundJob));
+        assert_eq!(event.header("Job-UUID"), Some(&"def-456".to_string()));
+        assert_eq!(event.body(), Some(&"+OK result data".to_string()));
+    }
 }
