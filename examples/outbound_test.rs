@@ -6,6 +6,9 @@
 //!
 //! Usage: cargo run --example outbound_test
 
+use freeswitch_esl_tokio::commands::originate::{
+    Application, ApplicationList, Endpoint, Originate,
+};
 use freeswitch_esl_tokio::{EslClient, EslEventType, EventFormat};
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -44,16 +47,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     step_ok("connect inbound ESL");
     pass += 1;
 
-    // Step 3: Originate call to outbound socket
-    // Use {}} for the socket data so loopback doesn't strip the arguments.
-    // Without proper quoting, "async full" flags are lost and FS defaults
-    // to single-channel static mode.
-    let originate_cmd = format!(
-        "originate loopback/9199/test '&socket(127.0.0.1:{} async full)'",
-        outbound_port
-    );
+    // Step 3: Originate call to outbound socket via Originate builder
+    let originate = Originate {
+        endpoint: Endpoint::Loopback {
+            uri: "9199".into(),
+            context: "test".into(),
+            variables: None,
+        },
+        applications: ApplicationList(vec![Application::new(
+            "socket",
+            Some(format!("127.0.0.1:{} async full", outbound_port)),
+        )]),
+        dialplan: None,
+        context: None,
+        cid_name: None,
+        cid_num: None,
+        timeout: None,
+    };
     let resp = inbound
-        .api(&originate_cmd)
+        .api(&originate.to_string())
         .await?;
     if resp.is_success()
         || resp

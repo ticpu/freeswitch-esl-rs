@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use indexmap::IndexMap;
 
-use super::originate_split;
+use super::{originate_quote, originate_split, originate_unquote};
 
 /// FreeSWITCH dialplan type for originate commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,7 +363,7 @@ impl fmt::Display for Originate {
             .to_string_with_dialplan(&dialplan)
             .map_err(|_| fmt::Error)?;
 
-        write!(f, "originate {} {}", self.endpoint, apps)?;
+        write!(f, "originate {} {}", self.endpoint, originate_quote(&apps))?;
 
         if let Some(ref dp) = self.dialplan {
             write!(f, " {}", dp)?;
@@ -407,7 +407,7 @@ impl FromStr for Originate {
             ));
         }
 
-        let app_str = args.remove(0);
+        let app_str = originate_unquote(&args.remove(0));
 
         let dialplan = args
             .first()
@@ -761,6 +761,49 @@ mod tests {
             .endpoint
             .to_string()
             .contains("sofia/test"));
+    }
+
+    #[test]
+    fn originate_socket_app_quoted() {
+        let ep = Endpoint::Loopback {
+            uri: "9199".into(),
+            context: "test".into(),
+            variables: None,
+        };
+        let apps = ApplicationList(vec![Application::new(
+            "socket",
+            Some("127.0.0.1:8040 async full"),
+        )]);
+        let orig = Originate {
+            endpoint: ep,
+            applications: apps,
+            dialplan: None,
+            context: None,
+            cid_name: None,
+            cid_num: None,
+            timeout: None,
+        };
+        assert_eq!(
+            orig.to_string(),
+            "originate loopback/9199/test '&socket(127.0.0.1:8040 async full)'"
+        );
+    }
+
+    #[test]
+    fn originate_socket_round_trip() {
+        let input = "originate loopback/9199/test '&socket(127.0.0.1:8040 async full)'";
+        let parsed: Originate = input
+            .parse()
+            .unwrap();
+        assert_eq!(parsed.to_string(), input);
+        assert_eq!(
+            parsed
+                .applications
+                .0[0]
+                .args
+                .as_deref(),
+            Some("127.0.0.1:8040 async full")
+        );
     }
 
     #[test]

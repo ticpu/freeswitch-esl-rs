@@ -12,6 +12,33 @@ pub use originate::{
     VariablesType,
 };
 
+/// Wrap a token in single quotes for originate command strings.
+///
+/// If `token` contains spaces, it is wrapped in `'...'` with any inner
+/// single quotes escaped as `\'`.  Tokens without spaces are returned as-is.
+pub fn originate_quote(token: &str) -> String {
+    if token.contains(' ') {
+        let escaped = token.replace('\'', "\\'");
+        format!("'{}'", escaped)
+    } else {
+        token.to_string()
+    }
+}
+
+/// Strip single-quote wrapping added by [`originate_quote`].
+///
+/// If the token starts and ends with `'`, the outer quotes are removed
+/// and `\'` sequences are unescaped back to `'`.
+pub fn originate_unquote(token: &str) -> String {
+    match token
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+    {
+        Some(inner) => inner.replace("\\'", "'"),
+        None => token.to_string(),
+    }
+}
+
 /// Quote-aware tokenizer for originate command strings.
 ///
 /// Splits `line` on `split_at` (default: space), respecting single-quote
@@ -152,6 +179,60 @@ mod tests {
         assert_eq!(result[3], "add");
         assert_eq!(result[4], "a");
         assert_eq!(result[5], "quote");
+    }
+
+    #[test]
+    fn quote_without_spaces_returns_as_is() {
+        assert_eq!(originate_quote("&park()"), "&park()");
+    }
+
+    #[test]
+    fn quote_with_spaces_wraps_in_single_quotes() {
+        assert_eq!(
+            originate_quote("&socket(127.0.0.1:8040 async full)"),
+            "'&socket(127.0.0.1:8040 async full)'"
+        );
+    }
+
+    #[test]
+    fn quote_with_single_quote_and_spaces_escapes_quote() {
+        assert_eq!(
+            originate_quote("&playback(it's a test file)"),
+            "'&playback(it\\'s a test file)'"
+        );
+    }
+
+    #[test]
+    fn unquote_non_quoted_returns_as_is() {
+        assert_eq!(originate_unquote("&park()"), "&park()");
+    }
+
+    #[test]
+    fn unquote_strips_outer_quotes() {
+        assert_eq!(
+            originate_unquote("'&socket(127.0.0.1:8040 async full)'"),
+            "&socket(127.0.0.1:8040 async full)"
+        );
+    }
+
+    #[test]
+    fn unquote_unescapes_inner_quotes() {
+        assert_eq!(
+            originate_unquote("'&playback(it\\'s a test file)'"),
+            "&playback(it's a test file)"
+        );
+    }
+
+    #[test]
+    fn quote_unquote_round_trip() {
+        let original = "&socket(127.0.0.1:8040 async full)";
+        assert_eq!(originate_unquote(&originate_quote(original)), original);
+    }
+
+    #[test]
+    fn quote_unquote_round_trip_with_inner_quote() {
+        let original = "&playback(it's a test file)";
+        assert_eq!(originate_unquote(&originate_quote(original)), original);
     }
 
     #[test]
