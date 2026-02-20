@@ -211,6 +211,8 @@ pub enum EslCommand {
     DivertEvents { on: bool },
     /// Read a channel variable (outbound mode)
     GetVar { name: String },
+    /// Request channel data in outbound mode
+    Connect,
 }
 
 impl EslCommand {
@@ -330,6 +332,7 @@ impl EslCommand {
                 Self::format_simple_command("divert_events", &[arg])
             }
             EslCommand::GetVar { name } => Self::format_simple_command("getvar", &[name]),
+            EslCommand::Connect => Self::format_simple_command("connect", &[]),
         }
     }
 }
@@ -516,6 +519,12 @@ mod tests {
             name: "caller_id_name".to_string(),
         };
         assert_eq!(cmd.to_wire_format(), "getvar caller_id_name\n\n");
+    }
+
+    #[test]
+    fn test_connect_wire_format() {
+        let cmd = EslCommand::Connect;
+        assert_eq!(cmd.to_wire_format(), "connect\n\n");
     }
 
     #[test]

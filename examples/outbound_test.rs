@@ -45,8 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     pass += 1;
 
     // Step 3: Originate call to outbound socket
+    // Use {}} for the socket data so loopback doesn't strip the arguments.
+    // Without proper quoting, "async full" flags are lost and FS defaults
+    // to single-channel static mode.
     let originate_cmd = format!(
-        "originate loopback/9199/test &socket(127.0.0.1:{} async full)",
+        "originate loopback/9199/test '&socket(127.0.0.1:{} async full)'",
         outbound_port
     );
     let resp = inbound
@@ -93,7 +96,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-    // Step 5a: myevents
+    // Step 5: Send connect to establish outbound session
+    match client
+        .connect_session()
+        .await
+    {
+        Ok(resp) => {
+            let channel = resp
+                .header("Channel-Name")
+                .map(|s| s.as_str())
+                .unwrap_or("(unknown)");
+            let control = resp
+                .header("Control")
+                .map(|s| s.as_str())
+                .unwrap_or("(missing)");
+            let mode = resp
+                .header("Socket-Mode")
+                .map(|s| s.as_str())
+                .unwrap_or("(missing)");
+            step_ok(&format!(
+                "connect session (channel: {}, control: {}, mode: {})",
+                channel, control, mode
+            ));
+            pass += 1;
+        }
+        Err(e) => {
+            step_fail("connect session", &e.to_string());
+            fail += 1;
+        }
+    }
+
+    // Step 6a: myevents
     match client
         .myevents(EventFormat::Plain)
         .await
@@ -108,22 +141,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Step 5b: linger
+    // Step 6b: linger (without timeout — not all FS versions support linger <seconds>)
     match client
-        .linger(Some(10))
+        .linger(None)
         .await
     {
         Ok(()) => {
-            step_ok("linger 10");
+            step_ok("linger");
             pass += 1;
         }
         Err(e) => {
-            step_fail("linger 10", &e.to_string());
+            step_fail("linger", &e.to_string());
             fail += 1;
         }
     }
 
-    // Step 5c: resume
+    // Step 6c: resume
     match client
         .resume()
         .await
@@ -138,8 +171,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Step 6: Receive events, look for channel events
-    let mut got_channel_event = false;
+    // Step 7: Receive events — the call is already in echo mode so create/answer
+    // events already fired. We expect to see hangup when 9199 auto-hangs up (~8s).
+    let mut event_count = 0u32;
     let mut got_hangup = false;
 
     println!("  ...   waiting for channel events (up to 30s)...");
@@ -148,29 +182,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match tokio::time::timeout_at(deadline, events.recv()).await {
             Ok(Some(Ok(event))) => {
                 let etype = event.event_type();
-                if !got_channel_event {
-                    if matches!(
-                        etype,
-                        Some(
-                            EslEventType::ChannelCreate
-                                | EslEventType::ChannelAnswer
-                                | EslEventType::ChannelState
-                                | EslEventType::ChannelCallstate
-                                | EslEventType::ChannelExecute
-                                | EslEventType::ChannelExecuteComplete
-                        )
-                    ) {
-                        step_ok(&format!("received channel event: {:?}", etype.unwrap()));
-                        pass += 1;
-                        got_channel_event = true;
-                    }
-                }
+                println!(
+                    "  ...   event: {:?}",
+                    etype
+                        .map(|e| e.to_string())
+                        .unwrap_or("(unknown)".into())
+                );
+                event_count += 1;
                 if matches!(
                     etype,
                     Some(EslEventType::ChannelHangup | EslEventType::ChannelHangupComplete)
                 ) {
-                    step_ok(&format!("received hangup event: {:?}", etype.unwrap()));
-                    pass += 1;
                     got_hangup = true;
                     break;
                 }
@@ -187,11 +209,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if !got_channel_event {
-        step_fail("received channel event", "no channel events seen");
+    if event_count > 0 {
+        step_ok(&format!("received {} event(s)", event_count));
+        pass += 1;
+    } else {
+        step_fail("receive events", "no events seen");
         fail += 1;
     }
-    if !got_hangup {
+    if got_hangup {
+        step_ok("received hangup event");
+        pass += 1;
+    } else {
         step_fail("received hangup event", "no hangup event seen");
         fail += 1;
     }

@@ -998,6 +998,20 @@ impl EslClient {
         Ok(())
     }
 
+    /// Establish the outbound session by sending `connect` and receiving channel data.
+    ///
+    /// In outbound mode, this **must** be the first command sent after
+    /// [`accept_outbound`](Self::accept_outbound). FreeSWITCH replies with a
+    /// `command/reply` containing all channel variables for the session.
+    ///
+    /// The returned [`EslResponse`] contains the channel data as headers.
+    /// Use [`EslResponse::header()`] to read individual channel variables
+    /// (e.g., `Caller-Caller-ID-Number`, `Channel-Name`).
+    pub async fn connect_session(&self) -> EslResult<EslResponse> {
+        self.send_command(EslCommand::Connect)
+            .await
+    }
+
     /// Unsubscribe from specific events by typed enum variants.
     ///
     /// The inverse of [`subscribe_events`](Self::subscribe_events). Accepts
