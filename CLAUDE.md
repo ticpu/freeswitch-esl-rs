@@ -71,6 +71,21 @@ See [docs/outbound-esl-quirks.md](docs/outbound-esl-quirks.md) for details.
   via `originate_quote()`/`originate_unquote()` in `commands/mod.rs`
 - `cargo run --example outbound_test` exercises outbound against real FS on port 8022
 
+## Live Integration Tests
+
+When FreeSWITCH ESL is available on `127.0.0.1:8022` (password `ClueCon`),
+run the live tests after unit tests pass:
+
+```sh
+cargo test --test live_freeswitch -- --ignored
+```
+
+These tests exercise real ESL connections: auth, api commands, event
+subscription, sendevent with priority/array headers, and round-trip
+custom event delivery.
+
+To check if FreeSWITCH is listening: `ss -tlnp sport = :8022`
+
 ## Development Methodology — TDD
 
 This project follows test-driven development:

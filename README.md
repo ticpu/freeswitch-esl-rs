@@ -298,6 +298,29 @@ matches the C ESL `EVENT_NAMES[]` array. Set `FREESWITCH_SOURCE` to a
 local FreeSWITCH checkout, or the script fetches `esl_event.c` from
 GitHub on first run.
 
+### Testing
+
+Unit and mock-server tests run without external dependencies:
+
+```sh
+cargo test --lib
+cargo test --test integration_tests --test connection_tests
+```
+
+Live integration tests require FreeSWITCH ESL on `127.0.0.1:8022`
+(password `ClueCon`). They are `#[ignore]` by default:
+
+```sh
+cargo test --test live_freeswitch -- --ignored
+```
+
+The outbound socket example exercises the full outbound flow against
+FreeSWITCH (requires extension 9199 in `test` context):
+
+```sh
+cargo run --example outbound_test
+```
+
 ## Requirements
 
 - Rust 1.70+
