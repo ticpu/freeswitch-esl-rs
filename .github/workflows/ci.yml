@@ -35,6 +35,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Check EslEventType vs C ESL
+        run: hooks/check-event-types.sh
+
       - name: Test
         run: cargo test
 
