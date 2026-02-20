@@ -221,4 +221,4 @@ let pidf = body.by_mime_type("application/pidf+xml");
 
 ## License
 
-MPL-2.0 — see [LICENSE](LICENSE).
+MIT OR Apache-2.0 — see [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
