@@ -998,6 +998,99 @@ impl EslClient {
         Ok(())
     }
 
+    /// Unsubscribe from specific events by typed enum variants.
+    ///
+    /// The inverse of [`subscribe_events`](Self::subscribe_events). Accepts
+    /// multiple event types to unsubscribe from at once.
+    pub async fn nixevent(&self, events: &[EslEventType]) -> EslResult<()> {
+        let events_str = events
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        self.nixevent_raw(&events_str)
+            .await
+    }
+
+    /// Unsubscribe from events using raw event name strings.
+    ///
+    /// Use this for event types not covered by `EslEventType`, or for
+    /// forward compatibility with new FreeSWITCH events without a library update.
+    pub async fn nixevent_raw(&self, events: &str) -> EslResult<()> {
+        let cmd = EslCommand::NixEvent {
+            events: events.to_string(),
+        };
+        let response = self
+            .send_command(cmd)
+            .await?;
+        response.into_result()?;
+        Ok(())
+    }
+
+    /// Unsubscribe from all events.
+    ///
+    /// Clears all event subscriptions. The server flushes any queued events.
+    pub async fn noevents(&self) -> EslResult<()> {
+        let response = self
+            .send_command(EslCommand::NoEvents)
+            .await?;
+        response.into_result()?;
+        Ok(())
+    }
+
+    /// Remove an event filter for a specific header.
+    ///
+    /// Without a value, removes all filters for the given header.
+    /// With a value, removes only the filter matching that header+value pair.
+    pub async fn filter_delete(&self, header: &str, value: Option<&str>) -> EslResult<()> {
+        let cmd = EslCommand::FilterDelete {
+            header: header.to_string(),
+            value: value.map(|v| v.to_string()),
+        };
+        let response = self
+            .send_command(cmd)
+            .await?;
+        response.into_result()?;
+        Ok(())
+    }
+
+    /// Remove all event filters.
+    pub async fn filter_delete_all(&self) -> EslResult<()> {
+        self.filter_delete("all", None)
+            .await
+    }
+
+    /// Redirect session events to the ESL connection (outbound mode).
+    ///
+    /// When `on` is true, events that would normally be processed internally
+    /// by FreeSWITCH are instead sent to the ESL connection.
+    pub async fn divert_events(&self, on: bool) -> EslResult<()> {
+        let cmd = EslCommand::DivertEvents { on };
+        let response = self
+            .send_command(cmd)
+            .await?;
+        response.into_result()?;
+        Ok(())
+    }
+
+    /// Read a channel variable (outbound mode).
+    ///
+    /// Returns the raw value from Reply-Text. FreeSWITCH returns an empty
+    /// string for unset variables (never errors).
+    pub async fn getvar(&self, name: &str) -> EslResult<String> {
+        let cmd = EslCommand::GetVar {
+            name: name.to_string(),
+        };
+        let response = self
+            .send_command(cmd)
+            .await?;
+        Ok(response
+            .reply_text()
+            .cloned()
+            .unwrap_or_default())
+    }
+
     /// Enable FreeSWITCH log forwarding at the given level.
     ///
     /// Log messages stream as events with `Content-Type: log/data`.

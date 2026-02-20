@@ -198,6 +198,19 @@ pub enum EslCommand {
     NoLinger,
     /// Resume dialplan execution on socket disconnect
     Resume,
+    /// Unsubscribe from specific events
+    NixEvent { events: String },
+    /// Unsubscribe from all events
+    NoEvents,
+    /// Remove event filters
+    FilterDelete {
+        header: String,
+        value: Option<String>,
+    },
+    /// Redirect session events to ESL (outbound mode)
+    DivertEvents { on: bool },
+    /// Read a channel variable (outbound mode)
+    GetVar { name: String },
 }
 
 impl EslCommand {
@@ -300,6 +313,23 @@ impl EslCommand {
             },
             EslCommand::NoLinger => Self::format_simple_command("nolinger", &[]),
             EslCommand::Resume => Self::format_simple_command("resume", &[]),
+            EslCommand::NixEvent { events } => Self::format_simple_command("nixevent", &[events]),
+            EslCommand::NoEvents => Self::format_simple_command("noevents", &[]),
+            EslCommand::FilterDelete { header, value } => {
+                if header == "all" {
+                    Self::format_simple_command("filter", &["delete", "all"])
+                } else {
+                    match value {
+                        Some(v) => Self::format_simple_command("filter", &["delete", header, v]),
+                        None => Self::format_simple_command("filter", &["delete", header]),
+                    }
+                }
+            }
+            EslCommand::DivertEvents { on } => {
+                let arg = if *on { "on" } else { "off" };
+                Self::format_simple_command("divert_events", &[arg])
+            }
+            EslCommand::GetVar { name } => Self::format_simple_command("getvar", &[name]),
         }
     }
 }
@@ -422,6 +452,70 @@ mod tests {
         assert!(wire.starts_with("sendevent CUSTOM\n"));
         assert!(wire.contains("Content-Length: 11\n"));
         assert!(wire.ends_with("hello world"));
+    }
+
+    #[test]
+    fn test_nixevent_wire_format() {
+        let cmd = EslCommand::NixEvent {
+            events: "CHANNEL_CREATE CHANNEL_DESTROY".to_string(),
+        };
+        assert_eq!(
+            cmd.to_wire_format(),
+            "nixevent CHANNEL_CREATE CHANNEL_DESTROY\n\n"
+        );
+    }
+
+    #[test]
+    fn test_noevents_wire_format() {
+        let cmd = EslCommand::NoEvents;
+        assert_eq!(cmd.to_wire_format(), "noevents\n\n");
+    }
+
+    #[test]
+    fn test_filter_delete_wire_format() {
+        let cmd = EslCommand::FilterDelete {
+            header: "Event-Name".to_string(),
+            value: None,
+        };
+        assert_eq!(cmd.to_wire_format(), "filter delete Event-Name\n\n");
+    }
+
+    #[test]
+    fn test_filter_delete_value_wire_format() {
+        let cmd = EslCommand::FilterDelete {
+            header: "Event-Name".to_string(),
+            value: Some("CHANNEL_CREATE".to_string()),
+        };
+        assert_eq!(
+            cmd.to_wire_format(),
+            "filter delete Event-Name CHANNEL_CREATE\n\n"
+        );
+    }
+
+    #[test]
+    fn test_filter_delete_all_wire_format() {
+        let cmd = EslCommand::FilterDelete {
+            header: "all".to_string(),
+            value: None,
+        };
+        assert_eq!(cmd.to_wire_format(), "filter delete all\n\n");
+    }
+
+    #[test]
+    fn test_divert_events_wire_format() {
+        let cmd_on = EslCommand::DivertEvents { on: true };
+        assert_eq!(cmd_on.to_wire_format(), "divert_events on\n\n");
+
+        let cmd_off = EslCommand::DivertEvents { on: false };
+        assert_eq!(cmd_off.to_wire_format(), "divert_events off\n\n");
+    }
+
+    #[test]
+    fn test_getvar_wire_format() {
+        let cmd = EslCommand::GetVar {
+            name: "caller_id_name".to_string(),
+        };
+        assert_eq!(cmd.to_wire_format(), "getvar caller_id_name\n\n");
     }
 
     #[test]

@@ -631,3 +631,130 @@ async fn test_resume_command() {
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn test_nixevent_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .nixevent(&[EslEventType::ChannelCreate, EslEventType::ChannelDestroy])
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "nixevent CHANNEL_CREATE CHANNEL_DESTROY\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_noevents_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .noevents()
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "noevents\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_filter_delete_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .filter_delete("Event-Name", Some("CHANNEL_CREATE"))
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "filter delete Event-Name CHANNEL_CREATE\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_divert_events_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .divert_events(true)
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "divert_events on\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_getvar_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .getvar("caller_id_name")
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "getvar caller_id_name\n\n");
+    mock.reply_raw_text("John Doe")
+        .await;
+
+    let value = task
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(value, "John Doe");
+}

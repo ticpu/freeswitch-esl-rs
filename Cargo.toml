@@ -43,3 +43,7 @@ path = "examples/event_listener.rs"
 [[example]]
 name = "event_filter"
 path = "examples/event_filter.rs"
+
+[[example]]
+name = "outbound_test"
+path = "examples/outbound_test.rs"

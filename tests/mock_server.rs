@@ -176,6 +176,13 @@ impl MockClient {
             .await;
     }
 
+    /// Send a command reply with a raw Reply-Text value (for getvar)
+    pub async fn reply_raw_text(&mut self, text: &str) {
+        let msg = format!("Content-Type: command/reply\nReply-Text: {}\n\n", text);
+        self.send_raw(&msg)
+            .await;
+    }
+
     /// Drop the TCP connection
     pub async fn drop_connection(self) {
         drop(self.stream);
