@@ -3,9 +3,6 @@
 /// Default FreeSWITCH ESL port for inbound connections
 pub const DEFAULT_ESL_PORT: u16 = 8021;
 
-/// Default password for ESL authentication
-pub const DEFAULT_PASSWORD: &str = "ClueCon";
-
 /// Socket buffer size for reading from TCP stream (64KB) - standard TCP receive window
 pub const SOCKET_BUF_SIZE: usize = 65536;
 
@@ -21,9 +18,6 @@ pub const MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
 /// Should hold 2 max messages + overhead. Indicates a bug if exceeded.
 pub const MAX_BUFFER_SIZE: usize = 16 * 1024 * 1024;
 
-/// Maximum reply size for command responses (1KB)
-pub const MAX_REPLY_SIZE: usize = 1024;
-
 /// Protocol message terminators
 pub const HEADER_TERMINATOR: &str = "\n\n";
 pub const LINE_TERMINATOR: &str = "\n";
@@ -35,10 +29,6 @@ pub const CONTENT_TYPE_API_RESPONSE: &str = "api/response";
 pub const CONTENT_TYPE_TEXT_EVENT_PLAIN: &str = "text/event-plain";
 pub const CONTENT_TYPE_TEXT_EVENT_JSON: &str = "text/event-json";
 pub const CONTENT_TYPE_TEXT_EVENT_XML: &str = "text/event-xml";
-
-/// Reply text values
-pub const REPLY_TEXT_OK: &str = "+OK accepted";
-pub const REPLY_TEXT_ERR: &str = "-ERR";
 
 /// Header names
 pub const HEADER_CONTENT_TYPE: &str = "Content-Type";

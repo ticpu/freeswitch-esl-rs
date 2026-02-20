@@ -69,44 +69,9 @@ impl EslMessage {
         }
     }
 
-    /// Get header value
-    pub fn header(&self, name: &str) -> Option<&String> {
-        self.headers
-            .get(name)
-    }
-
     /// Convert to EslResponse
     pub fn into_response(self) -> EslResponse {
         EslResponse::new(self.headers, self.body)
-    }
-
-    /// Convert to EslEvent, parsing based on Content-Type
-    pub fn into_event(self) -> EslResult<EslEvent> {
-        if self.message_type != MessageType::Event {
-            return Err(EslError::protocol_error("Message is not an event"));
-        }
-
-        let parser = EslParser::new();
-        let format = self
-            .headers
-            .get(HEADER_CONTENT_TYPE)
-            .map(|ct| match ct.as_str() {
-                CONTENT_TYPE_TEXT_EVENT_JSON => EventFormat::Json,
-                CONTENT_TYPE_TEXT_EVENT_XML => EventFormat::Xml,
-                _ => EventFormat::Plain,
-            })
-            .unwrap_or(EventFormat::Plain);
-
-        parser.parse_event(self, format)
-    }
-
-    /// Check if this is a successful response
-    pub fn is_success(&self) -> bool {
-        if let Some(reply_text) = self.header(HEADER_REPLY_TEXT) {
-            reply_text.starts_with("+OK")
-        } else {
-            true
-        }
     }
 }
 
@@ -324,9 +289,7 @@ impl EslParser {
                     .decode_utf8()
                     .map(|s| s.into_owned())
                     .unwrap_or_else(|_| raw_value.to_string());
-                event
-                    .headers
-                    .insert(key, value);
+                event.set_header(key, value);
             }
         }
 
@@ -334,12 +297,15 @@ impl EslParser {
         // is that many bytes after the header section
         if let Some(ib) = inner_body {
             if !ib.is_empty() {
-                event.body = Some(ib.to_string());
+                event.set_body(ib.to_string());
             }
         }
 
-        if let Some(event_name) = event.header(HEADER_EVENT_NAME) {
-            event.event_type = EslEventType::parse_event_type(event_name);
+        if let Some(event_name) = event
+            .header(HEADER_EVENT_NAME)
+            .map(|s| s.to_string())
+        {
+            event.set_event_type(EslEventType::parse_event_type(&event_name));
         }
 
         Ok(event)
@@ -357,20 +323,19 @@ impl EslParser {
         let mut event = EslEvent::new();
 
         if let Some(obj) = json_value.as_object() {
-            // Convert JSON object to headers
             for (key, value) in obj {
                 let value_str = match value {
                     serde_json::Value::String(s) => s.clone(),
                     _ => value.to_string(),
                 };
-                event
-                    .headers
-                    .insert(key.clone(), value_str);
+                event.set_header(key.clone(), value_str);
             }
 
-            // Extract event type
-            if let Some(event_name) = event.header("Event-Name") {
-                event.event_type = EslEventType::parse_event_type(event_name);
+            if let Some(event_name) = event
+                .header("Event-Name")
+                .map(|s| s.to_string())
+            {
+                event.set_event_type(EslEventType::parse_event_type(&event_name));
             }
         }
 
@@ -436,11 +401,9 @@ impl EslParser {
                         .unescape()?
                         .to_string();
                     if in_body {
-                        event.body = Some(text);
+                        event.set_body(text);
                     } else if let Some(ref tag) = current_tag {
-                        event
-                            .headers
-                            .insert(tag.clone(), text);
+                        event.set_header(tag.clone(), text);
                     }
                 }
                 Ok(XmlEvent::Eof) => break,
@@ -449,29 +412,14 @@ impl EslParser {
             }
         }
 
-        if let Some(event_name) = event.header(HEADER_EVENT_NAME) {
-            event.event_type = EslEventType::parse_event_type(event_name);
+        if let Some(event_name) = event
+            .header(HEADER_EVENT_NAME)
+            .map(|s| s.to_string())
+        {
+            event.set_event_type(EslEventType::parse_event_type(&event_name));
         }
 
         Ok(event)
-    }
-
-    /// Get current buffer length
-    pub fn buffer_len(&self) -> usize {
-        self.buffer
-            .len()
-    }
-
-    /// Compact the internal buffer
-    pub fn compact_buffer(&mut self) {
-        self.buffer
-            .compact();
-    }
-
-    /// Clear the buffer
-    pub fn clear_buffer(&mut self) {
-        self.buffer
-            .clear();
     }
 }
 
@@ -494,10 +442,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            headers.get("Content-Type"),
-            Some(&"auth/request".to_string())
+            headers
+                .get("Content-Type")
+                .map(|s| s.as_str()),
+            Some("auth/request")
         );
-        assert_eq!(headers.get("Content-Length"), Some(&"0".to_string()));
+        assert_eq!(
+            headers
+                .get("Content-Length")
+                .map(|s| s.as_str()),
+            Some("0")
+        );
     }
 
     #[test]
@@ -558,8 +513,8 @@ mod tests {
             .parse_event(message, EventFormat::Plain)
             .unwrap();
 
-        assert_eq!(event.event_type, Some(EslEventType::ChannelAnswer));
-        assert_eq!(event.unique_id(), Some(&"test-uuid".to_string()));
+        assert_eq!(event.event_type(), Some(EslEventType::ChannelAnswer));
+        assert_eq!(event.unique_id(), Some("test-uuid"));
     }
 
     #[test]
@@ -583,15 +538,9 @@ mod tests {
             .parse_event(message, EventFormat::Plain)
             .unwrap();
 
-        assert_eq!(event.event_type, Some(EslEventType::Heartbeat));
-        assert_eq!(
-            event.header("Up-Time"),
-            Some(&"0 years, 0 days".to_string())
-        );
-        assert_eq!(
-            event.header("Event-Info"),
-            Some(&"System Ready".to_string())
-        );
+        assert_eq!(event.event_type(), Some(EslEventType::Heartbeat));
+        assert_eq!(event.header("Up-Time"), Some("0 years, 0 days"));
+        assert_eq!(event.header("Event-Info"), Some("System Ready"));
     }
 
     #[test]
@@ -621,9 +570,9 @@ mod tests {
             .parse_event(message, EventFormat::Plain)
             .unwrap();
 
-        assert_eq!(event.event_type, Some(EslEventType::BackgroundJob));
-        assert_eq!(event.header("Job-UUID"), Some(&"abc-123".to_string()));
-        assert_eq!(event.body(), Some(&"+OK Status\n".to_string()));
+        assert_eq!(event.event_type(), Some(EslEventType::BackgroundJob));
+        assert_eq!(event.header("Job-UUID"), Some("abc-123"));
+        assert_eq!(event.body(), Some("+OK Status\n"));
     }
 
     #[test]
@@ -670,18 +619,12 @@ mod tests {
             .parse_event(message, EventFormat::Plain)
             .unwrap();
 
-        assert_eq!(event.event_type, Some(EslEventType::NotifyIn));
-        assert_eq!(
-            event.header("event"),
-            Some(&"emergency-AbandonedCall".to_string())
-        );
+        assert_eq!(event.event_type(), Some(EslEventType::NotifyIn));
+        assert_eq!(event.header("event"), Some("emergency-AbandonedCall"));
         // pl_data must be percent-decoded back to raw JSON
-        assert_eq!(event.header("pl_data"), Some(&json_payload.to_string()));
-        assert_eq!(
-            event.header("sip_content_type"),
-            Some(&"application/json".to_string())
-        );
-        assert_eq!(event.header("gateway_name"), Some(&"ng911-bcf".to_string()));
+        assert_eq!(event.header("pl_data"), Some(json_payload));
+        assert_eq!(event.header("sip_content_type"), Some("application/json"));
+        assert_eq!(event.header("gateway_name"), Some("ng911-bcf"));
     }
 
     #[test]
@@ -712,9 +655,9 @@ mod tests {
             .parse_event(message, EventFormat::Xml)
             .unwrap();
 
-        assert_eq!(event.event_type, Some(EslEventType::Heartbeat));
-        assert_eq!(event.header("Core-UUID"), Some(&"abc-123".to_string()));
-        assert_eq!(event.header("Up-Time"), Some(&"0 years, 1 day".to_string()));
+        assert_eq!(event.event_type(), Some(EslEventType::Heartbeat));
+        assert_eq!(event.header("Core-UUID"), Some("abc-123"));
+        assert_eq!(event.header("Up-Time"), Some("0 years, 1 day"));
     }
 
     #[test]
@@ -745,8 +688,8 @@ mod tests {
             .parse_event(message, EventFormat::Xml)
             .unwrap();
 
-        assert_eq!(event.event_type, Some(EslEventType::BackgroundJob));
-        assert_eq!(event.header("Job-UUID"), Some(&"def-456".to_string()));
-        assert_eq!(event.body(), Some(&"+OK result data".to_string()));
+        assert_eq!(event.event_type(), Some(EslEventType::BackgroundJob));
+        assert_eq!(event.header("Job-UUID"), Some("def-456"));
+        assert_eq!(event.body(), Some("+OK result data"));
     }
 }

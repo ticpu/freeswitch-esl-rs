@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if resp.is_success()
         || resp
             .body()
-            .map_or(false, |b| b.starts_with("+OK"))
+            .is_some_and(|b| b.starts_with("+OK"))
     {
         step_ok("originate call");
         pass += 1;
@@ -116,15 +116,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(resp) => {
             let channel = resp
                 .header("Channel-Name")
-                .map(|s| s.as_str())
                 .unwrap_or("(unknown)");
             let control = resp
                 .header("Control")
-                .map(|s| s.as_str())
                 .unwrap_or("(missing)");
             let mode = resp
                 .header("Socket-Mode")
-                .map(|s| s.as_str())
                 .unwrap_or("(missing)");
             step_ok(&format!(
                 "connect session (channel: {}, control: {}, mode: {})",

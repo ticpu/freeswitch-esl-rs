@@ -21,7 +21,7 @@
 //!     let (client, mut events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
 //!
 //!     let response = client.api("status").await?;
-//!     println!("Status: {}", response.body().unwrap_or(&"No body".to_string()));
+//!     println!("Status: {}", response.body().unwrap_or("No body"));
 //!
 //!     Ok(())
 //! }
@@ -50,26 +50,30 @@
 //! ```
 
 pub mod app;
-pub mod buffer;
-pub mod command;
 pub mod commands;
 pub mod connection;
-pub mod constants;
 pub mod error;
 pub mod event;
-pub mod protocol;
 pub mod variables;
 
+pub(crate) mod buffer;
+pub(crate) mod command;
+pub(crate) mod constants;
+pub(crate) mod protocol;
+
 pub use app::dptools::AppCommand;
-pub use command::{CommandBuilder, EslResponse};
+pub use command::{CommandBuilder, EslResponse, ReplyStatus};
 pub use commands::{
-    ConferenceDtmf, ConferenceHold, ConferenceMute, Originate, UuidAnswer, UuidBridge, UuidDeflect,
-    UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar, UuidTransfer,
+    Application, ApplicationList, ConferenceDtmf, ConferenceHold, ConferenceMute, DialplanType,
+    Endpoint, HoldAction, MuteAction, Originate, OriginateError, UuidAnswer, UuidBridge,
+    UuidDeflect, UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar, UuidTransfer, Variables,
+    VariablesType,
 };
 pub use connection::{
     ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions,
     EslEventStream,
 };
+pub use constants::DEFAULT_ESL_PORT;
 pub use error::{EslError, EslResult};
 pub use event::{EslEvent, EslEventPriority, EslEventType, EventFormat};
 pub use variables::{EslArray, MultipartBody, MultipartItem};

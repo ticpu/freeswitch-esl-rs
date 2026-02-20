@@ -1,19 +1,20 @@
 [package]
 name = "freeswitch-esl-tokio"
-version = "1.2.0"
+version = "1.0.0"
 edition = "2021"
 authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "FreeSWITCH Event Socket Library (ESL) client for Rust"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ticpu/freeswitch-esl-tokio"
+documentation = "https://docs.rs/freeswitch-esl-tokio"
 keywords = ["freeswitch", "esl", "voip", "telephony"]
 categories = ["network-programming", "api-bindings"]
 readme = "README.md"
 rust-version = "1.70"
-exclude = ["CLAUDE.md", "hooks/"]
+exclude = ["CLAUDE.md", "hooks/", "tests/", "docs/"]
 
 [dependencies]
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.0", features = ["net", "io-util", "rt", "rt-multi-thread", "sync", "time", "macros"] }
 bytes = "1.0"
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -21,7 +22,7 @@ serde_json = "1.0"
 quick-xml = { version = "0.31", features = ["serialize"] }
 percent-encoding = "2"
 tracing = "0.1"
-futures = "0.3"
+futures-util = "0.3"
 indexmap = "2"
 
 [dev-dependencies]

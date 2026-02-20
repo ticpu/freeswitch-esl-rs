@@ -21,30 +21,11 @@ impl EslBuffer {
         }
     }
 
-    /// Create buffer with specific capacity
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            buffer: BytesMut::with_capacity(capacity),
-            position: 0,
-        }
-    }
-
     /// Get current length of data in buffer
     pub fn len(&self) -> usize {
         self.buffer
             .len()
             - self.position
-    }
-
-    /// Check if buffer is empty
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Get current capacity
-    pub fn capacity(&self) -> usize {
-        self.buffer
-            .capacity()
     }
 
     /// Extend buffer with more data
@@ -81,16 +62,19 @@ impl EslBuffer {
         &self.buffer[self.position..]
     }
 
-    /// Consume bytes from the front of buffer
-    pub fn advance(&mut self, count: usize) {
+    /// Consume bytes from the front of buffer.
+    ///
+    /// Returns `Err` if `count` exceeds the available data.
+    pub fn advance(&mut self, count: usize) -> EslResult<()> {
         let available = self.len();
         if count > available {
-            panic!(
-                "Cannot advance {} bytes, only {} available",
+            return Err(EslError::protocol_error(format!(
+                "cannot advance {} bytes, only {} available",
                 count, available
-            );
+            )));
         }
         self.position += count;
+        Ok(())
     }
 
     /// Find position of pattern in buffer, starting from current position
@@ -107,7 +91,8 @@ impl EslBuffer {
     pub fn extract_until_pattern(&mut self, pattern: &[u8]) -> Option<Vec<u8>> {
         if let Some(pos) = self.find_pattern(pattern) {
             let result = self.data()[..pos].to_vec();
-            self.advance(pos + pattern.len());
+            // pos + pattern.len() <= self.len() is guaranteed by find_pattern
+            let _ = self.advance(pos + pattern.len());
             Some(result)
         } else {
             None
@@ -118,17 +103,8 @@ impl EslBuffer {
     pub fn extract_bytes(&mut self, count: usize) -> Option<Vec<u8>> {
         if self.len() >= count {
             let result = self.data()[..count].to_vec();
-            self.advance(count);
+            let _ = self.advance(count);
             Some(result)
-        } else {
-            None
-        }
-    }
-
-    /// Peek at data without consuming it
-    pub fn peek(&self, count: usize) -> Option<&[u8]> {
-        if self.len() >= count {
-            Some(&self.data()[..count])
         } else {
             None
         }
@@ -159,13 +135,6 @@ impl EslBuffer {
         }
     }
 
-    /// Clear all data from buffer
-    pub fn clear(&mut self) {
-        self.buffer
-            .clear();
-        self.position = 0;
-    }
-
     /// Check if buffer size exceeds reasonable limits
     pub fn check_size_limits(&self) -> EslResult<()> {
         if self
@@ -188,27 +157,6 @@ impl EslBuffer {
         }
         Ok(())
     }
-
-    /// Split data at pattern, returning (before_pattern, after_pattern)
-    pub fn split_at_pattern(&self, pattern: &[u8]) -> Option<(&[u8], &[u8])> {
-        if let Some(pos) = self.find_pattern(pattern) {
-            let data = self.data();
-            let before = &data[..pos];
-            let after = &data[pos + pattern.len()..];
-            Some((before, after))
-        } else {
-            None
-        }
-    }
-
-    /// Convert to string (UTF-8)
-    pub fn to_string(&self) -> EslResult<String> {
-        String::from_utf8(
-            self.data()
-                .to_vec(),
-        )
-        .map_err(|e| EslError::Utf8Error(e.utf8_error()))
-    }
 }
 
 impl Default for EslBuffer {
@@ -224,11 +172,9 @@ mod tests {
     #[test]
     fn test_basic_operations() {
         let mut buffer = EslBuffer::new();
-        assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
 
         buffer.extend_from_slice(b"Hello World");
-        assert!(!buffer.is_empty());
         assert_eq!(buffer.len(), 11);
         assert_eq!(buffer.data(), b"Hello World");
     }
@@ -238,9 +184,20 @@ mod tests {
         let mut buffer = EslBuffer::new();
         buffer.extend_from_slice(b"Hello World");
 
-        buffer.advance(6);
+        buffer
+            .advance(6)
+            .unwrap();
         assert_eq!(buffer.data(), b"World");
         assert_eq!(buffer.len(), 5);
+    }
+
+    #[test]
+    fn test_advance_overflow() {
+        let mut buffer = EslBuffer::new();
+        buffer.extend_from_slice(b"Hello");
+        assert!(buffer
+            .advance(10)
+            .is_err());
     }
 
     #[test]
@@ -280,7 +237,9 @@ mod tests {
     fn test_compact() {
         let mut buffer = EslBuffer::new();
         buffer.extend_from_slice(b"Hello World");
-        buffer.advance(6);
+        buffer
+            .advance(6)
+            .unwrap();
 
         assert_eq!(buffer.data(), b"World");
         buffer.compact();

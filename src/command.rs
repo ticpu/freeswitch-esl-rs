@@ -6,43 +6,79 @@ use crate::{
     event::EslEvent,
 };
 use std::collections::HashMap;
+use std::fmt;
+
+/// Validate that a user-provided string contains no newline characters.
+///
+/// ESL commands are line-delimited; embedded newlines would allow injection
+/// of arbitrary protocol commands.
+fn validate_no_newlines(s: &str, context: &str) -> EslResult<()> {
+    if s.contains('\n') || s.contains('\r') {
+        return Err(EslError::ProtocolError {
+            message: format!("{} must not contain newlines", context),
+        });
+    }
+    Ok(())
+}
+
+/// Reply-Text classification per the ESL wire protocol.
+///
+/// FreeSWITCH commands return `+OK …` on success and `-ERR …` on failure.
+/// A handful of commands (`getvar`) return the raw value with no prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyStatus {
+    /// Reply-Text starts with `+OK` or is absent/empty.
+    Ok,
+    /// Reply-Text starts with `-ERR`.
+    Err,
+    /// Reply-Text present but matches neither `+OK` nor `-ERR`.
+    /// This is normal for `getvar` (which returns the bare variable value)
+    /// but unexpected for most other commands.
+    Other,
+}
 
 /// Response from ESL command execution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EslResponse {
-    /// Response headers
     headers: HashMap<String, String>,
-    /// Response body (optional)
     body: Option<String>,
-    /// Whether the command was successful
-    success: bool,
+    status: ReplyStatus,
 }
 
 impl EslResponse {
     /// Create new response
     pub fn new(headers: HashMap<String, String>, body: Option<String>) -> Self {
-        let reply_text = headers
+        let status = match headers
             .get(HEADER_REPLY_TEXT)
             .map(|s| s.as_str())
-            .unwrap_or("");
-        let success = reply_text.starts_with("+OK") || reply_text.is_empty();
+        {
+            None | Some("") => ReplyStatus::Ok,
+            Some(t) if t.starts_with("+OK") => ReplyStatus::Ok,
+            Some(t) if t.starts_with("-ERR") => ReplyStatus::Err,
+            Some(_) => ReplyStatus::Other,
+        };
 
         Self {
             headers,
             body,
-            success,
+            status,
         }
     }
 
-    /// Check if command was successful
+    /// Check if command was successful (`+OK` or no Reply-Text).
     pub fn is_success(&self) -> bool {
-        self.success
+        self.status == ReplyStatus::Ok
+    }
+
+    /// Reply status classification.
+    pub fn reply_status(&self) -> ReplyStatus {
+        self.status
     }
 
     /// Get response body
-    pub fn body(&self) -> Option<&String> {
+    pub fn body(&self) -> Option<&str> {
         self.body
-            .as_ref()
+            .as_deref()
     }
 
     /// Get response body as string, empty if None
@@ -54,9 +90,10 @@ impl EslResponse {
     }
 
     /// Get header value
-    pub fn header(&self, name: &str) -> Option<&String> {
+    pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .get(name)
+            .map(|s| s.as_str())
     }
 
     /// Get all headers
@@ -65,9 +102,10 @@ impl EslResponse {
     }
 
     /// Get reply text
-    pub fn reply_text(&self) -> Option<&String> {
+    pub fn reply_text(&self) -> Option<&str> {
         self.headers
             .get(HEADER_REPLY_TEXT)
+            .map(|s| s.as_str())
     }
 
     /// Get job UUID for background commands.
@@ -75,26 +113,44 @@ impl EslResponse {
     /// For `bgapi` responses, FreeSWITCH returns the Job-UUID both in the
     /// `Reply-Text` header (`+OK Job-UUID: <uuid>`) and as a separate
     /// `Job-UUID` header. This method reads the dedicated header.
-    pub fn job_uuid(&self) -> Option<&String> {
+    pub fn job_uuid(&self) -> Option<&str> {
         self.headers
             .get(HEADER_JOB_UUID)
+            .map(|s| s.as_str())
     }
 
-    /// Convert to result based on success status
+    /// Convert to result based on success status.
+    ///
+    /// ```
+    /// # use freeswitch_esl_tokio::EslResponse;
+    /// # use std::collections::HashMap;
+    /// let headers: HashMap<String, String> = [("Reply-Text".into(), "+OK".into())].into();
+    /// let resp = EslResponse::new(headers, None);
+    /// assert!(resp.into_result().is_ok());
+    /// ```
     pub fn into_result(self) -> EslResult<Self> {
-        if self.success {
-            Ok(self)
-        } else {
-            let reply_text = self
-                .reply_text()
-                .cloned()
-                .unwrap_or_else(|| "Command failed".to_string());
-            Err(EslError::CommandFailed { reply_text })
+        match self.status {
+            ReplyStatus::Ok => Ok(self),
+            ReplyStatus::Err => {
+                let reply_text = self
+                    .reply_text()
+                    .unwrap_or("-ERR")
+                    .to_string();
+                Err(EslError::CommandFailed { reply_text })
+            }
+            ReplyStatus::Other => {
+                let reply_text = self
+                    .reply_text()
+                    .unwrap_or("")
+                    .to_string();
+                Err(EslError::UnexpectedReply { reply_text })
+            }
         }
     }
 }
 
 /// Builder for ESL commands
+#[derive(Debug)]
 pub struct CommandBuilder {
     command: String,
     headers: HashMap<String, String>,
@@ -111,14 +167,20 @@ impl CommandBuilder {
         }
     }
 
-    /// Add header to command
-    pub fn header(mut self, name: &str, value: &str) -> Self {
+    /// Add header to command.
+    ///
+    /// Returns an error if the name or value contains newline characters.
+    pub fn header(mut self, name: &str, value: &str) -> EslResult<Self> {
+        validate_no_newlines(name, "header name")?;
+        validate_no_newlines(value, "header value")?;
         self.headers
             .insert(name.to_string(), value.to_string());
-        self
+        Ok(self)
     }
 
-    /// Set command body
+    /// Set command body.
+    ///
+    /// The body is length-delimited so it may contain newlines.
     pub fn body(mut self, body: &str) -> Self {
         self.body = Some(body.to_string());
         self
@@ -126,21 +188,16 @@ impl CommandBuilder {
 
     /// Build the command string
     pub fn build(self) -> String {
+        use std::fmt::Write;
         let mut result = self.command;
         result.push_str(LINE_TERMINATOR);
 
-        // Add headers
         for (key, value) in &self.headers {
-            result.push_str(&format!("{}: {}{}", key, value, LINE_TERMINATOR));
+            let _ = write!(result, "{}: {}{}", key, value, LINE_TERMINATOR);
         }
 
-        // Add body if present
         if let Some(body) = &self.body {
-            result.push_str(&format!(
-                "Content-Length: {}{}",
-                body.len(),
-                LINE_TERMINATOR
-            ));
+            let _ = write!(result, "Content-Length: {}{}", body.len(), LINE_TERMINATOR);
             result.push_str(LINE_TERMINATOR);
             result.push_str(body);
         } else {
@@ -152,7 +209,7 @@ impl CommandBuilder {
 }
 
 /// ESL command types
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum EslCommand {
     /// Authenticate with password
     Auth { password: String },
@@ -160,7 +217,7 @@ pub enum EslCommand {
     UserAuth { user: String, password: String },
     /// Execute API command
     Api { command: String },
-    /// Execute background API command  
+    /// Execute background API command
     BgApi { command: String },
     /// Subscribe to events
     Events { format: String, events: String },
@@ -215,6 +272,92 @@ pub enum EslCommand {
     Connect,
 }
 
+impl fmt::Debug for EslCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EslCommand::Auth { .. } => f
+                .debug_struct("Auth")
+                .field("password", &"[REDACTED]")
+                .finish(),
+            EslCommand::UserAuth { user, .. } => f
+                .debug_struct("UserAuth")
+                .field("user", user)
+                .field("password", &"[REDACTED]")
+                .finish(),
+            EslCommand::Api { command } => f
+                .debug_struct("Api")
+                .field("command", command)
+                .finish(),
+            EslCommand::BgApi { command } => f
+                .debug_struct("BgApi")
+                .field("command", command)
+                .finish(),
+            EslCommand::Events { format, events } => f
+                .debug_struct("Events")
+                .field("format", format)
+                .field("events", events)
+                .finish(),
+            EslCommand::Filter { header, value } => f
+                .debug_struct("Filter")
+                .field("header", header)
+                .field("value", value)
+                .finish(),
+            EslCommand::SendMsg { uuid, event } => f
+                .debug_struct("SendMsg")
+                .field("uuid", uuid)
+                .field("event", event)
+                .finish(),
+            EslCommand::Execute { app, args, uuid } => f
+                .debug_struct("Execute")
+                .field("app", app)
+                .field("args", args)
+                .field("uuid", uuid)
+                .finish(),
+            EslCommand::Exit => write!(f, "Exit"),
+            EslCommand::Log { level } => f
+                .debug_struct("Log")
+                .field("level", level)
+                .finish(),
+            EslCommand::NoLog => write!(f, "NoLog"),
+            EslCommand::NoOp => write!(f, "NoOp"),
+            EslCommand::SendEvent { event } => f
+                .debug_struct("SendEvent")
+                .field("event", event)
+                .finish(),
+            EslCommand::MyEvents { format, uuid } => f
+                .debug_struct("MyEvents")
+                .field("format", format)
+                .field("uuid", uuid)
+                .finish(),
+            EslCommand::Linger { timeout } => f
+                .debug_struct("Linger")
+                .field("timeout", timeout)
+                .finish(),
+            EslCommand::NoLinger => write!(f, "NoLinger"),
+            EslCommand::Resume => write!(f, "Resume"),
+            EslCommand::NixEvent { events } => f
+                .debug_struct("NixEvent")
+                .field("events", events)
+                .finish(),
+            EslCommand::NoEvents => write!(f, "NoEvents"),
+            EslCommand::FilterDelete { header, value } => f
+                .debug_struct("FilterDelete")
+                .field("header", header)
+                .field("value", value)
+                .finish(),
+            EslCommand::DivertEvents { on } => f
+                .debug_struct("DivertEvents")
+                .field("on", on)
+                .finish(),
+            EslCommand::GetVar { name } => f
+                .debug_struct("GetVar")
+                .field("name", name)
+                .finish(),
+            EslCommand::Connect => write!(f, "Connect"),
+        }
+    }
+}
+
 impl EslCommand {
     /// Format a simple command with optional arguments
     fn format_simple_command(cmd: &str, args: &[&str]) -> String {
@@ -227,48 +370,76 @@ impl EslCommand {
         result
     }
 
-    /// Convert command to wire format string
-    pub fn to_wire_format(&self) -> String {
+    /// Validate all user-supplied fields, then convert to wire format.
+    pub fn to_wire_format(&self) -> EslResult<String> {
         match self {
-            EslCommand::Auth { password } => Self::format_simple_command("auth", &[password]),
-            EslCommand::UserAuth { user, password } => {
-                Self::format_simple_command("userauth", &[&format!("{}:{}", user, password)])
+            EslCommand::Auth { password } => {
+                validate_no_newlines(password, "password")?;
+                Ok(Self::format_simple_command("auth", &[password]))
             }
-            EslCommand::Api { command } => Self::format_simple_command("api", &[command]),
-            EslCommand::BgApi { command } => Self::format_simple_command("bgapi", &[command]),
+            EslCommand::UserAuth { user, password } => {
+                validate_no_newlines(user, "user")?;
+                validate_no_newlines(password, "password")?;
+                Ok(Self::format_simple_command(
+                    "userauth",
+                    &[&format!("{}:{}", user, password)],
+                ))
+            }
+            EslCommand::Api { command } => {
+                validate_no_newlines(command, "api command")?;
+                Ok(Self::format_simple_command("api", &[command]))
+            }
+            EslCommand::BgApi { command } => {
+                validate_no_newlines(command, "bgapi command")?;
+                Ok(Self::format_simple_command("bgapi", &[command]))
+            }
             EslCommand::Events { format, events } => {
-                Self::format_simple_command("event", &[format, events])
+                validate_no_newlines(format, "event format")?;
+                validate_no_newlines(events, "event list")?;
+                Ok(Self::format_simple_command("event", &[format, events]))
             }
             EslCommand::Filter { header, value } => {
-                Self::format_simple_command("filter", &[header, value])
+                validate_no_newlines(header, "filter header")?;
+                validate_no_newlines(value, "filter value")?;
+                Ok(Self::format_simple_command("filter", &[header, value]))
             }
             EslCommand::SendMsg { uuid, event } => {
-                let mut builder = CommandBuilder::new(&format!(
+                if let Some(u) = uuid {
+                    validate_no_newlines(u, "sendmsg uuid")?;
+                }
+                let cmd_str = format!(
                     "sendmsg{}",
                     uuid.as_ref()
                         .map(|u| format!(" {}", u))
                         .unwrap_or_default()
-                ));
+                );
+                let mut builder = CommandBuilder::new(&cmd_str);
 
-                // Add event headers
-                for (key, value) in &event.headers {
-                    builder = builder.header(key, value);
+                for (key, value) in event.headers() {
+                    builder = builder.header(key, value)?;
                 }
 
-                // Add event body if present
-                if let Some(body) = &event.body {
+                if let Some(body) = event.body() {
                     builder = builder.body(body);
                 }
 
-                builder.build()
+                Ok(builder.build())
             }
             EslCommand::Execute { app, args, uuid } => {
+                validate_no_newlines(app, "execute app")?;
+                if let Some(a) = args {
+                    validate_no_newlines(a, "execute args")?;
+                }
+                if let Some(u) = uuid {
+                    validate_no_newlines(u, "execute uuid")?;
+                }
+
                 let mut event = EslEvent::new();
-                event.set_header("call-command".to_string(), "execute".to_string());
-                event.set_header("execute-app-name".to_string(), app.clone());
+                event.set_header("call-command", "execute");
+                event.set_header("execute-app-name", app.clone());
 
                 if let Some(args) = args {
-                    event.set_header("execute-app-arg".to_string(), args.clone());
+                    event.set_header("execute-app-arg", args.clone());
                 }
 
                 EslCommand::SendMsg {
@@ -277,62 +448,80 @@ impl EslCommand {
                 }
                 .to_wire_format()
             }
-            EslCommand::Exit => Self::format_simple_command("exit", &[]),
-            EslCommand::Log { level } => Self::format_simple_command("log", &[level]),
-            EslCommand::NoLog => Self::format_simple_command("nolog", &[]),
-            EslCommand::NoOp => Self::format_simple_command("noop", &[]),
+            EslCommand::Exit => Ok(Self::format_simple_command("exit", &[])),
+            EslCommand::Log { level } => {
+                validate_no_newlines(level, "log level")?;
+                Ok(Self::format_simple_command("log", &[level]))
+            }
+            EslCommand::NoLog => Ok(Self::format_simple_command("nolog", &[])),
+            EslCommand::NoOp => Ok(Self::format_simple_command("noop", &[])),
             EslCommand::SendEvent { event } => {
                 let event_name = event
-                    .event_type
+                    .event_type()
                     .map(|t| t.to_string())
                     .or_else(|| {
                         event
-                            .headers
-                            .get("Event-Name")
-                            .cloned()
+                            .header("Event-Name")
+                            .map(|s| s.to_string())
                     })
                     .unwrap_or_else(|| "CUSTOM".to_string());
 
                 let mut builder = CommandBuilder::new(&format!("sendevent {}", event_name));
 
-                for (key, value) in &event.headers {
-                    builder = builder.header(key, value);
+                for (key, value) in event.headers() {
+                    builder = builder.header(key, value)?;
                 }
 
-                if let Some(body) = &event.body {
+                if let Some(body) = event.body() {
                     builder = builder.body(body);
                 }
 
-                builder.build()
+                Ok(builder.build())
             }
-            EslCommand::MyEvents { format, uuid } => match uuid {
-                Some(u) => Self::format_simple_command("myevents", &[u, format]),
-                None => Self::format_simple_command("myevents", &[format]),
-            },
-            EslCommand::Linger { timeout } => match timeout {
+            EslCommand::MyEvents { format, uuid } => {
+                validate_no_newlines(format, "myevents format")?;
+                if let Some(u) = uuid {
+                    validate_no_newlines(u, "myevents uuid")?;
+                }
+                Ok(match uuid {
+                    Some(u) => Self::format_simple_command("myevents", &[u, format]),
+                    None => Self::format_simple_command("myevents", &[format]),
+                })
+            }
+            EslCommand::Linger { timeout } => Ok(match timeout {
                 Some(n) => Self::format_simple_command("linger", &[&n.to_string()]),
                 None => Self::format_simple_command("linger", &[]),
-            },
-            EslCommand::NoLinger => Self::format_simple_command("nolinger", &[]),
-            EslCommand::Resume => Self::format_simple_command("resume", &[]),
-            EslCommand::NixEvent { events } => Self::format_simple_command("nixevent", &[events]),
-            EslCommand::NoEvents => Self::format_simple_command("noevents", &[]),
+            }),
+            EslCommand::NoLinger => Ok(Self::format_simple_command("nolinger", &[])),
+            EslCommand::Resume => Ok(Self::format_simple_command("resume", &[])),
+            EslCommand::NixEvent { events } => {
+                validate_no_newlines(events, "nixevent list")?;
+                Ok(Self::format_simple_command("nixevent", &[events]))
+            }
+            EslCommand::NoEvents => Ok(Self::format_simple_command("noevents", &[])),
             EslCommand::FilterDelete { header, value } => {
+                validate_no_newlines(header, "filter delete header")?;
+                if let Some(v) = value {
+                    validate_no_newlines(v, "filter delete value")?;
+                }
                 if header == "all" {
-                    Self::format_simple_command("filter", &["delete", "all"])
+                    Ok(Self::format_simple_command("filter", &["delete", "all"]))
                 } else {
-                    match value {
+                    Ok(match value {
                         Some(v) => Self::format_simple_command("filter", &["delete", header, v]),
                         None => Self::format_simple_command("filter", &["delete", header]),
-                    }
+                    })
                 }
             }
             EslCommand::DivertEvents { on } => {
                 let arg = if *on { "on" } else { "off" };
-                Self::format_simple_command("divert_events", &[arg])
+                Ok(Self::format_simple_command("divert_events", &[arg]))
             }
-            EslCommand::GetVar { name } => Self::format_simple_command("getvar", &[name]),
-            EslCommand::Connect => Self::format_simple_command("connect", &[]),
+            EslCommand::GetVar { name } => {
+                validate_no_newlines(name, "getvar name")?;
+                Ok(Self::format_simple_command("getvar", &[name]))
+            }
+            EslCommand::Connect => Ok(Self::format_simple_command("connect", &[])),
         }
     }
 }
@@ -346,6 +535,7 @@ mod tests {
     fn test_command_builder() {
         let cmd = CommandBuilder::new("api status")
             .header("Custom-Header", "value")
+            .unwrap()
             .body("test body")
             .build();
 
@@ -360,28 +550,45 @@ mod tests {
         let auth = EslCommand::Auth {
             password: "test".to_string(),
         };
-        assert_eq!(auth.to_wire_format(), "auth test\n\n");
+        assert_eq!(
+            auth.to_wire_format()
+                .unwrap(),
+            "auth test\n\n"
+        );
 
         let api = EslCommand::Api {
             command: "status".to_string(),
         };
-        assert_eq!(api.to_wire_format(), "api status\n\n");
+        assert_eq!(
+            api.to_wire_format()
+                .unwrap(),
+            "api status\n\n"
+        );
 
         let events = EslCommand::Events {
             format: "plain".to_string(),
             events: "ALL".to_string(),
         };
-        assert_eq!(events.to_wire_format(), "event plain ALL\n\n");
+        assert_eq!(
+            events
+                .to_wire_format()
+                .unwrap(),
+            "event plain ALL\n\n"
+        );
     }
 
     #[test]
     fn test_app_commands() {
         use crate::app::dptools::AppCommand;
 
-        let answer = AppCommand::answer().to_wire_format();
+        let answer = AppCommand::answer()
+            .to_wire_format()
+            .unwrap();
         assert!(answer.contains("execute-app-name: answer"));
 
-        let hangup = AppCommand::hangup(Some("NORMAL_CLEARING")).to_wire_format();
+        let hangup = AppCommand::hangup(Some("NORMAL_CLEARING"))
+            .to_wire_format()
+            .unwrap();
         assert!(hangup.contains("execute-app-name: hangup"));
         assert!(hangup.contains("execute-app-arg: NORMAL_CLEARING"));
     }
@@ -392,7 +599,11 @@ mod tests {
             format: "plain".to_string(),
             uuid: None,
         };
-        assert_eq!(cmd.to_wire_format(), "myevents plain\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "myevents plain\n\n"
+        );
     }
 
     #[test]
@@ -401,41 +612,63 @@ mod tests {
             format: "json".to_string(),
             uuid: Some("abc-123".to_string()),
         };
-        assert_eq!(cmd.to_wire_format(), "myevents abc-123 json\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "myevents abc-123 json\n\n"
+        );
     }
 
     #[test]
     fn test_linger_wire_format() {
         let cmd = EslCommand::Linger { timeout: None };
-        assert_eq!(cmd.to_wire_format(), "linger\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "linger\n\n"
+        );
     }
 
     #[test]
     fn test_linger_timeout_wire_format() {
         let cmd = EslCommand::Linger { timeout: Some(600) };
-        assert_eq!(cmd.to_wire_format(), "linger 600\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "linger 600\n\n"
+        );
     }
 
     #[test]
     fn test_nolinger_wire_format() {
         let cmd = EslCommand::NoLinger;
-        assert_eq!(cmd.to_wire_format(), "nolinger\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "nolinger\n\n"
+        );
     }
 
     #[test]
     fn test_resume_wire_format() {
         let cmd = EslCommand::Resume;
-        assert_eq!(cmd.to_wire_format(), "resume\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "resume\n\n"
+        );
     }
 
     #[test]
     fn test_sendevent_wire_format() {
         let mut event = EslEvent::with_type(EslEventType::Custom);
-        event.set_header("Event-Name".to_string(), "CUSTOM".to_string());
-        event.set_header("Event-Subclass".to_string(), "my::test_event".to_string());
+        event.set_header("Event-Name", "CUSTOM");
+        event.set_header("Event-Subclass", "my::test_event");
 
         let cmd = EslCommand::SendEvent { event };
-        let wire = cmd.to_wire_format();
+        let wire = cmd
+            .to_wire_format()
+            .unwrap();
 
         assert!(wire.starts_with("sendevent CUSTOM\n"));
         assert!(wire.contains("Event-Name: CUSTOM\n"));
@@ -446,11 +679,13 @@ mod tests {
     #[test]
     fn test_sendevent_wire_format_with_body() {
         let mut event = EslEvent::with_type(EslEventType::Custom);
-        event.set_header("Event-Name".to_string(), "CUSTOM".to_string());
+        event.set_header("Event-Name", "CUSTOM");
         event.set_body("hello world".to_string());
 
         let cmd = EslCommand::SendEvent { event };
-        let wire = cmd.to_wire_format();
+        let wire = cmd
+            .to_wire_format()
+            .unwrap();
 
         assert!(wire.starts_with("sendevent CUSTOM\n"));
         assert!(wire.contains("Content-Length: 11\n"));
@@ -463,7 +698,8 @@ mod tests {
             events: "CHANNEL_CREATE CHANNEL_DESTROY".to_string(),
         };
         assert_eq!(
-            cmd.to_wire_format(),
+            cmd.to_wire_format()
+                .unwrap(),
             "nixevent CHANNEL_CREATE CHANNEL_DESTROY\n\n"
         );
     }
@@ -471,7 +707,11 @@ mod tests {
     #[test]
     fn test_noevents_wire_format() {
         let cmd = EslCommand::NoEvents;
-        assert_eq!(cmd.to_wire_format(), "noevents\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "noevents\n\n"
+        );
     }
 
     #[test]
@@ -480,7 +720,11 @@ mod tests {
             header: "Event-Name".to_string(),
             value: None,
         };
-        assert_eq!(cmd.to_wire_format(), "filter delete Event-Name\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "filter delete Event-Name\n\n"
+        );
     }
 
     #[test]
@@ -490,7 +734,8 @@ mod tests {
             value: Some("CHANNEL_CREATE".to_string()),
         };
         assert_eq!(
-            cmd.to_wire_format(),
+            cmd.to_wire_format()
+                .unwrap(),
             "filter delete Event-Name CHANNEL_CREATE\n\n"
         );
     }
@@ -501,16 +746,30 @@ mod tests {
             header: "all".to_string(),
             value: None,
         };
-        assert_eq!(cmd.to_wire_format(), "filter delete all\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "filter delete all\n\n"
+        );
     }
 
     #[test]
     fn test_divert_events_wire_format() {
         let cmd_on = EslCommand::DivertEvents { on: true };
-        assert_eq!(cmd_on.to_wire_format(), "divert_events on\n\n");
+        assert_eq!(
+            cmd_on
+                .to_wire_format()
+                .unwrap(),
+            "divert_events on\n\n"
+        );
 
         let cmd_off = EslCommand::DivertEvents { on: false };
-        assert_eq!(cmd_off.to_wire_format(), "divert_events off\n\n");
+        assert_eq!(
+            cmd_off
+                .to_wire_format()
+                .unwrap(),
+            "divert_events off\n\n"
+        );
     }
 
     #[test]
@@ -518,27 +777,174 @@ mod tests {
         let cmd = EslCommand::GetVar {
             name: "caller_id_name".to_string(),
         };
-        assert_eq!(cmd.to_wire_format(), "getvar caller_id_name\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "getvar caller_id_name\n\n"
+        );
     }
 
     #[test]
     fn test_connect_wire_format() {
         let cmd = EslCommand::Connect;
-        assert_eq!(cmd.to_wire_format(), "connect\n\n");
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "connect\n\n"
+        );
     }
 
     #[test]
     fn test_sendevent_no_event_type() {
         let mut event = EslEvent::new();
-        event.set_header("Event-Name".to_string(), "CUSTOM".to_string());
+        event.set_header("Event-Name", "CUSTOM");
 
         let cmd = EslCommand::SendEvent { event };
-        let wire = cmd.to_wire_format();
+        let wire = cmd
+            .to_wire_format()
+            .unwrap();
         assert!(wire.starts_with("sendevent CUSTOM\n"));
 
         let bare_event = EslEvent::new();
         let cmd2 = EslCommand::SendEvent { event: bare_event };
-        let wire2 = cmd2.to_wire_format();
+        let wire2 = cmd2
+            .to_wire_format()
+            .unwrap();
         assert!(wire2.starts_with("sendevent CUSTOM\n"));
+    }
+
+    #[test]
+    fn test_newline_injection_rejected() {
+        let api = EslCommand::Api {
+            command: "status\n\nevent plain ALL".to_string(),
+        };
+        assert!(api
+            .to_wire_format()
+            .is_err());
+
+        let auth = EslCommand::Auth {
+            password: "test\napi status".to_string(),
+        };
+        assert!(auth
+            .to_wire_format()
+            .is_err());
+
+        let filter = EslCommand::Filter {
+            header: "Event-Name\r\n".to_string(),
+            value: "CHANNEL_CREATE".to_string(),
+        };
+        assert!(filter
+            .to_wire_format()
+            .is_err());
+    }
+
+    #[test]
+    fn test_debug_redacts_password() {
+        let auth = EslCommand::Auth {
+            password: "secret".to_string(),
+        };
+        let debug_str = format!("{:?}", auth);
+        assert!(!debug_str.contains("secret"));
+        assert!(debug_str.contains("REDACTED"));
+
+        let user_auth = EslCommand::UserAuth {
+            user: "admin@default".to_string(),
+            password: "secret".to_string(),
+        };
+        let debug_str = format!("{:?}", user_auth);
+        assert!(!debug_str.contains("secret"));
+        assert!(debug_str.contains("admin@default"));
+        assert!(debug_str.contains("REDACTED"));
+    }
+
+    #[test]
+    fn test_reply_status_ok() {
+        let headers: HashMap<String, String> =
+            [("Reply-Text".into(), "+OK accepted".into())].into();
+        let resp = EslResponse::new(headers, None);
+        assert_eq!(resp.reply_status(), ReplyStatus::Ok);
+        assert!(resp.is_success());
+        assert!(resp
+            .into_result()
+            .is_ok());
+    }
+
+    #[test]
+    fn test_reply_status_ok_prefix_only() {
+        let headers: HashMap<String, String> = [("Reply-Text".into(), "+OK".into())].into();
+        let resp = EslResponse::new(headers, None);
+        assert_eq!(resp.reply_status(), ReplyStatus::Ok);
+        assert!(resp.is_success());
+    }
+
+    #[test]
+    fn test_reply_status_empty() {
+        let headers: HashMap<String, String> = [("Reply-Text".into(), String::new())].into();
+        let resp = EslResponse::new(headers, None);
+        assert_eq!(resp.reply_status(), ReplyStatus::Ok);
+        assert!(resp.is_success());
+    }
+
+    #[test]
+    fn test_reply_status_missing_header() {
+        let resp = EslResponse::new(HashMap::new(), None);
+        assert_eq!(resp.reply_status(), ReplyStatus::Ok);
+        assert!(resp.is_success());
+    }
+
+    #[test]
+    fn test_reply_status_err() {
+        let headers: HashMap<String, String> =
+            [("Reply-Text".into(), "-ERR invalid command".into())].into();
+        let resp = EslResponse::new(headers, None);
+        assert_eq!(resp.reply_status(), ReplyStatus::Err);
+        assert!(!resp.is_success());
+        let err = resp
+            .into_result()
+            .unwrap_err();
+        assert!(
+            matches!(err, EslError::CommandFailed { ref reply_text } if reply_text == "-ERR invalid command")
+        );
+    }
+
+    #[test]
+    fn test_reply_status_err_bare() {
+        let headers: HashMap<String, String> = [("Reply-Text".into(), "-ERR".into())].into();
+        let resp = EslResponse::new(headers, None);
+        assert_eq!(resp.reply_status(), ReplyStatus::Err);
+        assert!(!resp.is_success());
+    }
+
+    #[test]
+    fn test_reply_status_other_getvar() {
+        let headers: HashMap<String, String> =
+            [("Reply-Text".into(), "sip_from_user".into())].into();
+        let resp = EslResponse::new(headers, None);
+        assert_eq!(resp.reply_status(), ReplyStatus::Other);
+        assert!(!resp.is_success());
+        let err = resp
+            .into_result()
+            .unwrap_err();
+        assert!(
+            matches!(err, EslError::UnexpectedReply { ref reply_text } if reply_text == "sip_from_user")
+        );
+    }
+
+    #[test]
+    fn test_reply_status_other_random() {
+        let headers: HashMap<String, String> =
+            [("Reply-Text".into(), "something unexpected".into())].into();
+        let resp = EslResponse::new(headers, None);
+        assert_eq!(resp.reply_status(), ReplyStatus::Other);
+        assert!(!resp.is_success());
+    }
+
+    #[test]
+    fn test_header_newline_rejected() {
+        let result = CommandBuilder::new("test").header("X-Bad\n", "value");
+        assert!(result.is_err());
+
+        let result = CommandBuilder::new("test").header("X-Key", "bad\nvalue");
+        assert!(result.is_err());
     }
 }

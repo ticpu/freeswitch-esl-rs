@@ -1,5 +1,14 @@
-//! Error types for FreeSWITCH ESL operations
+//! Error types for FreeSWITCH ESL operations.
+//!
+//! All fallible operations in this crate return [`EslResult<T>`].  Errors are
+//! classified into two axes for caller convenience:
+//!
+//! - **Connection errors** ([`EslError::is_connection_error`]) — the TCP session
+//!   is dead and the caller should reconnect.
+//! - **Recoverable errors** ([`EslError::is_recoverable`]) — the command failed
+//!   but the connection is still usable (e.g., timeout, command rejected).
 
+use crate::commands::OriginateError;
 use thiserror::Error;
 
 /// Result type alias for ESL operations
@@ -24,9 +33,17 @@ pub enum EslError {
     #[error("Protocol error: {message}")]
     ProtocolError { message: String },
 
-    /// Command execution failed
+    /// Command returned `-ERR` with an error message from FreeSWITCH
     #[error("Command failed: {reply_text}")]
     CommandFailed { reply_text: String },
+
+    /// Reply-Text did not match the expected `+OK`/`-ERR` protocol format.
+    ///
+    /// Most ESL commands return `+OK ...` on success and `-ERR ...` on failure.
+    /// A reply that matches neither indicates a protocol-level anomaly or a
+    /// command with non-standard reply format (e.g. `getvar`).
+    #[error("Unexpected reply: {reply_text}")]
+    UnexpectedReply { reply_text: String },
 
     /// Timeout waiting for response
     #[error("Operation timed out after {timeout_ms}ms")]
@@ -79,6 +96,10 @@ pub enum EslError {
     /// Generic error with custom message
     #[error("ESL error: {message}")]
     Generic { message: String },
+
+    /// Originate command builder error
+    #[error("Originate error: {0}")]
+    Originate(#[from] OriginateError),
 }
 
 impl EslError {
@@ -113,6 +134,7 @@ impl EslError {
             EslError::HeartbeatExpired { .. } => false,
             EslError::Timeout { .. } => true,
             EslError::CommandFailed { .. } => true,
+            EslError::UnexpectedReply { .. } => true,
             EslError::QueueFull => true,
             _ => false,
         }

@@ -4,9 +4,7 @@
 //!
 //! Usage: cargo run --example event_listener
 
-use freeswitch_esl_tokio::{
-    constants::DEFAULT_ESL_PORT, EslClient, EslError, EslEventType, EventFormat,
-};
+use freeswitch_esl_tokio::{EslClient, EslError, EslEventType, EventFormat, DEFAULT_ESL_PORT};
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
@@ -87,25 +85,22 @@ fn process_event(
             if let Some(uuid) = event.unique_id() {
                 let caller_id = event
                     .header("Caller-Caller-ID-Number")
-                    .unwrap_or(&"Unknown".to_string())
-                    .clone();
+                    .unwrap_or("Unknown");
                 let destination = event
                     .header("Caller-Destination-Number")
-                    .unwrap_or(&"Unknown".to_string())
-                    .clone();
+                    .unwrap_or("Unknown");
                 let direction = event
                     .header("Call-Direction")
-                    .unwrap_or(&"Unknown".to_string())
-                    .clone();
+                    .unwrap_or("Unknown");
 
                 let call_info = CallInfo {
-                    caller_id: caller_id.clone(),
+                    caller_id: caller_id.to_string(),
                     start_time: std::time::Instant::now(),
                     answered_time: None,
                 };
 
-                active_calls.insert(uuid.clone(), call_info);
                 info!("New call: {} -> {} ({})", caller_id, destination, direction);
+                active_calls.insert(uuid.to_string(), call_info);
             }
         }
         Some(EslEventType::ChannelAnswer) => {
@@ -128,8 +123,7 @@ fn process_event(
                 if let Some(call_info) = active_calls.get(uuid) {
                     let cause = event
                         .header("Hangup-Cause")
-                        .unwrap_or(&"UNKNOWN".to_string())
-                        .clone();
+                        .unwrap_or("UNKNOWN");
                     let talk_time = call_info
                         .answered_time
                         .map(|t| t.elapsed());

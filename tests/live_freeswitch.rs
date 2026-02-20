@@ -3,7 +3,9 @@
 //! These tests require FreeSWITCH ESL on 127.0.0.1:8022 with password ClueCon.
 //! Run with: cargo test --test live_freeswitch -- --ignored
 
-use freeswitch_esl_tokio::{EslClient, EslEvent, EslEventPriority, EslEventType, EventFormat};
+use freeswitch_esl_tokio::{
+    EslClient, EslError, EslEvent, EslEventPriority, EslEventType, EventFormat, ReplyStatus,
+};
 use std::time::Duration;
 
 const ESL_HOST: &str = "127.0.0.1";
@@ -62,8 +64,8 @@ async fn live_sendevent_with_priority() {
     let (client, _events) = connect().await;
 
     let mut event = EslEvent::with_type(EslEventType::Custom);
-    event.set_header("Event-Name".into(), "CUSTOM".into());
-    event.set_header("Event-Subclass".into(), "esl_test::priority".into());
+    event.set_header("Event-Name", "CUSTOM");
+    event.set_header("Event-Subclass", "esl_test::priority");
     event.set_priority(EslEventPriority::High);
 
     let resp = client
@@ -83,15 +85,15 @@ async fn live_sendevent_with_array_header() {
     let (client, _events) = connect().await;
 
     let mut event = EslEvent::with_type(EslEventType::Custom);
-    event.set_header("Event-Name".into(), "CUSTOM".into());
-    event.set_header("Event-Subclass".into(), "esl_test::array".into());
+    event.set_header("Event-Name", "CUSTOM");
+    event.set_header("Event-Subclass", "esl_test::array");
     event.push_header("X-Test-Array", "value1");
     event.push_header("X-Test-Array", "value2");
     event.push_header("X-Test-Array", "value3");
 
     assert_eq!(
         event.header("X-Test-Array"),
-        Some(&"ARRAY::value1|:value2|:value3".to_string())
+        Some("ARRAY::value1|:value2|:value3")
     );
 
     let resp = client
@@ -117,8 +119,8 @@ async fn live_recv_custom_sendevent() {
         .await
         .unwrap();
     let mut event = EslEvent::with_type(EslEventType::Custom);
-    event.set_header("Event-Name".into(), "CUSTOM".into());
-    event.set_header("Event-Subclass".into(), subclass.clone());
+    event.set_header("Event-Name", "CUSTOM");
+    event.set_header("Event-Subclass", subclass.clone());
     event.set_priority(EslEventPriority::Normal);
     event.push_header("X-Test-Data", "hello");
     event.push_header("X-Test-Data", "world");
@@ -132,12 +134,9 @@ async fn live_recv_custom_sendevent() {
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout_at(deadline, events.recv()).await {
             Ok(Some(Ok(evt))) => {
-                if evt.header("Event-Subclass") == Some(&subclass) {
-                    assert_eq!(evt.header("priority"), Some(&"NORMAL".to_string()));
-                    assert_eq!(
-                        evt.header("X-Test-Data"),
-                        Some(&"ARRAY::hello|:world".to_string())
-                    );
+                if evt.header("Event-Subclass") == Some(subclass.as_str()) {
+                    assert_eq!(evt.header("priority"), Some("NORMAL"));
+                    assert_eq!(evt.header("X-Test-Data"), Some("ARRAY::hello|:world"));
                     return;
                 }
             }
@@ -185,5 +184,75 @@ async fn live_api_multiple_commands() {
             .body()
             .is_some(),
         "global_getvar should have body"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_reply_status_ok() {
+    let (client, _events) = connect().await;
+
+    // subscribe_events uses send_command_ok → into_result(), so Ok means +OK
+    client
+        .subscribe_events(EventFormat::Plain, &[EslEventType::Heartbeat])
+        .await
+        .expect("subscribe should return +OK");
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_reply_status_err() {
+    let (client, _events) = connect().await;
+
+    // log with an invalid level triggers -ERR from FreeSWITCH.
+    // log() returns the raw EslResponse (not through send_command_ok),
+    // so we can inspect the reply status directly.
+    let resp = client
+        .log("BOGUS_LEVEL_12345")
+        .await
+        .expect("send_command should not fail at transport level");
+
+    assert_eq!(
+        resp.reply_status(),
+        ReplyStatus::Err,
+        "expected -ERR reply, got: {:?}",
+        resp.reply_text()
+    );
+    assert!(
+        resp.reply_text()
+            .unwrap_or("")
+            .starts_with("-ERR"),
+        "reply text should start with -ERR: {:?}",
+        resp.reply_text()
+    );
+
+    // into_result() should convert to CommandFailed
+    let err = resp
+        .into_result()
+        .unwrap_err();
+    assert!(
+        matches!(err, EslError::CommandFailed { .. }),
+        "expected CommandFailed, got: {:?}",
+        err
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_api_err_body() {
+    let (client, _events) = connect().await;
+
+    // api with a non-existent command returns -ERR in the body
+    let resp = client
+        .api("nonexistent_command_xyz")
+        .await
+        .unwrap();
+    let body = resp
+        .body()
+        .expect("api error should have body");
+    assert!(
+        body.contains("-ERR") || body.contains("-USAGE"),
+        "expected error in body: {}",
+        body
     );
 }

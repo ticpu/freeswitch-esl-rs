@@ -1,7 +1,9 @@
 //! Connection management for ESL
 
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -19,14 +21,14 @@ use crate::{
 };
 
 /// Connection status for ESL client
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionStatus {
     Connected,
     Disconnected(DisconnectReason),
 }
 
 /// Reason for disconnection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DisconnectReason {
     /// Server sent a text/disconnect-notice with Content-Disposition: disconnect
     ServerNotice,
@@ -110,6 +112,7 @@ struct SharedState {
 ///
 /// Controls parameters that are fixed at connection time, such as the event
 /// queue capacity. Use [`Default::default()`] for standard settings.
+#[derive(Debug, Clone)]
 pub struct EslConnectOptions {
     pub event_queue_size: usize,
 }
@@ -120,6 +123,12 @@ impl Default for EslConnectOptions {
             event_queue_size: MAX_EVENT_QUEUE_SIZE,
         }
     }
+}
+
+/// Authentication method for inbound connections.
+enum AuthMethod<'a> {
+    Password(&'a str),
+    User { user: &'a str, password: &'a str },
 }
 
 /// ESL client handle (Clone + Send)
@@ -133,6 +142,14 @@ pub struct EslClient {
     status_rx: watch::Receiver<ConnectionStatus>,
 }
 
+impl std::fmt::Debug for EslClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EslClient")
+            .field("connected", &self.is_connected())
+            .finish()
+    }
+}
+
 /// Event stream receiver (!Clone)
 ///
 /// Receives events from the background reader task via an mpsc channel.
@@ -143,6 +160,14 @@ pub struct EslClient {
 pub struct EslEventStream {
     rx: mpsc::Receiver<Result<EslEvent, EslError>>,
     status_rx: watch::Receiver<ConnectionStatus>,
+}
+
+impl std::fmt::Debug for EslEventStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EslEventStream")
+            .field("connected", &self.is_connected())
+            .finish()
+    }
 }
 
 /// Read a single ESL message from the socket into the parser.
@@ -190,12 +215,12 @@ async fn recv_message(
     }
 }
 
-/// Perform password authentication on the stream.
+/// Perform authentication on the stream.
 async fn authenticate(
     stream: &mut TcpStream,
     parser: &mut EslParser,
     read_buffer: &mut [u8],
-    password: &str,
+    method: AuthMethod<'_>,
 ) -> EslResult<()> {
     debug!("[AUTH] Waiting for auth request from FreeSWITCH");
     let message = recv_message(stream, parser, read_buffer).await?;
@@ -204,10 +229,17 @@ async fn authenticate(
         return Err(EslError::protocol_error("Expected auth request"));
     }
 
-    let auth_cmd = EslCommand::Auth {
-        password: password.to_string(),
+    let auth_cmd = match method {
+        AuthMethod::Password(password) => EslCommand::Auth {
+            password: password.to_string(),
+        },
+        AuthMethod::User { user, password } => EslCommand::UserAuth {
+            user: user.to_string(),
+            password: password.to_string(),
+        },
     };
-    let command_str = auth_cmd.to_wire_format();
+
+    let command_str = auth_cmd.to_wire_format()?;
     debug!("Sending command: auth [REDACTED]");
     stream
         .write_all(command_str.as_bytes())
@@ -221,54 +253,12 @@ async fn authenticate(
         return Err(EslError::auth_failed(
             response
                 .reply_text()
-                .cloned()
-                .unwrap_or_else(|| "Authentication failed".to_string()),
+                .unwrap_or("Authentication failed")
+                .to_string(),
         ));
     }
 
     debug!("Authentication successful");
-    Ok(())
-}
-
-/// Perform user authentication on the stream.
-async fn authenticate_user(
-    stream: &mut TcpStream,
-    parser: &mut EslParser,
-    read_buffer: &mut [u8],
-    user: &str,
-    password: &str,
-) -> EslResult<()> {
-    debug!("Starting user authentication for user: {}", user);
-
-    let message = recv_message(stream, parser, read_buffer).await?;
-    if message.message_type != MessageType::AuthRequest {
-        return Err(EslError::protocol_error("Expected auth request"));
-    }
-
-    let auth_cmd = EslCommand::UserAuth {
-        user: user.to_string(),
-        password: password.to_string(),
-    };
-    let command_str = auth_cmd.to_wire_format();
-    debug!("Sending command: userauth {}:[REDACTED]", user);
-    stream
-        .write_all(command_str.as_bytes())
-        .await
-        .map_err(EslError::Io)?;
-
-    let response_msg = recv_message(stream, parser, read_buffer).await?;
-    let response = response_msg.into_response();
-
-    if !response.is_success() {
-        return Err(EslError::auth_failed(
-            response
-                .reply_text()
-                .cloned()
-                .unwrap_or_else(|| "User authentication failed".to_string()),
-        ));
-    }
-
-    debug!("User authentication successful");
     Ok(())
 }
 
@@ -328,7 +318,7 @@ async fn reader_loop(
         status_tx.clone(),
         event_tx,
     ));
-    if futures::FutureExt::catch_unwind(result)
+    if futures_util::FutureExt::catch_unwind(result)
         .await
         .is_err()
     {
@@ -355,15 +345,10 @@ async fn reader_loop_inner(
             Ok(Some(message)) => {
                 match message.message_type {
                     MessageType::Event => {
-                        // Determine format from Content-Type
                         let format = message
                             .headers
                             .get(HEADER_CONTENT_TYPE)
-                            .map(|ct| match ct.as_str() {
-                                CONTENT_TYPE_TEXT_EVENT_JSON => EventFormat::Json,
-                                CONTENT_TYPE_TEXT_EVENT_XML => EventFormat::Xml,
-                                _ => EventFormat::Plain,
-                            })
+                            .map(|ct| EventFormat::from_content_type(ct))
                             .unwrap_or(EventFormat::Plain);
 
                         let event_result = parser.parse_event(message, format);
@@ -387,7 +372,6 @@ async fn reader_loop_inner(
                         }
                     }
                     MessageType::Disconnect => {
-                        // Check Content-Disposition: if "linger", don't disconnect
                         let disposition = message
                             .headers
                             .get("Content-Disposition")
@@ -479,17 +463,13 @@ impl EslClient {
         port: u16,
         password: &str,
     ) -> EslResult<(Self, EslEventStream)> {
-        info!("Connecting to FreeSWITCH at {}:{}", host, port);
-
-        let mut stream = tcp_connect_with_timeout(host, port).await?;
-
-        let mut parser = EslParser::new();
-        let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
-
-        authenticate(&mut stream, &mut parser, &mut read_buffer, password).await?;
-
-        info!("Successfully connected and authenticated to FreeSWITCH");
-        Ok(Self::split_and_spawn(stream, parser))
+        Self::connect_inner(
+            host,
+            port,
+            AuthMethod::Password(password),
+            EslConnectOptions::default(),
+        )
+        .await
     }
 
     /// Connect to FreeSWITCH (inbound mode) with password authentication and custom options
@@ -499,17 +479,7 @@ impl EslClient {
         password: &str,
         options: EslConnectOptions,
     ) -> EslResult<(Self, EslEventStream)> {
-        info!("Connecting to FreeSWITCH at {}:{}", host, port);
-
-        let mut stream = tcp_connect_with_timeout(host, port).await?;
-
-        let mut parser = EslParser::new();
-        let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
-
-        authenticate(&mut stream, &mut parser, &mut read_buffer, password).await?;
-
-        info!("Successfully connected and authenticated to FreeSWITCH");
-        Ok(Self::split_and_spawn_with_options(stream, parser, options))
+        Self::connect_inner(host, port, AuthMethod::Password(password), options).await
     }
 
     /// Connect with user authentication
@@ -521,27 +491,13 @@ impl EslClient {
         user: &str,
         password: &str,
     ) -> EslResult<(Self, EslEventStream)> {
-        if !user.contains('@') {
-            return Err(EslError::auth_failed(format!(
-                "Invalid username format '{}': must be user@domain (e.g., admin@default)",
-                user
-            )));
-        }
-
-        info!(
-            "Connecting to FreeSWITCH at {}:{} with user {}",
-            host, port, user
-        );
-
-        let mut stream = tcp_connect_with_timeout(host, port).await?;
-
-        let mut parser = EslParser::new();
-        let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
-
-        authenticate_user(&mut stream, &mut parser, &mut read_buffer, user, password).await?;
-
-        info!("Successfully connected and authenticated to FreeSWITCH");
-        Ok(Self::split_and_spawn(stream, parser))
+        Self::connect_inner(
+            host,
+            port,
+            AuthMethod::User { user, password },
+            EslConnectOptions::default(),
+        )
+        .await
     }
 
     /// Connect with user authentication and custom options
@@ -554,24 +510,31 @@ impl EslClient {
         password: &str,
         options: EslConnectOptions,
     ) -> EslResult<(Self, EslEventStream)> {
-        if !user.contains('@') {
-            return Err(EslError::auth_failed(format!(
-                "Invalid username format '{}': must be user@domain (e.g., admin@default)",
-                user
-            )));
+        Self::connect_inner(host, port, AuthMethod::User { user, password }, options).await
+    }
+
+    async fn connect_inner(
+        host: &str,
+        port: u16,
+        method: AuthMethod<'_>,
+        options: EslConnectOptions,
+    ) -> EslResult<(Self, EslEventStream)> {
+        if let AuthMethod::User { user, .. } = &method {
+            if !user.contains('@') {
+                return Err(EslError::auth_failed(format!(
+                    "Invalid username format '{}': must be user@domain (e.g., admin@default)",
+                    user
+                )));
+            }
         }
 
-        info!(
-            "Connecting to FreeSWITCH at {}:{} with user {}",
-            host, port, user
-        );
+        info!("Connecting to FreeSWITCH at {}:{}", host, port);
 
         let mut stream = tcp_connect_with_timeout(host, port).await?;
-
         let mut parser = EslParser::new();
         let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
 
-        authenticate_user(&mut stream, &mut parser, &mut read_buffer, user, password).await?;
+        authenticate(&mut stream, &mut parser, &mut read_buffer, method).await?;
 
         info!("Successfully connected and authenticated to FreeSWITCH");
         Ok(Self::split_and_spawn_with_options(stream, parser, options))
@@ -579,15 +542,7 @@ impl EslClient {
 
     /// Accept outbound connection from FreeSWITCH
     pub async fn accept_outbound(listener: &TcpListener) -> EslResult<(Self, EslEventStream)> {
-        info!("Waiting for outbound connection from FreeSWITCH");
-
-        let (stream, addr) = listener
-            .accept()
-            .await
-            .map_err(EslError::Io)?;
-        info!("Accepted outbound connection from {}", addr);
-
-        Ok(Self::split_and_spawn(stream, EslParser::new()))
+        Self::accept_outbound_with_options(listener, EslConnectOptions::default()).await
     }
 
     /// Accept outbound connection from FreeSWITCH with custom options
@@ -610,16 +565,15 @@ impl EslClient {
         ))
     }
 
-    /// Split a TcpStream and spawn the reader task
-    fn split_and_spawn(stream: TcpStream, parser: EslParser) -> (Self, EslEventStream) {
-        Self::split_and_spawn_with_options(stream, parser, EslConnectOptions::default())
-    }
-
     fn split_and_spawn_with_options(
         stream: TcpStream,
         parser: EslParser,
         options: EslConnectOptions,
     ) -> (Self, EslEventStream) {
+        let queue_size = options
+            .event_queue_size
+            .max(1);
+
         let (read_half, write_half) = stream.into_split();
 
         let shared = Arc::new(SharedState {
@@ -632,7 +586,7 @@ impl EslClient {
 
         let (status_tx, status_rx) = watch::channel(ConnectionStatus::Connected);
         let status_rx2 = status_tx.subscribe();
-        let (event_tx, event_rx) = mpsc::channel(options.event_queue_size);
+        let (event_tx, event_rx) = mpsc::channel(queue_size);
 
         tokio::spawn(reader_loop(
             read_half,
@@ -656,13 +610,17 @@ impl EslClient {
         (client, stream)
     }
 
-    /// Send a command and wait for the reply
+    /// Send a command and wait for the reply.
+    ///
+    /// The writer lock is held through the entire send-and-receive cycle to
+    /// prevent concurrent commands from overwriting the pending reply slot
+    /// (ESL is a sequential request/response protocol).
     pub async fn send_command(&self, command: EslCommand) -> EslResult<EslResponse> {
         if !self.is_connected() {
             return Err(EslError::NotConnected);
         }
 
-        let command_str = command.to_wire_format();
+        let command_str = command.to_wire_format()?;
         match &command {
             EslCommand::Auth { .. } => debug!("Sending command: auth [REDACTED]"),
             EslCommand::UserAuth { user, .. } => {
@@ -671,7 +629,7 @@ impl EslClient {
             _ => debug!("Sending command: {}", command_str.trim()),
         }
 
-        // Lock writer — serializes concurrent commands (ESL is sequential)
+        // Lock writer — serializes concurrent commands and holds through reply.
         let mut writer = self
             .writer
             .lock()
@@ -694,17 +652,17 @@ impl EslClient {
             .await
             .map_err(EslError::Io)?;
 
-        // Drop writer lock so other operations can proceed
-        drop(writer);
-
-        // Wait for reply from reader task with command timeout
+        // Wait for reply from reader task with command timeout (writer still locked)
         let timeout_ms = self
             .shared
             .command_timeout_ms
             .load(Ordering::Relaxed);
         let message = match timeout(Duration::from_millis(timeout_ms), rx).await {
             Ok(Ok(message)) => message,
-            Ok(Err(_)) => return Err(EslError::ConnectionClosed),
+            Ok(Err(_)) => {
+                drop(writer);
+                return Err(EslError::ConnectionClosed);
+            }
             Err(_) => {
                 let mut pending = self
                     .shared
@@ -712,16 +670,35 @@ impl EslClient {
                     .lock()
                     .await;
                 pending.take();
+                drop(writer);
                 return Err(EslError::Timeout { timeout_ms });
             }
         };
-        let response = message.into_response();
 
+        drop(writer);
+
+        let response = message.into_response();
         debug!("Received response: success={}", response.is_success());
         Ok(response)
     }
 
-    /// Execute API command
+    /// Send a command and require a successful response, discarding the body.
+    async fn send_command_ok(&self, command: EslCommand) -> EslResult<()> {
+        self.send_command(command)
+            .await?
+            .into_result()
+            .map(|_| ())
+    }
+
+    /// Execute API command.
+    ///
+    /// ```rust,no_run
+    /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), freeswitch_esl_tokio::EslError> {
+    /// let resp = client.api("status").await?;
+    /// println!("{}", resp.body().unwrap_or(""));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn api(&self, command: &str) -> EslResult<EslResponse> {
         let cmd = EslCommand::Api {
             command: command.to_string(),
@@ -786,18 +763,8 @@ impl EslClient {
             events: events_str,
         };
 
-        let response = self
-            .send_command(cmd)
+        self.send_command_ok(cmd)
             .await?;
-        if !response.is_success() {
-            return Err(EslError::CommandFailed {
-                reply_text: response
-                    .reply_text()
-                    .cloned()
-                    .unwrap_or_else(|| "Event subscription failed".to_string()),
-            });
-        }
-
         info!("Subscribed to events with format {:?}", format);
         Ok(())
     }
@@ -820,18 +787,8 @@ impl EslClient {
             events: events.to_string(),
         };
 
-        let response = self
-            .send_command(cmd)
+        self.send_command_ok(cmd)
             .await?;
-        if !response.is_success() {
-            return Err(EslError::CommandFailed {
-                reply_text: response
-                    .reply_text()
-                    .cloned()
-                    .unwrap_or_else(|| "Event subscription failed".to_string()),
-            });
-        }
-
         info!(
             "Subscribed to raw events '{}' with format {:?}",
             events, format
@@ -846,11 +803,8 @@ impl EslClient {
             value: value.to_string(),
         };
 
-        let response = self
-            .send_command(cmd)
+        self.send_command_ok(cmd)
             .await?;
-        response.into_result()?;
-
         debug!("Set event filter: {} = {}", header, value);
         Ok(())
     }
@@ -900,18 +854,8 @@ impl EslClient {
             format: format.to_string(),
             uuid: None,
         };
-        let response = self
-            .send_command(cmd)
-            .await?;
-        if !response.is_success() {
-            return Err(EslError::CommandFailed {
-                reply_text: response
-                    .reply_text()
-                    .cloned()
-                    .unwrap_or_else(|| "myevents failed".to_string()),
-            });
-        }
-        Ok(())
+        self.send_command_ok(cmd)
+            .await
     }
 
     /// Subscribe to session events for a specific UUID (inbound mode).
@@ -923,18 +867,8 @@ impl EslClient {
             format: format.to_string(),
             uuid: Some(uuid.to_string()),
         };
-        let response = self
-            .send_command(cmd)
-            .await?;
-        if !response.is_success() {
-            return Err(EslError::CommandFailed {
-                reply_text: response
-                    .reply_text()
-                    .cloned()
-                    .unwrap_or_else(|| "myevents failed".to_string()),
-            });
-        }
-        Ok(())
+        self.send_command_ok(cmd)
+            .await
     }
 
     /// Keep the socket open after the channel hangs up (outbound mode).
@@ -945,19 +879,8 @@ impl EslClient {
     ///
     /// Pass `None` for indefinite linger, or `Some(seconds)` for a timeout.
     pub async fn linger(&self, timeout: Option<u32>) -> EslResult<()> {
-        let cmd = EslCommand::Linger { timeout };
-        let response = self
-            .send_command(cmd)
-            .await?;
-        if !response.is_success() {
-            return Err(EslError::CommandFailed {
-                reply_text: response
-                    .reply_text()
-                    .cloned()
-                    .unwrap_or_else(|| "linger failed".to_string()),
-            });
-        }
-        Ok(())
+        self.send_command_ok(EslCommand::Linger { timeout })
+            .await
     }
 
     /// Cancel linger mode (outbound mode).
@@ -965,18 +888,8 @@ impl EslClient {
     /// Only effective before the channel hangs up. After the disconnect notice
     /// has been sent, it's too late to cancel.
     pub async fn nolinger(&self) -> EslResult<()> {
-        let response = self
-            .send_command(EslCommand::NoLinger)
-            .await?;
-        if !response.is_success() {
-            return Err(EslError::CommandFailed {
-                reply_text: response
-                    .reply_text()
-                    .cloned()
-                    .unwrap_or_else(|| "nolinger failed".to_string()),
-            });
-        }
-        Ok(())
+        self.send_command_ok(EslCommand::NoLinger)
+            .await
     }
 
     /// Resume dialplan execution when the socket disconnects (outbound mode).
@@ -984,18 +897,8 @@ impl EslClient {
     /// Without resume, the channel is hung up when the socket application exits.
     /// With resume, FreeSWITCH continues dialplan execution from where it left off.
     pub async fn resume(&self) -> EslResult<()> {
-        let response = self
-            .send_command(EslCommand::Resume)
-            .await?;
-        if !response.is_success() {
-            return Err(EslError::CommandFailed {
-                reply_text: response
-                    .reply_text()
-                    .cloned()
-                    .unwrap_or_else(|| "resume failed".to_string()),
-            });
-        }
-        Ok(())
+        self.send_command_ok(EslCommand::Resume)
+            .await
     }
 
     /// Establish the outbound session by sending `connect` and receiving channel data.
@@ -1035,22 +938,16 @@ impl EslClient {
         let cmd = EslCommand::NixEvent {
             events: events.to_string(),
         };
-        let response = self
-            .send_command(cmd)
-            .await?;
-        response.into_result()?;
-        Ok(())
+        self.send_command_ok(cmd)
+            .await
     }
 
     /// Unsubscribe from all events.
     ///
     /// Clears all event subscriptions. The server flushes any queued events.
     pub async fn noevents(&self) -> EslResult<()> {
-        let response = self
-            .send_command(EslCommand::NoEvents)
-            .await?;
-        response.into_result()?;
-        Ok(())
+        self.send_command_ok(EslCommand::NoEvents)
+            .await
     }
 
     /// Remove an event filter for a specific header.
@@ -1062,11 +959,8 @@ impl EslClient {
             header: header.to_string(),
             value: value.map(|v| v.to_string()),
         };
-        let response = self
-            .send_command(cmd)
-            .await?;
-        response.into_result()?;
-        Ok(())
+        self.send_command_ok(cmd)
+            .await
     }
 
     /// Remove all event filters.
@@ -1080,18 +974,18 @@ impl EslClient {
     /// When `on` is true, events that would normally be processed internally
     /// by FreeSWITCH are instead sent to the ESL connection.
     pub async fn divert_events(&self, on: bool) -> EslResult<()> {
-        let cmd = EslCommand::DivertEvents { on };
-        let response = self
-            .send_command(cmd)
-            .await?;
-        response.into_result()?;
-        Ok(())
+        self.send_command_ok(EslCommand::DivertEvents { on })
+            .await
     }
 
     /// Read a channel variable (outbound mode).
     ///
-    /// Returns the raw value from Reply-Text. FreeSWITCH returns an empty
-    /// string for unset variables (never errors).
+    /// **Protocol quirk:** Unlike every other ESL command, `getvar` returns
+    /// the raw variable value directly in `Reply-Text` with no `+OK`/`-ERR`
+    /// prefix. A non-existent variable returns an empty string (never `-ERR`).
+    /// This method reads the raw Reply-Text; do not use `into_result()` on
+    /// the response — it would misclassify the bare value as
+    /// [`UnexpectedReply`](crate::EslError::UnexpectedReply).
     pub async fn getvar(&self, name: &str) -> EslResult<String> {
         let cmd = EslCommand::GetVar {
             name: name.to_string(),
@@ -1101,8 +995,8 @@ impl EslClient {
             .await?;
         Ok(response
             .reply_text()
-            .cloned()
-            .unwrap_or_default())
+            .unwrap_or("")
+            .to_string())
     }
 
     /// Enable FreeSWITCH log forwarding at the given level.
@@ -1229,6 +1123,15 @@ impl EslEventStream {
     }
 }
 
+impl futures_util::Stream for EslEventStream {
+    type Item = Result<EslEvent, EslError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.rx
+            .poll_recv(cx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1237,5 +1140,18 @@ mod tests {
     async fn test_connection_mode() {
         assert_eq!(ConnectionMode::Inbound, ConnectionMode::Inbound);
         assert_ne!(ConnectionMode::Inbound, ConnectionMode::Outbound);
+    }
+
+    #[tokio::test]
+    async fn test_connection_status_eq() {
+        assert_eq!(ConnectionStatus::Connected, ConnectionStatus::Connected);
+        assert_eq!(
+            ConnectionStatus::Disconnected(DisconnectReason::ServerNotice),
+            ConnectionStatus::Disconnected(DisconnectReason::ServerNotice)
+        );
+        assert_ne!(
+            ConnectionStatus::Connected,
+            ConnectionStatus::Disconnected(DisconnectReason::ConnectionClosed)
+        );
     }
 }

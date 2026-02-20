@@ -78,7 +78,7 @@ async fn test_recv_event_plain() {
 
     let event = recv_event(&mut events).await;
     assert_eq!(event.event_type(), Some(EslEventType::ChannelCreate));
-    assert_eq!(event.unique_id(), Some(&"test-uuid-abc".to_string()));
+    assert_eq!(event.unique_id(), Some("test-uuid-abc"));
 }
 
 #[tokio::test]
@@ -113,7 +113,7 @@ async fn test_concurrent_command_and_events() {
     let response = api_task
         .await
         .unwrap();
-    assert_eq!(response.body(), Some(&"UP 0 years".to_string()));
+    assert_eq!(response.body(), Some("UP 0 years"));
 
     // The event should still be available
     let event = recv_event(&mut events).await;
@@ -327,16 +327,13 @@ async fn test_heartbeat_event_headers() {
 
     assert_eq!(event.event_type(), Some(EslEventType::Heartbeat));
     // Values should be percent-decoded
-    assert_eq!(
-        event.header("Event-Info"),
-        Some(&"System Ready".to_string())
-    );
+    assert_eq!(event.header("Event-Info"), Some("System Ready"));
     assert_eq!(
         event.header("Up-Time"),
-        Some(&"0 years, 0 days, 1 hour, 23 minutes".to_string())
+        Some("0 years, 0 days, 1 hour, 23 minutes")
     );
-    assert_eq!(event.header("Session-Count"), Some(&"5".to_string()));
-    assert_eq!(event.header("Heartbeat-Interval"), Some(&"20".to_string()));
+    assert_eq!(event.header("Session-Count"), Some("5"));
+    assert_eq!(event.header("Heartbeat-Interval"), Some("20"));
 }
 
 #[tokio::test]
@@ -355,13 +352,10 @@ async fn test_url_decoded_headers() {
     let event = recv_event(&mut events).await;
 
     // Percent-encoded values should be decoded
-    assert_eq!(
-        event.header("Caller-Caller-ID-Name"),
-        Some(&"John Doe".to_string())
-    );
+    assert_eq!(event.header("Caller-Caller-ID-Name"), Some("John Doe"));
     assert_eq!(
         event.header("variable_sip_from_display"),
-        Some(&"Test User (123)".to_string())
+        Some("Test User (123)")
     );
 }
 

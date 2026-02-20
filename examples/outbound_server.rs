@@ -48,6 +48,14 @@ async fn handle_call(
 ) -> Result<(), freeswitch_esl_tokio::EslError> {
     info!("Handling new call...");
 
+    let connect_resp = client
+        .connect_session()
+        .await?;
+    let channel = connect_resp
+        .header("Channel-Name")
+        .unwrap_or("(unknown)");
+    info!("Session established: {}", channel);
+
     client
         .subscribe_events(
             EventFormat::Plain,

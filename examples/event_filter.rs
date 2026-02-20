@@ -218,19 +218,15 @@ fn parse_event_type(name: &str) -> Result<EslEventType, String> {
 fn format_event_summary(event: &freeswitch_esl_tokio::EslEvent) -> String {
     let event_name = event
         .header("Event-Name")
-        .map(|s| s.as_str())
         .unwrap_or("UNKNOWN");
     let caller_id = event
         .header("Caller-Caller-ID-Number")
-        .map(|s| s.as_str())
         .unwrap_or("-");
     let dest = event
         .header("Caller-Destination-Number")
-        .map(|s| s.as_str())
         .unwrap_or("-");
     let direction = event
         .header("Call-Direction")
-        .map(|s| s.as_str())
         .unwrap_or("-");
     let uuid = event
         .unique_id()
@@ -246,10 +242,10 @@ fn format_event_summary(event: &freeswitch_esl_tokio::EslEvent) -> String {
 fn format_event_full(event: &freeswitch_esl_tokio::EslEvent) -> String {
     let mut output = String::new();
     output.push_str("---EVENT---\n");
-    for (key, value) in &event.headers {
+    for (key, value) in event.headers() {
         output.push_str(&format!("{}: {}\n", key, value));
     }
-    if let Some(body) = &event.body {
+    if let Some(body) = event.body() {
         output.push_str(&format!("\n{}\n", body));
     }
     output.push_str("-----------\n");
@@ -257,7 +253,7 @@ fn format_event_full(event: &freeswitch_esl_tokio::EslEvent) -> String {
 }
 
 fn format_event_json(event: &freeswitch_esl_tokio::EslEvent) -> String {
-    serde_json::to_string(&event.headers).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string(event.headers()).unwrap_or_else(|_| "{}".to_string())
 }
 
 #[tokio::main]
