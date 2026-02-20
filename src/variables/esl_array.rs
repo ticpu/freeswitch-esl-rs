@@ -20,17 +20,19 @@ impl EslArray {
 
     /// Create a new array from a vec of items.
     pub fn new(items: Vec<String>) -> Self {
-        todo!()
+        Self(items)
     }
 
     /// Append an item to the end.
     pub fn push(&mut self, value: String) {
-        todo!()
+        self.0
+            .push(value);
     }
 
     /// Prepend an item to the front.
     pub fn unshift(&mut self, value: String) {
-        todo!()
+        self.0
+            .insert(0, value);
     }
 
     /// The parsed array items.

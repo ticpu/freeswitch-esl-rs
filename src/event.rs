@@ -441,12 +441,14 @@ impl EslEvent {
 
     /// Set event priority, adding a `priority` header.
     pub fn set_priority(&mut self, priority: EslEventPriority) {
-        todo!()
+        self.set_header("priority".into(), priority.to_string());
     }
 
     /// Get event priority from the `priority` header.
     pub fn priority(&self) -> Option<EslEventPriority> {
-        todo!()
+        self.header("priority")?
+            .parse()
+            .ok()
     }
 
     /// Append a value to a multi-value header (PUSH semantics).
@@ -455,14 +457,33 @@ impl EslEvent {
     /// If it exists as a plain value, converts to `ARRAY::old|:new`.
     /// If it already has an `ARRAY::` prefix, appends the new value.
     pub fn push_header(&mut self, name: &str, value: &str) {
-        todo!()
+        self.stack_header(name, value, EslArray::push);
     }
 
     /// Prepend a value to a multi-value header (UNSHIFT semantics).
     ///
     /// Same conversion rules as `push_header()`, but inserts at the front.
     pub fn unshift_header(&mut self, name: &str, value: &str) {
-        todo!()
+        self.stack_header(name, value, EslArray::unshift);
+    }
+
+    fn stack_header(&mut self, name: &str, value: &str, op: fn(&mut EslArray, String)) {
+        match self
+            .headers
+            .get(name)
+        {
+            None => {
+                self.set_header(name.into(), value.into());
+            }
+            Some(existing) => {
+                let mut arr = match EslArray::parse(existing) {
+                    Some(arr) => arr,
+                    None => EslArray::new(vec![existing.clone()]),
+                };
+                op(&mut arr, value.into());
+                self.set_header(name.into(), arr.to_string());
+            }
+        }
     }
 
     /// Get unique ID for the event/channel

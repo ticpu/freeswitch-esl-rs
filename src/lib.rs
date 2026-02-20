@@ -71,5 +71,5 @@ pub use connection::{
     EslEventStream,
 };
 pub use error::{EslError, EslResult};
-pub use event::{EslEvent, EslEventType, EventFormat};
+pub use event::{EslEvent, EslEventPriority, EslEventType, EventFormat};
 pub use variables::{EslArray, MultipartBody, MultipartItem};
