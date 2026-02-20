@@ -1,9 +1,11 @@
 //! ESL event types and structures
 
+use crate::variables::EslArray;
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
+use std::str::FromStr;
 
 /// Event format types supported by FreeSWITCH ESL
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,6 +341,40 @@ impl EslEventType {
     }
 }
 
+/// Event priority levels matching FreeSWITCH `esl_priority_t`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EslEventPriority {
+    Normal,
+    Low,
+    High,
+}
+
+impl fmt::Display for EslEventPriority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EslEventPriority::Normal => write!(f, "NORMAL"),
+            EslEventPriority::Low => write!(f, "LOW"),
+            EslEventPriority::High => write!(f, "HIGH"),
+        }
+    }
+}
+
+impl FromStr for EslEventPriority {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s
+            .to_uppercase()
+            .as_str()
+        {
+            "NORMAL" => Ok(EslEventPriority::Normal),
+            "LOW" => Ok(EslEventPriority::Low),
+            "HIGH" => Ok(EslEventPriority::High),
+            _ => Err(()),
+        }
+    }
+}
+
 /// ESL Event structure containing headers and optional body
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EslEvent {
@@ -401,6 +437,32 @@ impl EslEvent {
     /// Set event body
     pub fn set_body(&mut self, body: String) {
         self.body = Some(body);
+    }
+
+    /// Set event priority, adding a `priority` header.
+    pub fn set_priority(&mut self, priority: EslEventPriority) {
+        todo!()
+    }
+
+    /// Get event priority from the `priority` header.
+    pub fn priority(&self) -> Option<EslEventPriority> {
+        todo!()
+    }
+
+    /// Append a value to a multi-value header (PUSH semantics).
+    ///
+    /// If the header doesn't exist, sets it as a plain value.
+    /// If it exists as a plain value, converts to `ARRAY::old|:new`.
+    /// If it already has an `ARRAY::` prefix, appends the new value.
+    pub fn push_header(&mut self, name: &str, value: &str) {
+        todo!()
+    }
+
+    /// Prepend a value to a multi-value header (UNSHIFT semantics).
+    ///
+    /// Same conversion rules as `push_header()`, but inserts at the front.
+    pub fn unshift_header(&mut self, name: &str, value: &str) {
+        todo!()
     }
 
     /// Get unique ID for the event/channel
@@ -672,5 +734,109 @@ mod tests {
         assert_eq!(parsed.event_type, original.event_type);
         assert_eq!(parsed.headers, original.headers);
         assert_eq!(parsed.body, original.body);
+    }
+
+    #[test]
+    fn test_set_priority_normal() {
+        let mut event = EslEvent::new();
+        event.set_priority(EslEventPriority::Normal);
+        assert_eq!(event.priority(), Some(EslEventPriority::Normal));
+        assert_eq!(event.header("priority"), Some(&"NORMAL".to_string()));
+    }
+
+    #[test]
+    fn test_set_priority_high() {
+        let mut event = EslEvent::new();
+        event.set_priority(EslEventPriority::High);
+        assert_eq!(event.priority(), Some(EslEventPriority::High));
+        assert_eq!(event.header("priority"), Some(&"HIGH".to_string()));
+    }
+
+    #[test]
+    fn test_priority_display() {
+        assert_eq!(EslEventPriority::Normal.to_string(), "NORMAL");
+        assert_eq!(EslEventPriority::Low.to_string(), "LOW");
+        assert_eq!(EslEventPriority::High.to_string(), "HIGH");
+    }
+
+    #[test]
+    fn test_priority_from_str() {
+        assert_eq!(
+            "NORMAL".parse::<EslEventPriority>(),
+            Ok(EslEventPriority::Normal)
+        );
+        assert_eq!("LOW".parse::<EslEventPriority>(), Ok(EslEventPriority::Low));
+        assert_eq!(
+            "HIGH".parse::<EslEventPriority>(),
+            Ok(EslEventPriority::High)
+        );
+        assert!("INVALID"
+            .parse::<EslEventPriority>()
+            .is_err());
+    }
+
+    #[test]
+    fn test_priority_from_str_case_insensitive() {
+        assert_eq!(
+            "normal".parse::<EslEventPriority>(),
+            Ok(EslEventPriority::Normal)
+        );
+        assert_eq!("Low".parse::<EslEventPriority>(), Ok(EslEventPriority::Low));
+        assert_eq!(
+            "hIgH".parse::<EslEventPriority>(),
+            Ok(EslEventPriority::High)
+        );
+    }
+
+    #[test]
+    fn test_push_header_new() {
+        let mut event = EslEvent::new();
+        event.push_header("X-Test", "first");
+        assert_eq!(event.header("X-Test"), Some(&"first".to_string()));
+    }
+
+    #[test]
+    fn test_push_header_existing_plain() {
+        let mut event = EslEvent::new();
+        event.set_header("X-Test".into(), "first".into());
+        event.push_header("X-Test", "second");
+        assert_eq!(
+            event.header("X-Test"),
+            Some(&"ARRAY::first|:second".to_string())
+        );
+    }
+
+    #[test]
+    fn test_push_header_existing_array() {
+        let mut event = EslEvent::new();
+        event.set_header("X-Test".into(), "ARRAY::a|:b".into());
+        event.push_header("X-Test", "c");
+        assert_eq!(event.header("X-Test"), Some(&"ARRAY::a|:b|:c".to_string()));
+    }
+
+    #[test]
+    fn test_unshift_header_new() {
+        let mut event = EslEvent::new();
+        event.unshift_header("X-Test", "only");
+        assert_eq!(event.header("X-Test"), Some(&"only".to_string()));
+    }
+
+    #[test]
+    fn test_unshift_header_existing_array() {
+        let mut event = EslEvent::new();
+        event.set_header("X-Test".into(), "ARRAY::b|:c".into());
+        event.unshift_header("X-Test", "a");
+        assert_eq!(event.header("X-Test"), Some(&"ARRAY::a|:b|:c".to_string()));
+    }
+
+    #[test]
+    fn test_sendevent_with_priority_wire_format() {
+        let mut event = EslEvent::with_type(EslEventType::Custom);
+        event.set_header("Event-Name".into(), "CUSTOM".into());
+        event.set_header("Event-Subclass".into(), "test::priority".into());
+        event.set_priority(EslEventPriority::High);
+
+        let plain = event.to_plain_format();
+        assert!(plain.contains("priority: HIGH\n"));
     }
 }

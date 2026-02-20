@@ -18,6 +18,21 @@ impl EslArray {
         Some(Self(items))
     }
 
+    /// Create a new array from a vec of items.
+    pub fn new(items: Vec<String>) -> Self {
+        todo!()
+    }
+
+    /// Append an item to the end.
+    pub fn push(&mut self, value: String) {
+        todo!()
+    }
+
+    /// Prepend an item to the front.
+    pub fn unshift(&mut self, value: String) {
+        todo!()
+    }
+
     /// The parsed array items.
     pub fn items(&self) -> &[String] {
         &self.0
@@ -95,5 +110,30 @@ mod tests {
     fn empty_items_in_array() {
         let arr = EslArray::parse("ARRAY::|:|:stuff").unwrap();
         assert_eq!(arr.items(), &["", "", "stuff"]);
+    }
+
+    #[test]
+    fn test_new() {
+        let arr = EslArray::new(vec!["a".into(), "b".into(), "c".into()]);
+        assert_eq!(arr.items(), &["a", "b", "c"]);
+        assert_eq!(arr.len(), 3);
+    }
+
+    #[test]
+    fn test_push() {
+        let mut arr = EslArray::new(vec!["first".into()]);
+        arr.push("second".into());
+        arr.push("third".into());
+        assert_eq!(arr.items(), &["first", "second", "third"]);
+        assert_eq!(arr.to_string(), "ARRAY::first|:second|:third");
+    }
+
+    #[test]
+    fn test_unshift() {
+        let mut arr = EslArray::new(vec!["last".into()]);
+        arr.unshift("middle".into());
+        arr.unshift("first".into());
+        assert_eq!(arr.items(), &["first", "middle", "last"]);
+        assert_eq!(arr.to_string(), "ARRAY::first|:middle|:last");
     }
 }
