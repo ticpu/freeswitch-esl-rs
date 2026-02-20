@@ -333,6 +333,48 @@ mod tests {
     }
 
     #[test]
+    fn test_myevents_wire_format() {
+        let cmd = EslCommand::MyEvents {
+            format: "plain".to_string(),
+            uuid: None,
+        };
+        assert_eq!(cmd.to_wire_format(), "myevents plain\n\n");
+    }
+
+    #[test]
+    fn test_myevents_uuid_wire_format() {
+        let cmd = EslCommand::MyEvents {
+            format: "json".to_string(),
+            uuid: Some("abc-123".to_string()),
+        };
+        assert_eq!(cmd.to_wire_format(), "myevents abc-123 json\n\n");
+    }
+
+    #[test]
+    fn test_linger_wire_format() {
+        let cmd = EslCommand::Linger { timeout: None };
+        assert_eq!(cmd.to_wire_format(), "linger\n\n");
+    }
+
+    #[test]
+    fn test_linger_timeout_wire_format() {
+        let cmd = EslCommand::Linger { timeout: Some(600) };
+        assert_eq!(cmd.to_wire_format(), "linger 600\n\n");
+    }
+
+    #[test]
+    fn test_nolinger_wire_format() {
+        let cmd = EslCommand::NoLinger;
+        assert_eq!(cmd.to_wire_format(), "nolinger\n\n");
+    }
+
+    #[test]
+    fn test_resume_wire_format() {
+        let cmd = EslCommand::Resume;
+        assert_eq!(cmd.to_wire_format(), "resume\n\n");
+    }
+
+    #[test]
     fn test_sendevent_wire_format() {
         let mut event = EslEvent::with_type(EslEventType::Custom);
         event.set_header("Event-Name".to_string(), "CUSTOM".to_string());

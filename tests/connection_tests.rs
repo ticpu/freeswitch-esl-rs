@@ -3,7 +3,8 @@
 mod mock_server;
 
 use freeswitch_esl_tokio::{
-    ConnectionStatus, DisconnectReason, EslClient, EslError, EslEvent, EslEventStream, EslEventType,
+    ConnectionStatus, DisconnectReason, EslClient, EslError, EslEvent, EslEventStream,
+    EslEventType, EventFormat,
 };
 use mock_server::{setup_connected_pair, MockEslServer};
 use std::collections::HashMap;
@@ -479,4 +480,154 @@ async fn test_sendevent_command() {
         .unwrap()
         .unwrap();
     assert!(response.is_success());
+}
+
+#[tokio::test]
+async fn test_myevents_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .myevents(EventFormat::Plain)
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "myevents plain\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_myevents_uuid_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .myevents_uuid("abc-123-def", EventFormat::Json)
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "myevents abc-123-def json\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_linger_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .linger(None)
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "linger\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_linger_timeout_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .linger(Some(300))
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "linger 300\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_nolinger_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .nolinger()
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "nolinger\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_resume_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .resume()
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "resume\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
 }
