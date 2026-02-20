@@ -8,6 +8,7 @@ const ARRAY_SEPARATOR: &str = "|:";
 pub struct EslArray(Vec<String>);
 
 impl EslArray {
+    /// Parse an `ARRAY::` formatted string. Returns `None` if the prefix is missing.
     pub fn parse(s: &str) -> Option<Self> {
         let body = s.strip_prefix(ARRAY_HEADER)?;
         let items = body
@@ -17,15 +18,18 @@ impl EslArray {
         Some(Self(items))
     }
 
+    /// The parsed array items.
     pub fn items(&self) -> &[String] {
         &self.0
     }
 
+    /// Number of items in the array.
     pub fn len(&self) -> usize {
         self.0
             .len()
     }
 
+    /// Returns `true` if the array has no items.
     pub fn is_empty(&self) -> bool {
         self.0
             .is_empty()

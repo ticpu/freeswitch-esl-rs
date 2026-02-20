@@ -179,8 +179,10 @@ pub enum EslCommand {
     },
     /// Exit/logout
     Exit,
-    /// Log level
+    /// Enable log forwarding at the given level
     Log { level: String },
+    /// Disable log forwarding
+    NoLog,
     /// No operation / keepalive
     NoOp,
 }
@@ -249,6 +251,7 @@ impl EslCommand {
             }
             EslCommand::Exit => Self::format_simple_command("exit", &[]),
             EslCommand::Log { level } => Self::format_simple_command("log", &[level]),
+            EslCommand::NoLog => Self::format_simple_command("nolog", &[]),
             EslCommand::NoOp => Self::format_simple_command("noop", &[]),
         }
     }

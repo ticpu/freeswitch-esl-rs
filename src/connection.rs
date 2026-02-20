@@ -881,6 +881,41 @@ impl EslClient {
             .await
     }
 
+    /// Enable FreeSWITCH log forwarding at the given level.
+    ///
+    /// Log messages stream as events with `Content-Type: log/data`.
+    /// Valid levels: `DEBUG`, `INFO`, `NOTICE`, `WARNING`, `ERROR`,
+    /// `CRIT`, `ALERT`, `EMERG` (or numeric 0–7).
+    pub async fn log(&self, level: &str) -> EslResult<EslResponse> {
+        let cmd = EslCommand::Log {
+            level: level.to_string(),
+        };
+        self.send_command(cmd)
+            .await
+    }
+
+    /// Disable log forwarding.
+    pub async fn nolog(&self) -> EslResult<EslResponse> {
+        self.send_command(EslCommand::NoLog)
+            .await
+    }
+
+    /// Send a no-op command (keepalive).
+    pub async fn noop(&self) -> EslResult<EslResponse> {
+        self.send_command(EslCommand::NoOp)
+            .await
+    }
+
+    /// Send the `exit` command to gracefully close the ESL session.
+    ///
+    /// Unlike [`disconnect()`](Self::disconnect) which shuts down the TCP
+    /// write half immediately, this sends the ESL `exit` command and waits
+    /// for the server's reply before the connection closes.
+    pub async fn exit(&self) -> EslResult<EslResponse> {
+        self.send_command(EslCommand::Exit)
+            .await
+    }
+
     /// Number of events dropped due to a full event queue.
     pub fn dropped_event_count(&self) -> u64 {
         self.shared

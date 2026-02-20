@@ -5,9 +5,12 @@ use indexmap::IndexMap;
 
 use super::originate_split;
 
+/// FreeSWITCH dialplan type for originate commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialplanType {
+    /// Inline dialplan: applications execute directly without XML lookup.
     Inline,
+    /// XML dialplan: route through the XML dialplan engine.
     Xml,
 }
 

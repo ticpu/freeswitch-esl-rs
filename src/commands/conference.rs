@@ -1,5 +1,6 @@
 use std::fmt;
 
+/// Conference member mute/unmute action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MuteAction {
     Mute,
@@ -15,6 +16,7 @@ impl fmt::Display for MuteAction {
     }
 }
 
+/// Mute or unmute a conference member: `conference <name> mute|unmute <member>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConferenceMute {
     pub name: String,
@@ -32,6 +34,7 @@ impl fmt::Display for ConferenceMute {
     }
 }
 
+/// Conference member hold/unhold action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HoldAction {
     Hold,
@@ -47,6 +50,7 @@ impl fmt::Display for HoldAction {
     }
 }
 
+/// Hold or unhold a conference member: `conference <name> hold|unhold <member> [stream]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConferenceHold {
     pub name: String,
@@ -69,6 +73,7 @@ impl fmt::Display for ConferenceHold {
     }
 }
 
+/// Send DTMF to conference members: `conference <name> dtmf <member> <digits>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConferenceDtmf {
     pub name: String,
