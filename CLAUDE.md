@@ -61,6 +61,16 @@ git push --tags
 - **Foundation for extension**: Application-specific crates (NGCS, X-Call-Info, SIP
   URI) can depend on these base types without reimplementing escaping or parsing.
 
+## Outbound ESL Mode
+
+See [docs/outbound-esl-quirks.md](docs/outbound-esl-quirks.md) for details.
+
+- `connect_session()` must be the first command after `accept_outbound()`
+- `async full` mode required for api/bgapi/linger/event commands
+- Socket app args need quoting in originate — `Originate` builder handles this
+  via `originate_quote()`/`originate_unquote()` in `commands/mod.rs`
+- `cargo run --example outbound_test` exercises outbound against real FS on port 8022
+
 ## Development Methodology — TDD
 
 This project follows test-driven development:

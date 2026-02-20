@@ -161,6 +161,79 @@ if event.is_event_type(EslEventType::BackgroundJob) {
 Use `bgapi` for slow commands (`originate`, `conference`) to avoid blocking the ESL
 command pipeline and hitting the command timeout.
 
+### Outbound Mode
+
+In outbound mode, FreeSWITCH connects to your application via the `socket`
+dialplan application. After accepting the TCP connection, you **must** send
+`connect` to establish the session before any other commands:
+
+```rust
+use freeswitch_esl_tokio::{EslClient, EventFormat};
+use tokio::net::TcpListener;
+
+let listener = TcpListener::bind("0.0.0.0:8040").await?;
+let (client, mut events) = EslClient::accept_outbound(&listener).await?;
+
+// Required first command — returns channel data headers
+let channel_data = client.connect_session().await?;
+println!("Channel: {}", channel_data.header("Channel-Name").unwrap());
+
+// Now subscribe to session events and enable linger
+client.myevents(EventFormat::Plain).await?;
+client.linger(None).await?;
+client.resume().await?;
+
+while let Some(Ok(event)) = events.recv().await {
+    // handle events...
+}
+```
+
+The originating call must use `async full` mode for the socket application to
+have access to all ESL commands (linger, event subscriptions, api, etc.):
+
+```rust
+use freeswitch_esl_tokio::commands::originate::*;
+
+let originate = Originate {
+    endpoint: Endpoint::Loopback {
+        uri: "9199".into(),
+        context: "default".into(),
+        variables: None,
+    },
+    applications: ApplicationList(vec![
+        Application::new("socket", Some("10.0.0.1:8040 async full")),
+    ]),
+    dialplan: None,
+    context: None, cid_name: None, cid_num: None, timeout: None,
+};
+// Produces: originate loopback/9199/default '&socket(10.0.0.1:8040 async full)'
+// Application args with spaces are automatically single-quoted.
+client.api(&originate.to_string()).await?;
+```
+
+### Protocol Commands
+
+Beyond `api`/`bgapi` and event subscriptions, the following ESL protocol
+commands are available:
+
+| Method | Description |
+|---|---|
+| `subscribe_events()` / `subscribe_events_raw()` | Subscribe to events |
+| `nixevent()` / `nixevent_raw()` | Unsubscribe specific events |
+| `noevents()` | Unsubscribe all events |
+| `filter_events()` | Add event filter |
+| `filter_delete()` / `filter_delete_all()` | Remove event filters |
+| `myevents()` / `myevents_uuid()` | Subscribe to session events |
+| `linger()` / `nolinger()` | Keep socket open after hangup |
+| `resume()` | Resume dialplan on disconnect |
+| `divert_events()` | Redirect session events to ESL |
+| `getvar()` | Read channel variable (outbound) |
+| `connect_session()` | Establish outbound session |
+| `log()` / `nolog()` | Enable/disable log forwarding |
+| `sendevent()` | Fire event into FS event bus |
+| `execute()` / `sendmsg()` | Execute app / send message |
+| `exit()` / `disconnect()` | Close ESL session |
+
 ### Command Builders
 
 The `commands` module provides typed builders for FreeSWITCH API commands. All
