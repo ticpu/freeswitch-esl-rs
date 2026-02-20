@@ -448,3 +448,35 @@ async fn test_command_timeout_cleanup() {
         .unwrap();
     assert!(result.is_ok());
 }
+
+#[tokio::test]
+async fn test_sendevent_command() {
+    let (mut mock, client, _events) = setup_connected_pair("ClueCon").await;
+
+    let mut event = EslEvent::with_type(EslEventType::Custom);
+    event.set_header("Event-Name".to_string(), "CUSTOM".to_string());
+    event.set_header("Event-Subclass".to_string(), "test::my_event".to_string());
+
+    let send_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .sendevent(event)
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert!(cmd.starts_with("sendevent CUSTOM\n"));
+    assert!(cmd.contains("Event-Subclass: test::my_event\n"));
+    mock.reply_ok()
+        .await;
+
+    let response = send_task
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(response.is_success());
+}

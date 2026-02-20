@@ -304,4 +304,48 @@ mod tests {
         assert!(hangup.contains("execute-app-name: hangup"));
         assert!(hangup.contains("execute-app-arg: NORMAL_CLEARING"));
     }
+
+    #[test]
+    fn test_sendevent_wire_format() {
+        let mut event = EslEvent::with_type(EslEventType::Custom);
+        event.set_header("Event-Name".to_string(), "CUSTOM".to_string());
+        event.set_header("Event-Subclass".to_string(), "my::test_event".to_string());
+
+        let cmd = EslCommand::SendEvent { event };
+        let wire = cmd.to_wire_format();
+
+        assert!(wire.starts_with("sendevent CUSTOM\n"));
+        assert!(wire.contains("Event-Name: CUSTOM\n"));
+        assert!(wire.contains("Event-Subclass: my::test_event\n"));
+        assert!(wire.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn test_sendevent_wire_format_with_body() {
+        let mut event = EslEvent::with_type(EslEventType::Custom);
+        event.set_header("Event-Name".to_string(), "CUSTOM".to_string());
+        event.set_body("hello world".to_string());
+
+        let cmd = EslCommand::SendEvent { event };
+        let wire = cmd.to_wire_format();
+
+        assert!(wire.starts_with("sendevent CUSTOM\n"));
+        assert!(wire.contains("Content-Length: 11\n"));
+        assert!(wire.ends_with("hello world"));
+    }
+
+    #[test]
+    fn test_sendevent_no_event_type() {
+        let mut event = EslEvent::new();
+        event.set_header("Event-Name".to_string(), "CUSTOM".to_string());
+
+        let cmd = EslCommand::SendEvent { event };
+        let wire = cmd.to_wire_format();
+        assert!(wire.starts_with("sendevent CUSTOM\n"));
+
+        let bare_event = EslEvent::new();
+        let cmd2 = EslCommand::SendEvent { event: bare_event };
+        let wire2 = cmd2.to_wire_format();
+        assert!(wire2.starts_with("sendevent CUSTOM\n"));
+    }
 }

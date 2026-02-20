@@ -411,4 +411,136 @@ mod tests {
             EslEventType::NotifyIn.to_string()
         );
     }
+
+    #[test]
+    fn test_del_header() {
+        let mut event = EslEvent::new();
+        event.set_header("Foo".to_string(), "bar".to_string());
+        event.set_header("Baz".to_string(), "qux".to_string());
+
+        let removed = event.del_header("Foo");
+        assert_eq!(removed, Some("bar".to_string()));
+        assert!(event
+            .header("Foo")
+            .is_none());
+        assert_eq!(event.header("Baz"), Some(&"qux".to_string()));
+
+        let removed_again = event.del_header("Foo");
+        assert_eq!(removed_again, None);
+    }
+
+    #[test]
+    fn test_to_plain_format_basic() {
+        let mut event = EslEvent::with_type(EslEventType::Heartbeat);
+        event.set_header("Event-Name".to_string(), "HEARTBEAT".to_string());
+        event.set_header("Core-UUID".to_string(), "abc-123".to_string());
+
+        let plain = event.to_plain_format();
+
+        assert!(plain.starts_with("Event-Name: "));
+        assert!(plain.contains("Core-UUID: "));
+        assert!(plain.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn test_to_plain_format_percent_encoding() {
+        let mut event = EslEvent::with_type(EslEventType::Heartbeat);
+        event.set_header("Event-Name".to_string(), "HEARTBEAT".to_string());
+        event.set_header("Up-Time".to_string(), "0 years, 0 days".to_string());
+
+        let plain = event.to_plain_format();
+
+        assert!(!plain.contains("0 years, 0 days"));
+        assert!(plain.contains("Up-Time: "));
+        assert!(plain.contains("%20"));
+    }
+
+    #[test]
+    fn test_to_plain_format_with_body() {
+        let mut event = EslEvent::with_type(EslEventType::BackgroundJob);
+        event.set_header("Event-Name".to_string(), "BACKGROUND_JOB".to_string());
+        event.set_header("Job-UUID".to_string(), "def-456".to_string());
+        event.set_body("+OK result\n".to_string());
+
+        let plain = event.to_plain_format();
+
+        assert!(plain.contains("Content-Length: 11\n"));
+        assert!(plain.ends_with("\n\n+OK result\n"));
+    }
+
+    #[test]
+    fn test_to_plain_format_round_trip() {
+        use crate::protocol::{EslMessage, EslParser, MessageType};
+
+        let mut original = EslEvent::with_type(EslEventType::Heartbeat);
+        original.set_header("Event-Name".to_string(), "HEARTBEAT".to_string());
+        original.set_header("Core-UUID".to_string(), "abc-123".to_string());
+        original.set_header("Up-Time".to_string(), "0 years, 0 days, 1 hour".to_string());
+        original.set_header("Event-Info".to_string(), "System Ready".to_string());
+
+        let plain1 = original.to_plain_format();
+
+        let msg1 = EslMessage::new(
+            MessageType::Event,
+            {
+                let mut h = HashMap::new();
+                h.insert("Content-Type".to_string(), "text/event-plain".to_string());
+                h
+            },
+            Some(plain1.clone()),
+        );
+        let parsed1 = EslParser::new()
+            .parse_event(msg1, crate::event::EventFormat::Plain)
+            .unwrap();
+
+        assert_eq!(parsed1.event_type, original.event_type);
+        assert_eq!(parsed1.headers, original.headers);
+        assert_eq!(parsed1.body, original.body);
+
+        let plain2 = parsed1.to_plain_format();
+        let msg2 = EslMessage::new(
+            MessageType::Event,
+            {
+                let mut h = HashMap::new();
+                h.insert("Content-Type".to_string(), "text/event-plain".to_string());
+                h
+            },
+            Some(plain2),
+        );
+        let parsed2 = EslParser::new()
+            .parse_event(msg2, crate::event::EventFormat::Plain)
+            .unwrap();
+
+        assert_eq!(parsed2.event_type, original.event_type);
+        assert_eq!(parsed2.headers, original.headers);
+        assert_eq!(parsed2.body, original.body);
+    }
+
+    #[test]
+    fn test_to_plain_format_round_trip_with_body() {
+        use crate::protocol::{EslMessage, EslParser, MessageType};
+
+        let mut original = EslEvent::with_type(EslEventType::BackgroundJob);
+        original.set_header("Event-Name".to_string(), "BACKGROUND_JOB".to_string());
+        original.set_header("Job-UUID".to_string(), "job-789".to_string());
+        original.set_body("+OK Status\nLine 2\n".to_string());
+
+        let plain = original.to_plain_format();
+        let msg = EslMessage::new(
+            MessageType::Event,
+            {
+                let mut h = HashMap::new();
+                h.insert("Content-Type".to_string(), "text/event-plain".to_string());
+                h
+            },
+            Some(plain),
+        );
+        let parsed = EslParser::new()
+            .parse_event(msg, crate::event::EventFormat::Plain)
+            .unwrap();
+
+        assert_eq!(parsed.event_type, original.event_type);
+        assert_eq!(parsed.headers, original.headers);
+        assert_eq!(parsed.body, original.body);
+    }
 }
