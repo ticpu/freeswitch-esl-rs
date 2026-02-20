@@ -83,7 +83,7 @@ classified as a connection error (non-recoverable).
 
 ```toml
 [dependencies]
-freeswitch-esl-tokio = "1.1.0"
+freeswitch-esl-tokio = "X.Y.Z"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
