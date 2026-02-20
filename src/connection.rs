@@ -881,6 +881,16 @@ impl EslClient {
             .await
     }
 
+    /// Fire an event into FreeSWITCH's event bus.
+    ///
+    /// Headers and body from the event are sent as-is (not percent-encoded).
+    /// If the event has a `unique-id` header, FreeSWITCH also queues it
+    /// directly to that session.
+    pub async fn sendevent(&self, event: EslEvent) -> EslResult<EslResponse> {
+        self.send_command(EslCommand::SendEvent { event })
+            .await
+    }
+
     /// Enable FreeSWITCH log forwarding at the given level.
     ///
     /// Log messages stream as events with `Content-Type: log/data`.

@@ -185,6 +185,8 @@ pub enum EslCommand {
     NoLog,
     /// No operation / keepalive
     NoOp,
+    /// Fire an event into FreeSWITCH's event bus
+    SendEvent { event: EslEvent },
 }
 
 impl EslCommand {
@@ -253,6 +255,30 @@ impl EslCommand {
             EslCommand::Log { level } => Self::format_simple_command("log", &[level]),
             EslCommand::NoLog => Self::format_simple_command("nolog", &[]),
             EslCommand::NoOp => Self::format_simple_command("noop", &[]),
+            EslCommand::SendEvent { event } => {
+                let event_name = event
+                    .event_type
+                    .map(|t| t.to_string())
+                    .or_else(|| {
+                        event
+                            .headers
+                            .get("Event-Name")
+                            .cloned()
+                    })
+                    .unwrap_or_else(|| "CUSTOM".to_string());
+
+                let mut builder = CommandBuilder::new(&format!("sendevent {}", event_name));
+
+                for (key, value) in &event.headers {
+                    builder = builder.header(key, value);
+                }
+
+                if let Some(body) = &event.body {
+                    builder = builder.body(body);
+                }
+
+                builder.build()
+            }
         }
     }
 }
@@ -260,6 +286,7 @@ impl EslCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::EslEventType;
 
     #[test]
     fn test_command_builder() {

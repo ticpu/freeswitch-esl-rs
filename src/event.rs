@@ -1,5 +1,6 @@
 //! ESL event types and structures
 
+use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -348,6 +349,12 @@ impl EslEvent {
             .insert(name, value);
     }
 
+    /// Remove a header, returning its value if it existed
+    pub fn del_header(&mut self, name: &str) -> Option<String> {
+        self.headers
+            .remove(name)
+    }
+
     /// Get event body
     pub fn body(&self) -> Option<&String> {
         self.body
@@ -373,6 +380,54 @@ impl EslEvent {
     /// Check if this is a specific event type
     pub fn is_event_type(&self, event_type: EslEventType) -> bool {
         self.event_type == Some(event_type)
+    }
+
+    /// Serialize to ESL plain text wire format with percent-encoded header values.
+    ///
+    /// This is the inverse of `EslParser::parse_plain_event()`. The output can
+    /// be fed back through the parser to reconstruct an equivalent `EslEvent`
+    /// (round-trip).
+    ///
+    /// `Event-Name` is emitted first, remaining headers are sorted alphabetically
+    /// for deterministic output. `Content-Length` from stored headers is skipped
+    /// and recomputed from the body if present.
+    pub fn to_plain_format(&self) -> String {
+        let mut result = String::new();
+
+        if let Some(event_name) = self
+            .headers
+            .get("Event-Name")
+        {
+            result.push_str(&format!(
+                "Event-Name: {}\n",
+                percent_encode(event_name.as_bytes(), NON_ALPHANUMERIC)
+            ));
+        }
+
+        let mut sorted_headers: Vec<_> = self
+            .headers
+            .iter()
+            .filter(|(k, _)| k.as_str() != "Event-Name" && k.as_str() != "Content-Length")
+            .collect();
+        sorted_headers.sort_by_key(|(k, _)| k.as_str());
+
+        for (key, value) in sorted_headers {
+            result.push_str(&format!(
+                "{}: {}\n",
+                key,
+                percent_encode(value.as_bytes(), NON_ALPHANUMERIC)
+            ));
+        }
+
+        if let Some(body) = &self.body {
+            result.push_str(&format!("Content-Length: {}\n", body.len()));
+            result.push('\n');
+            result.push_str(body);
+        } else {
+            result.push('\n');
+        }
+
+        result
     }
 }
 
@@ -520,10 +575,17 @@ mod tests {
     fn test_to_plain_format_round_trip_with_body() {
         use crate::protocol::{EslMessage, EslParser, MessageType};
 
+        let body_text = "+OK Status\nLine 2\n";
         let mut original = EslEvent::with_type(EslEventType::BackgroundJob);
         original.set_header("Event-Name".to_string(), "BACKGROUND_JOB".to_string());
         original.set_header("Job-UUID".to_string(), "job-789".to_string());
-        original.set_body("+OK Status\nLine 2\n".to_string());
+        original.set_header(
+            "Content-Length".to_string(),
+            body_text
+                .len()
+                .to_string(),
+        );
+        original.set_body(body_text.to_string());
 
         let plain = original.to_plain_format();
         let msg = EslMessage::new(
