@@ -8,7 +8,7 @@
 //! To test this, configure FreeSWITCH with:
 //! <action application="socket" data="localhost:8040 async full"/>
 
-use freeswitch_esl_rs::{AppCommand, EslClient, EslEventType, EventFormat};
+use freeswitch_esl_tokio::{AppCommand, EslClient, EslEventType, EventFormat};
 use tokio::net::TcpListener;
 use tracing::{debug, error, info};
 
@@ -44,8 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn handle_call(
     client: &EslClient,
-    events: &mut freeswitch_esl_rs::EslEventStream,
-) -> Result<(), freeswitch_esl_rs::EslError> {
+    events: &mut freeswitch_esl_tokio::EslEventStream,
+) -> Result<(), freeswitch_esl_tokio::EslError> {
     info!("Handling new call...");
 
     client
@@ -148,7 +148,7 @@ async fn handle_call(
 async fn handle_dtmf_input(
     client: &EslClient,
     input: &str,
-) -> Result<(), freeswitch_esl_rs::EslError> {
+) -> Result<(), freeswitch_esl_tokio::EslError> {
     info!("Processing DTMF input: {}", input);
 
     match input {

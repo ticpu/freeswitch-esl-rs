@@ -14,7 +14,7 @@
 //! ## Inbound Connection
 //!
 //! ```rust,no_run
-//! use freeswitch_esl_rs::{EslClient, EslError};
+//! use freeswitch_esl_tokio::{EslClient, EslError};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), EslError> {
@@ -30,7 +30,7 @@
 //! ## Event Subscription
 //!
 //! ```rust,no_run
-//! use freeswitch_esl_rs::{EslClient, EslEventType, EventFormat};
+//! use freeswitch_esl_tokio::{EslClient, EslEventType, EventFormat};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

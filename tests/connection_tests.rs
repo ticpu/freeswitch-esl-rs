@@ -2,7 +2,7 @@
 
 mod mock_server;
 
-use freeswitch_esl_rs::{
+use freeswitch_esl_tokio::{
     ConnectionStatus, DisconnectReason, EslClient, EslError, EslEvent, EslEventStream, EslEventType,
 };
 use mock_server::{setup_connected_pair, MockEslServer};
@@ -49,7 +49,10 @@ async fn test_recv_event_plain() {
         let client = client.clone();
         async move {
             client
-                .subscribe_events(freeswitch_esl_rs::EventFormat::Plain, &[EslEventType::All])
+                .subscribe_events(
+                    freeswitch_esl_tokio::EventFormat::Plain,
+                    &[EslEventType::All],
+                )
                 .await
                 .unwrap();
         }

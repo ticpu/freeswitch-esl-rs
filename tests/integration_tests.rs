@@ -3,7 +3,7 @@
 //! These tests use a mock server for full functionality testing.
 //! Unit tests that don't require FreeSWITCH are included in individual modules.
 
-use freeswitch_esl_rs::{
+use freeswitch_esl_tokio::{
     buffer::EslBuffer,
     command::EslCommand,
     protocol::{EslParser, MessageType},
@@ -240,7 +240,7 @@ async fn test_json_event_parsing() {
     let mut headers = std::collections::HashMap::new();
     headers.insert("Content-Type".to_string(), "text/event-json".to_string());
 
-    let message = freeswitch_esl_rs::protocol::EslMessage::new(
+    let message = freeswitch_esl_tokio::protocol::EslMessage::new(
         MessageType::Event,
         headers,
         Some(json_body.to_string()),
@@ -337,7 +337,7 @@ async fn test_large_message_handling() {
 
 #[tokio::test]
 async fn test_connection_states() {
-    use freeswitch_esl_rs::connection::ConnectionMode;
+    use freeswitch_esl_tokio::connection::ConnectionMode;
     assert_eq!(ConnectionMode::Inbound, ConnectionMode::Inbound);
     assert_ne!(ConnectionMode::Inbound, ConnectionMode::Outbound);
 

@@ -4,7 +4,7 @@
 //!
 //! Usage: cargo run --example event_listener
 
-use freeswitch_esl_rs::{
+use freeswitch_esl_tokio::{
     constants::DEFAULT_ESL_PORT, EslClient, EslError, EslEventType, EventFormat,
 };
 use std::collections::HashMap;
@@ -79,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn process_event(
-    event: &freeswitch_esl_rs::EslEvent,
+    event: &freeswitch_esl_tokio::EslEvent,
     active_calls: &mut HashMap<String, CallInfo>,
 ) -> Result<(), EslError> {
     match event.event_type() {

@@ -4,7 +4,7 @@
 //!
 //! Usage: cargo run --example inbound_client
 
-use freeswitch_esl_rs::{constants::DEFAULT_ESL_PORT, EslClient, EslError};
+use freeswitch_esl_tokio::{constants::DEFAULT_ESL_PORT, EslClient, EslError};
 use tracing::{error, info};
 
 #[tokio::main]

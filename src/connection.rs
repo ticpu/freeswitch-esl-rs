@@ -737,7 +737,7 @@ impl EslClient {
     /// and correlate via [`EslEvent::job_uuid`] / [`EslResponse::job_uuid`]:
     ///
     /// ```rust,no_run
-    /// # async fn example(client: &freeswitch_esl_rs::EslClient) -> Result<(), freeswitch_esl_rs::EslError> {
+    /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), freeswitch_esl_tokio::EslError> {
     /// let resp = client.bgapi("originate user/1000 &park").await?;
     /// let job_uuid = resp.job_uuid().expect("bgapi returns Job-UUID header");
     /// // Match against event.job_uuid() in the event loop
@@ -759,8 +759,8 @@ impl EslClient {
     /// sends bare `CUSTOM` which subscribes to **all** custom events:
     ///
     /// ```rust,no_run
-    /// # async fn example(client: &freeswitch_esl_rs::EslClient) -> Result<(), freeswitch_esl_rs::EslError> {
-    /// use freeswitch_esl_rs::EventFormat;
+    /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), freeswitch_esl_tokio::EslError> {
+    /// use freeswitch_esl_tokio::EventFormat;
     /// // Subscribe to specific CUSTOM subclasses:
     /// client.subscribe_events_raw(EventFormat::Plain, "CUSTOM sofia::register sofia::unregister").await?;
     /// # Ok(())
@@ -808,8 +808,8 @@ impl EslClient {
     /// forward compatibility with new FreeSWITCH events without a library update.
     ///
     /// ```rust,no_run
-    /// # async fn example(client: &freeswitch_esl_rs::EslClient) -> Result<(), freeswitch_esl_rs::EslError> {
-    /// use freeswitch_esl_rs::EventFormat;
+    /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), freeswitch_esl_tokio::EslError> {
+    /// use freeswitch_esl_tokio::EventFormat;
     /// client.subscribe_events_raw(EventFormat::Plain, "NOTIFY_IN CHANNEL_CREATE").await?;
     /// # Ok(())
     /// # }

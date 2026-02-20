@@ -181,10 +181,10 @@ Allowed-API: show sofia status version uptime
 Allowed-LOG: true
 ```
 
-## Connecting with freeswitch-esl-rs
+## Connecting with freeswitch-esl-tokio
 
 ```rust
-use freeswitch_esl_rs::EslClient;
+use freeswitch_esl_tokio::EslClient;
 
 // Connect with userauth — returns (EslClient, EslEventStream)
 let (client, mut events) = EslClient::connect_with_user(

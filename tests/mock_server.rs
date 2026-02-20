@@ -187,15 +187,15 @@ pub async fn setup_connected_pair(
     password: &str,
 ) -> (
     MockClient,
-    freeswitch_esl_rs::EslClient,
-    freeswitch_esl_rs::EslEventStream,
+    freeswitch_esl_tokio::EslClient,
+    freeswitch_esl_tokio::EslEventStream,
 ) {
     let server = MockEslServer::start(password).await;
     let port = server.port();
 
     let (mock_client, esl_result) = tokio::join!(
         server.accept(),
-        freeswitch_esl_rs::EslClient::connect("127.0.0.1", port, password)
+        freeswitch_esl_tokio::EslClient::connect("127.0.0.1", port, password)
     );
 
     let (esl_client, esl_events) = esl_result.unwrap();

@@ -83,14 +83,14 @@ classified as a connection error (non-recoverable).
 
 ```toml
 [dependencies]
-freeswitch-esl-rs = "1.0.0"
+freeswitch-esl-tokio = "1.1.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
 ### Inbound Connection
 
 ```rust
-use freeswitch_esl_rs::{EslClient, EslError};
+use freeswitch_esl_tokio::{EslClient, EslError};
 
 #[tokio::main]
 async fn main() -> Result<(), EslError> {
@@ -107,7 +107,7 @@ async fn main() -> Result<(), EslError> {
 ### Event Loop with Liveness Detection
 
 ```rust
-use freeswitch_esl_rs::{EslClient, EslEventType, EventFormat};
+use freeswitch_esl_tokio::{EslClient, EslEventType, EventFormat};
 use std::time::Duration;
 
 #[tokio::main]
@@ -169,7 +169,7 @@ types implement `Display` (producing the command string) and have no dependency 
 FreeSWITCH connection.
 
 ```rust
-use freeswitch_esl_rs::commands::{Originate, Endpoint, ApplicationList, Application,
+use freeswitch_esl_tokio::commands::{Originate, Endpoint, ApplicationList, Application,
     DialplanType, Variables, VariablesType, UuidKill, ConferenceDtmf};
 
 // Originate with typed endpoint and application
@@ -202,7 +202,7 @@ client.api(&dtmf.to_string()).await?;
 The `variables` module parses FreeSWITCH structured channel variable formats:
 
 ```rust
-use freeswitch_esl_rs::variables::{EslArray, MultipartBody};
+use freeswitch_esl_tokio::variables::{EslArray, MultipartBody};
 
 // Parse ARRAY:: format from channel variables
 let arr = EslArray::parse("ARRAY::item1|:item2|:item3").unwrap();

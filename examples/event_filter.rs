@@ -15,7 +15,7 @@
 //!   # With userauth (user@domain format required)
 //!   cargo run --example event_filter -- -u admin@default -p secret -e ALL
 
-use freeswitch_esl_rs::{EslClient, EslError, EslEventType, EventFormat};
+use freeswitch_esl_tokio::{EslClient, EslError, EslEventType, EventFormat};
 
 fn print_usage() {
     eprintln!(
@@ -215,7 +215,7 @@ fn parse_event_type(name: &str) -> Result<EslEventType, String> {
     EslEventType::parse_event_type(name).ok_or_else(|| format!("Unknown event type: {}", name))
 }
 
-fn format_event_summary(event: &freeswitch_esl_rs::EslEvent) -> String {
+fn format_event_summary(event: &freeswitch_esl_tokio::EslEvent) -> String {
     let event_name = event
         .header("Event-Name")
         .map(|s| s.as_str())
@@ -243,7 +243,7 @@ fn format_event_summary(event: &freeswitch_esl_rs::EslEvent) -> String {
     )
 }
 
-fn format_event_full(event: &freeswitch_esl_rs::EslEvent) -> String {
+fn format_event_full(event: &freeswitch_esl_tokio::EslEvent) -> String {
     let mut output = String::new();
     output.push_str("---EVENT---\n");
     for (key, value) in &event.headers {
@@ -256,7 +256,7 @@ fn format_event_full(event: &freeswitch_esl_rs::EslEvent) -> String {
     output
 }
 
-fn format_event_json(event: &freeswitch_esl_rs::EslEvent) -> String {
+fn format_event_json(event: &freeswitch_esl_tokio::EslEvent) -> String {
     serde_json::to_string(&event.headers).unwrap_or_else(|_| "{}".to_string())
 }
 
