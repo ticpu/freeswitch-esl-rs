@@ -124,7 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         EslEventType::ChannelHangup,
     ]).await?;
 
-    while let Some(event) = events.recv().await {
+    while let Some(Ok(event)) = events.recv().await {
         println!("{:?}", event.event_type());
     }
 

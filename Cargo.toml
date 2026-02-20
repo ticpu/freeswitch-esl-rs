@@ -8,6 +8,9 @@ license = "MPL-2.0"
 repository = "https://github.com/ticpu/freeswitch-esl-tokio"
 keywords = ["freeswitch", "esl", "voip", "telephony"]
 categories = ["network-programming", "api-bindings"]
+readme = "README.md"
+rust-version = "1.70"
+exclude = ["CLAUDE.md", "hooks/"]
 
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
