@@ -15,4 +15,11 @@ if ! cargo clippy --all-targets --message-format=short -- -D warnings; then
     exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "Checking EslEventType against C ESL..."
+if ! "$SCRIPT_DIR/check-event-types.sh"; then
+    echo "❌ EslEventType enum is out of sync with C ESL. Update src/event.rs."
+    exit 1
+fi
+
 echo "✅ Pre-commit checks passed"

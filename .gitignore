@@ -24,3 +24,6 @@ Thumbs.db
 # Backup files
 *.bak
 *.orig
+
+# Cached FreeSWITCH source for hook checks
+.freeswitch-src/

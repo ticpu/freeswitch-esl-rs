@@ -121,10 +121,12 @@ pub enum EslEventType {
     CallDetail,
     DeviceState,
     Text,
-    StartRecording,
     ShutdownRequested,
     /// Subscribe to all events
     All,
+    // --- Not in libs/esl/ EVENT_NAMES[], only in switch_event.c ---
+    // check-event-types.sh stops scanning at the All variant above.
+    StartRecording,
 }
 
 impl fmt::Display for EslEventType {
@@ -221,9 +223,10 @@ impl fmt::Display for EslEventType {
             EslEventType::CallDetail => "CALL_DETAIL",
             EslEventType::DeviceState => "DEVICE_STATE",
             EslEventType::Text => "TEXT",
-            EslEventType::StartRecording => "START_RECORDING",
             EslEventType::ShutdownRequested => "SHUTDOWN_REQUESTED",
             EslEventType::All => "ALL",
+            // Not in libs/esl/ EVENT_NAMES[]
+            EslEventType::StartRecording => "START_RECORDING",
         };
         write!(f, "{}", name)
     }
@@ -327,9 +330,10 @@ impl EslEventType {
             "CALL_DETAIL" => Some(EslEventType::CallDetail),
             "DEVICE_STATE" => Some(EslEventType::DeviceState),
             "TEXT" => Some(EslEventType::Text),
-            "START_RECORDING" => Some(EslEventType::StartRecording),
             "SHUTDOWN_REQUESTED" => Some(EslEventType::ShutdownRequested),
             "ALL" => Some(EslEventType::All),
+            // Not in libs/esl/ EVENT_NAMES[]
+            "START_RECORDING" => Some(EslEventType::StartRecording),
             _ => None,
         }
     }

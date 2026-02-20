@@ -213,6 +213,18 @@ let body = MultipartBody::parse(event.header("variable_sip_multipart").unwrap())
 let pidf = body.by_mime_type("application/pidf+xml");
 ```
 
+## Development
+
+```sh
+./hooks/install.sh   # symlinks pre-commit hook
+```
+
+The pre-commit hook runs `cargo fmt --check`, `cargo clippy`, and
+`hooks/check-event-types.sh` which verifies the `EslEventType` enum
+matches the C ESL `EVENT_NAMES[]` array. Set `FREESWITCH_SOURCE` to a
+local FreeSWITCH checkout, or the script fetches `esl_event.c` from
+GitHub on first run.
+
 ## Requirements
 
 - Rust 1.70+
