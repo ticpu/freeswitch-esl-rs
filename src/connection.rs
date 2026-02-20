@@ -891,6 +891,113 @@ impl EslClient {
             .await
     }
 
+    /// Subscribe to session events (outbound mode, no UUID needed).
+    ///
+    /// Subscribes to all channel-related events for the attached session.
+    /// In outbound mode, FreeSWITCH already knows the session UUID.
+    pub async fn myevents(&self, format: EventFormat) -> EslResult<()> {
+        let cmd = EslCommand::MyEvents {
+            format: format.to_string(),
+            uuid: None,
+        };
+        let response = self
+            .send_command(cmd)
+            .await?;
+        if !response.is_success() {
+            return Err(EslError::CommandFailed {
+                reply_text: response
+                    .reply_text()
+                    .cloned()
+                    .unwrap_or_else(|| "myevents failed".to_string()),
+            });
+        }
+        Ok(())
+    }
+
+    /// Subscribe to session events for a specific UUID (inbound mode).
+    ///
+    /// Subscribes to all channel-related events for the given session UUID.
+    /// Use this in inbound mode where no session is attached to the socket.
+    pub async fn myevents_uuid(&self, uuid: &str, format: EventFormat) -> EslResult<()> {
+        let cmd = EslCommand::MyEvents {
+            format: format.to_string(),
+            uuid: Some(uuid.to_string()),
+        };
+        let response = self
+            .send_command(cmd)
+            .await?;
+        if !response.is_success() {
+            return Err(EslError::CommandFailed {
+                reply_text: response
+                    .reply_text()
+                    .cloned()
+                    .unwrap_or_else(|| "myevents failed".to_string()),
+            });
+        }
+        Ok(())
+    }
+
+    /// Keep the socket open after the channel hangs up (outbound mode).
+    ///
+    /// Without linger, the socket closes immediately on hangup. With linger,
+    /// FreeSWITCH sends a `text/disconnect-notice` with `Content-Disposition: linger`
+    /// and keeps the socket open so the client can drain remaining events.
+    ///
+    /// Pass `None` for indefinite linger, or `Some(seconds)` for a timeout.
+    pub async fn linger(&self, timeout: Option<u32>) -> EslResult<()> {
+        let cmd = EslCommand::Linger { timeout };
+        let response = self
+            .send_command(cmd)
+            .await?;
+        if !response.is_success() {
+            return Err(EslError::CommandFailed {
+                reply_text: response
+                    .reply_text()
+                    .cloned()
+                    .unwrap_or_else(|| "linger failed".to_string()),
+            });
+        }
+        Ok(())
+    }
+
+    /// Cancel linger mode (outbound mode).
+    ///
+    /// Only effective before the channel hangs up. After the disconnect notice
+    /// has been sent, it's too late to cancel.
+    pub async fn nolinger(&self) -> EslResult<()> {
+        let response = self
+            .send_command(EslCommand::NoLinger)
+            .await?;
+        if !response.is_success() {
+            return Err(EslError::CommandFailed {
+                reply_text: response
+                    .reply_text()
+                    .cloned()
+                    .unwrap_or_else(|| "nolinger failed".to_string()),
+            });
+        }
+        Ok(())
+    }
+
+    /// Resume dialplan execution when the socket disconnects (outbound mode).
+    ///
+    /// Without resume, the channel is hung up when the socket application exits.
+    /// With resume, FreeSWITCH continues dialplan execution from where it left off.
+    pub async fn resume(&self) -> EslResult<()> {
+        let response = self
+            .send_command(EslCommand::Resume)
+            .await?;
+        if !response.is_success() {
+            return Err(EslError::CommandFailed {
+                reply_text: response
+                    .reply_text()
+                    .cloned()
+                    .unwrap_or_else(|| "resume failed".to_string()),
+            });
+        }
+        Ok(())
+    }
+
     /// Enable FreeSWITCH log forwarding at the given level.
     ///
     /// Log messages stream as events with `Content-Type: log/data`.

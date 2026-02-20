@@ -187,6 +187,17 @@ pub enum EslCommand {
     NoOp,
     /// Fire an event into FreeSWITCH's event bus
     SendEvent { event: EslEvent },
+    /// Subscribe to session events (outbound: no uuid, inbound: with uuid)
+    MyEvents {
+        format: String,
+        uuid: Option<String>,
+    },
+    /// Keep socket open after channel hangup
+    Linger { timeout: Option<u32> },
+    /// Cancel linger mode
+    NoLinger,
+    /// Resume dialplan execution on socket disconnect
+    Resume,
 }
 
 impl EslCommand {
@@ -279,6 +290,16 @@ impl EslCommand {
 
                 builder.build()
             }
+            EslCommand::MyEvents { format, uuid } => match uuid {
+                Some(u) => Self::format_simple_command("myevents", &[u, format]),
+                None => Self::format_simple_command("myevents", &[format]),
+            },
+            EslCommand::Linger { timeout } => match timeout {
+                Some(n) => Self::format_simple_command("linger", &[&n.to_string()]),
+                None => Self::format_simple_command("linger", &[]),
+            },
+            EslCommand::NoLinger => Self::format_simple_command("nolinger", &[]),
+            EslCommand::Resume => Self::format_simple_command("resume", &[]),
         }
     }
 }
