@@ -131,11 +131,15 @@ impl EslParser {
 
                     let headers = self.parse_headers(&headers_str)?;
 
-                    // Determine message type
+                    // Every ESL message must have Content-Type. Missing means
+                    // protocol desync (e.g. from a corrupted Content-Length).
                     let content_type = headers
                         .get(HEADER_CONTENT_TYPE)
-                        .map(|s| s.as_str())
-                        .unwrap_or("unknown");
+                        .ok_or_else(|| {
+                            EslError::protocol_error(
+                                "Missing Content-Type header — likely protocol desync",
+                            )
+                        })?;
                     let message_type = MessageType::from_content_type(content_type);
 
                     // Check if we need a body
@@ -691,5 +695,145 @@ mod tests {
         assert_eq!(event.event_type(), Some(EslEventType::BackgroundJob));
         assert_eq!(event.header("Job-UUID"), Some("def-456"));
         assert_eq!(event.body(), Some("+OK result data"));
+    }
+
+    #[test]
+    fn test_crlf_header_terminator_not_matched() {
+        // ESL uses \n\n, not \r\n\r\n. If something injects \r\n line endings,
+        // the parser must not hang — but it won't find the terminator either.
+        // This documents the current behavior: \r\n\r\n is NOT recognized as
+        // a header terminator, so the message stays incomplete.
+        let mut parser = EslParser::new();
+        let data = b"Content-Type: auth/request\r\n\r\n";
+
+        parser
+            .add_data(data)
+            .unwrap();
+        let result = parser
+            .parse_message()
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "\\r\\n\\r\\n should not match \\n\\n terminator"
+        );
+    }
+
+    #[test]
+    fn test_crlf_in_header_values_parsed_correctly() {
+        // If \r\n appears within a \n\n-framed message, parse_headers()
+        // uses .lines() which strips \r, so header values stay clean.
+        let mut parser = EslParser::new();
+        let data = b"Content-Type: auth/request\r\nSome-Header: some-value\n\n";
+
+        parser
+            .add_data(data)
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        assert_eq!(message.message_type, MessageType::AuthRequest);
+        assert_eq!(
+            message
+                .headers
+                .get("Some-Header")
+                .map(|s| s.as_str()),
+            Some("some-value")
+        );
+    }
+
+    #[test]
+    fn test_oversized_content_length_rejected() {
+        let mut parser = EslParser::new();
+        let data = format!(
+            "Content-Type: api/response\nContent-Length: {}\n\n",
+            MAX_MESSAGE_SIZE + 1
+        );
+
+        parser
+            .add_data(data.as_bytes())
+            .unwrap();
+        let result = parser.parse_message();
+        assert!(
+            result.is_err(),
+            "Content-Length exceeding MAX_MESSAGE_SIZE must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_undersized_content_length_corrupts_next_message() {
+        // Content-Length: 2 but body is "Hello" (5 bytes). The parser trusts
+        // Content-Length and reads only 2 bytes, leaving "llo" in the buffer.
+        // The next parse attempt sees "llo" as the start of a new message,
+        // which won't have a valid header terminator — so it returns None.
+        let mut parser = EslParser::new();
+        let data = b"Content-Type: api/response\nContent-Length: 2\n\nHello";
+
+        parser
+            .add_data(data)
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        assert_eq!(message.message_type, MessageType::ApiResponse);
+        assert_eq!(message.body, Some("He".to_string()));
+
+        // Leftover "llo" is now junk in the buffer — next parse finds nothing
+        let next = parser
+            .parse_message()
+            .unwrap();
+        assert!(
+            next.is_none(),
+            "Leftover bytes should not form a valid message"
+        );
+    }
+
+    #[test]
+    fn test_undersized_content_length_followed_by_valid_message() {
+        // Same scenario but a valid second message follows the junk.
+        // The leftover bytes merge with the next message's headers,
+        // making recovery impossible without reconnecting.
+        let mut parser = EslParser::new();
+        let msg1 = b"Content-Type: api/response\nContent-Length: 2\n\nHello";
+        let msg2 = b"Content-Type: auth/request\n\n";
+
+        parser
+            .add_data(msg1)
+            .unwrap();
+        let first = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.body, Some("He".to_string()));
+
+        parser
+            .add_data(msg2)
+            .unwrap();
+        let second = parser.parse_message();
+        // "llo" + msg2 bytes = "lloContent-Type: auth/request\n\n"
+        // The parser finds \n\n and parses "lloContent-Type: auth/request"
+        // as key="lloContent-Type" value="auth/request". No real Content-Type
+        // header exists, so the parser returns a protocol error — signaling
+        // the caller to disconnect.
+        assert!(
+            second.is_err(),
+            "Desync must be detected as a protocol error"
+        );
+    }
+
+    #[test]
+    fn test_non_numeric_content_length_rejected() {
+        let mut parser = EslParser::new();
+        let data = b"Content-Type: api/response\nContent-Length: abc\n\n";
+
+        parser
+            .add_data(data)
+            .unwrap();
+        let result = parser.parse_message();
+        assert!(
+            result.is_err(),
+            "Non-numeric Content-Length must be rejected"
+        );
     }
 }

@@ -45,6 +45,18 @@ Only document when it adds value: non-obvious behavior, FreeSWITCH-specific sema
 wire format details, gotchas. Silence over noise. If the name and signature tell the
 whole story, a brief one-liner suffices.
 
+## Correctness Over Recovery
+
+Correctness is the highest priority. Never silently absorb protocol violations
+or leave the system in an unknown state to "recover." If an invariant is broken
+(e.g. missing mandatory header, impossible framing), return an error and let
+the caller disconnect. A clean reconnection from a known-good state is always
+preferable to continuing with a potentially corrupt stream.
+
+Concretely: never use `unwrap_or` / default values to paper over missing
+mandatory protocol fields. If the ESL spec says a field must be present,
+its absence is a hard error — not a recoverable condition.
+
 ## Design Principles
 
 ### Transport layer (connection, protocol, event)
