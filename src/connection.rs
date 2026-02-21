@@ -20,8 +20,17 @@ use crate::{
     protocol::{EslMessage, EslParser, MessageType},
 };
 
+fn event_types_to_string(events: &[EslEventType]) -> String {
+    events
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Connection status for ESL client
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectionStatus {
     Connected,
     Disconnected(DisconnectReason),
@@ -29,6 +38,7 @@ pub enum ConnectionStatus {
 
 /// Reason for disconnection
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DisconnectReason {
     /// Server sent a text/disconnect-notice with Content-Disposition: disconnect
     ServerNotice,
@@ -751,11 +761,7 @@ impl EslClient {
         let events_str = if events.contains(&EslEventType::All) {
             "ALL".to_string()
         } else {
-            events
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join(" ")
+            event_types_to_string(events)
         };
 
         let cmd = EslCommand::Events {
@@ -920,13 +926,7 @@ impl EslClient {
     /// The inverse of [`subscribe_events`](Self::subscribe_events). Accepts
     /// multiple event types to unsubscribe from at once.
     pub async fn nixevent(&self, events: &[EslEventType]) -> EslResult<()> {
-        let events_str = events
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        self.nixevent_raw(&events_str)
+        self.nixevent_raw(&event_types_to_string(events))
             .await
     }
 
@@ -1060,7 +1060,6 @@ impl EslClient {
             .store(duration.as_millis() as u64, Ordering::Relaxed);
     }
 
-    /// Check if the connection is alive
     pub fn is_connected(&self) -> bool {
         matches!(
             *self
@@ -1070,7 +1069,6 @@ impl EslClient {
         )
     }
 
-    /// Get current connection status
     pub fn status(&self) -> ConnectionStatus {
         self.status_rx
             .borrow()
@@ -1105,7 +1103,6 @@ impl EslEventStream {
             .await
     }
 
-    /// Check if the connection is alive
     pub fn is_connected(&self) -> bool {
         matches!(
             *self
@@ -1115,7 +1112,6 @@ impl EslEventStream {
         )
     }
 
-    /// Get current connection status
     pub fn status(&self) -> ConnectionStatus {
         self.status_rx
             .borrow()

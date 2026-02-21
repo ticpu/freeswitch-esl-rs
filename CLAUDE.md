@@ -34,6 +34,13 @@ git tag -as v0.X.0 -m "v0.X.0
 git push --tags
 ```
 
+## Documentation Style
+
+No "captain obvious" docs. Don't restate the struct/function name as the doc comment.
+Only document when it adds value: non-obvious behavior, FreeSWITCH-specific semantics,
+wire format details, gotchas. Silence over noise. If the name and signature tell the
+whole story, skip the doc comment.
+
 ## Design Principles
 
 ### Transport layer (connection, protocol, event)

@@ -26,6 +26,7 @@ fn validate_no_newlines(s: &str, context: &str) -> EslResult<()> {
 /// FreeSWITCH commands return `+OK …` on success and `-ERR …` on failure.
 /// A handful of commands (`getvar`) return the raw value with no prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ReplyStatus {
     /// Reply-Text starts with `+OK` or is absent/empty.
     Ok,
@@ -46,7 +47,7 @@ pub struct EslResponse {
 }
 
 impl EslResponse {
-    /// Create new response
+    /// `ReplyStatus` is derived from the `Reply-Text` header.
     pub fn new(headers: HashMap<String, String>, body: Option<String>) -> Self {
         let status = match headers
             .get(HEADER_REPLY_TEXT)
@@ -65,23 +66,21 @@ impl EslResponse {
         }
     }
 
-    /// Check if command was successful (`+OK` or no Reply-Text).
+    /// `true` if Reply-Text is `+OK` or absent.
     pub fn is_success(&self) -> bool {
         self.status == ReplyStatus::Ok
     }
 
-    /// Reply status classification.
     pub fn reply_status(&self) -> ReplyStatus {
         self.status
     }
 
-    /// Get response body
     pub fn body(&self) -> Option<&str> {
         self.body
             .as_deref()
     }
 
-    /// Get response body as string, empty if None
+    /// Body as owned `String`, empty if `None`.
     pub fn body_string(&self) -> String {
         self.body
             .as_ref()
@@ -89,30 +88,27 @@ impl EslResponse {
             .unwrap_or_default()
     }
 
-    /// Get header value
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .get(name)
             .map(|s| s.as_str())
     }
 
-    /// Get all headers
     pub fn headers(&self) -> &HashMap<String, String> {
         &self.headers
     }
 
-    /// Get reply text
+    /// Raw `Reply-Text` header value (e.g. `+OK`, `-ERR invalid command`).
     pub fn reply_text(&self) -> Option<&str> {
         self.headers
             .get(HEADER_REPLY_TEXT)
             .map(|s| s.as_str())
     }
 
-    /// Get job UUID for background commands.
+    /// `Job-UUID` header from `bgapi` responses.
     ///
-    /// For `bgapi` responses, FreeSWITCH returns the Job-UUID both in the
-    /// `Reply-Text` header (`+OK Job-UUID: <uuid>`) and as a separate
-    /// `Job-UUID` header. This method reads the dedicated header.
+    /// FreeSWITCH returns the Job-UUID both in Reply-Text (`+OK Job-UUID: <uuid>`)
+    /// and as a separate `Job-UUID` header. This reads the dedicated header.
     pub fn job_uuid(&self) -> Option<&str> {
         self.headers
             .get(HEADER_JOB_UUID)
@@ -149,7 +145,21 @@ impl EslResponse {
     }
 }
 
-/// Builder for ESL commands
+/// Builder for custom ESL commands not covered by [`EslClient`](crate::EslClient) methods.
+///
+/// Produces the wire-format string including headers and optional body.
+///
+/// ```
+/// use freeswitch_esl_tokio::CommandBuilder;
+///
+/// let cmd = CommandBuilder::new("mycommand")
+///     .header("X-Custom", "value").unwrap()
+///     .body("payload data")
+///     .build();
+/// assert!(cmd.starts_with("mycommand\n"));
+/// assert!(cmd.contains("X-Custom: value"));
+/// assert!(cmd.contains("Content-Length: 12"));
+/// ```
 #[derive(Debug)]
 pub struct CommandBuilder {
     command: String,
@@ -158,7 +168,6 @@ pub struct CommandBuilder {
 }
 
 impl CommandBuilder {
-    /// Create new command builder
     pub fn new(command: &str) -> Self {
         Self {
             command: command.to_string(),

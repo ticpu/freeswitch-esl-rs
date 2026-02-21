@@ -1,3 +1,5 @@
+//! Builders for `conference` API sub-commands (mute, hold, DTMF).
+
 use std::fmt;
 
 /// Conference member mute/unmute action.
@@ -51,11 +53,15 @@ impl fmt::Display for HoldAction {
 }
 
 /// Hold or unhold a conference member: `conference <name> hold|unhold <member> [stream]`.
+///
+/// `Hold` plays music-on-hold to the member; `Unhold` returns them to the conference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConferenceHold {
     pub name: String,
     pub action: HoldAction,
+    /// Member ID, or `"all"` for all members.
     pub member: String,
+    /// MOH stream URI (e.g. `local_stream://moh`). Only meaningful with `HoldAction::Hold`.
     pub stream: Option<String>,
 }
 

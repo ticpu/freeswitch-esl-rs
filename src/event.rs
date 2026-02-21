@@ -10,6 +10,7 @@ use std::str::FromStr;
 
 /// Event format types supported by FreeSWITCH ESL
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EventFormat {
     /// Plain text format (default)
     Plain,
@@ -82,6 +83,7 @@ macro_rules! esl_event_types {
         /// FreeSWITCH event types matching the canonical order from `esl_event.h`
         /// and `switch_event.c` EVENT_NAMES[].
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[non_exhaustive]
         pub enum EslEventType {
             $(
                 $(#[$attr])*
@@ -238,6 +240,7 @@ impl std::error::Error for ParseEventTypeError {}
 
 /// Event priority levels matching FreeSWITCH `esl_priority_t`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EslEventPriority {
     Normal,
     Low,
@@ -309,57 +312,52 @@ impl EslEvent {
         }
     }
 
-    /// Get event type
     pub fn event_type(&self) -> Option<EslEventType> {
         self.event_type
     }
 
-    /// Set event type
     pub fn set_event_type(&mut self, event_type: Option<EslEventType>) {
         self.event_type = event_type;
     }
 
-    /// Get header value by name
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .get(name)
             .map(|s| s.as_str())
     }
 
-    /// Get all headers
     pub fn headers(&self) -> &HashMap<String, String> {
         &self.headers
     }
 
-    /// Set header value
     pub fn set_header(&mut self, name: impl Into<String>, value: impl Into<String>) {
         self.headers
             .insert(name.into(), value.into());
     }
 
-    /// Remove a header, returning its value if it existed
     pub fn del_header(&mut self, name: &str) -> Option<String> {
         self.headers
             .remove(name)
     }
 
-    /// Get event body
     pub fn body(&self) -> Option<&str> {
         self.body
             .as_deref()
     }
 
-    /// Set event body
     pub fn set_body(&mut self, body: String) {
         self.body = Some(body);
     }
 
-    /// Set event priority, adding a `priority` header.
+    /// Sets the `priority` header carried on the event.
+    ///
+    /// FreeSWITCH stores this as metadata but does **not** use it for dispatch
+    /// ordering — all events are delivered FIFO regardless of priority.
     pub fn set_priority(&mut self, priority: EslEventPriority) {
         self.set_header("priority", priority.to_string());
     }
 
-    /// Get event priority from the `priority` header.
+    /// Parse the `priority` header value.
     pub fn priority(&self) -> Option<EslEventPriority> {
         self.header("priority")?
             .parse()
@@ -417,38 +415,32 @@ impl EslEvent {
         }
     }
 
-    /// Get unique ID for the event/channel
+    /// `Unique-ID` header, falling back to `Caller-Unique-ID`.
     pub fn unique_id(&self) -> Option<&str> {
         self.header(HEADER_UNIQUE_ID)
             .or_else(|| self.header(HEADER_CALLER_UUID))
     }
 
-    /// Get job UUID for background jobs
     pub fn job_uuid(&self) -> Option<&str> {
         self.header("Job-UUID")
     }
 
-    /// Get the channel name (`Channel-Name` header).
     pub fn channel_name(&self) -> Option<&str> {
         self.header("Channel-Name")
     }
 
-    /// Get caller ID number (`Caller-Caller-ID-Number` header).
     pub fn caller_id_number(&self) -> Option<&str> {
         self.header("Caller-Caller-ID-Number")
     }
 
-    /// Get caller ID name (`Caller-Caller-ID-Name` header).
     pub fn caller_id_name(&self) -> Option<&str> {
         self.header("Caller-Caller-ID-Name")
     }
 
-    /// Get hangup cause (`Hangup-Cause` header).
     pub fn hangup_cause(&self) -> Option<&str> {
         self.header("Hangup-Cause")
     }
 
-    /// Get custom event subclass (`Event-Subclass` header).
     pub fn event_subclass(&self) -> Option<&str> {
         self.header("Event-Subclass")
     }
@@ -462,7 +454,6 @@ impl EslEvent {
         self.header(&key)
     }
 
-    /// Check if this is a specific event type
     pub fn is_event_type(&self, event_type: EslEventType) -> bool {
         self.event_type == Some(event_type)
     }

@@ -1,3 +1,11 @@
+//! Command string builders for [`api()`](crate::EslClient::api) and
+//! [`bgapi()`](crate::EslClient::bgapi).
+//!
+//! Each builder implements [`Display`](std::fmt::Display), producing the argument
+//! string for the corresponding FreeSWITCH API command.  The builders perform
+//! escaping and validation so callers don't need to worry about wire-format
+//! details.
+
 pub mod channel;
 pub mod conference;
 pub mod originate;

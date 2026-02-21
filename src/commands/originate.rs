@@ -1,3 +1,6 @@
+//! Originate command builder with endpoint configuration, variable scoping,
+//! and automatic quoting for socket application arguments.
+
 use std::fmt;
 use std::str::FromStr;
 
@@ -206,19 +209,28 @@ fn split_unescaped_commas(s: &str) -> Vec<&str> {
     parts
 }
 
+/// Dial target for an originate command.
+///
+/// Each variant formats to the corresponding FreeSWITCH endpoint syntax.
+/// Per-channel [`Variables`] are prepended as `[key=value]` when present.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Endpoint {
+    /// Raw endpoint string (e.g. `sofia/internal/1000@domain`).
     Generic {
         uri: String,
         variables: Option<Variables>,
     },
+    /// Loopback endpoint: formats as `loopback/<uri>/<context>`.
     Loopback {
         uri: String,
         context: String,
         variables: Option<Variables>,
     },
+    /// Sofia gateway shorthand: formats as `sofia/gateway/[profile::]<gateway>/<uri>`.
     SofiaGateway {
         uri: String,
+        /// SIP profile name to qualify the gateway lookup.
+        profile: Option<String>,
         gateway: String,
         variables: Option<Variables>,
     },
@@ -252,11 +264,15 @@ impl fmt::Display for Endpoint {
             }
             Self::SofiaGateway {
                 uri,
+                profile,
                 gateway,
                 variables,
             } => {
                 Self::write_variables(f, variables)?;
-                write!(f, "sofia/gateway/{}/{}", gateway, uri)
+                match profile {
+                    Some(p) => write!(f, "sofia/gateway/{}::{}/{}", p, gateway, uri),
+                    None => write!(f, "sofia/gateway/{}/{}", gateway, uri),
+                }
             }
         }
     }
@@ -285,6 +301,11 @@ impl FromStr for Endpoint {
     }
 }
 
+/// A single dialplan application with optional arguments.
+///
+/// Formats differently depending on [`DialplanType`]:
+/// - Inline: `name:args`
+/// - XML: `&name(args)`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Application {
     pub name: String,
@@ -311,6 +332,9 @@ impl Application {
     }
 }
 
+/// Ordered list of applications for an originate command.
+///
+/// Inline dialplan allows multiple comma-separated apps; XML dialplan allows exactly one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApplicationList(pub Vec<Application>);
 
@@ -342,6 +366,10 @@ impl ApplicationList {
     }
 }
 
+/// Originate command builder: `originate <endpoint> <app> [dialplan] [context] [cid_name] [cid_num] [timeout]`.
+///
+/// Application arguments containing spaces are automatically single-quoted.
+/// Implements both `Display` (for wire format) and `FromStr` (for round-trip parsing).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Originate {
     pub endpoint: Endpoint,
@@ -350,6 +378,7 @@ pub struct Originate {
     pub context: Option<String>,
     pub cid_name: Option<String>,
     pub cid_num: Option<String>,
+    /// Timeout in seconds. `None` uses FreeSWITCH default (60s).
     pub timeout: Option<u32>,
 }
 
@@ -458,6 +487,7 @@ impl FromStr for Originate {
     }
 }
 
+/// Errors from originate command parsing or construction.
 #[derive(Debug, thiserror::Error)]
 pub enum OriginateError {
     #[error("unclosed quote at: {0}")]
@@ -612,6 +642,7 @@ mod tests {
         vars.insert("one_variable", "1");
         let ep = Endpoint::SofiaGateway {
             uri: "aUri".into(),
+            profile: None,
             gateway: "internal".into(),
             variables: Some(vars),
         };

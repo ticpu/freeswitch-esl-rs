@@ -1,3 +1,6 @@
+//! Parsers for FreeSWITCH channel variable formats (`ARRAY::` delimited values,
+//! SIP multipart bodies).
+
 mod esl_array;
 mod sip_multipart;
 

@@ -16,6 +16,7 @@ pub type EslResult<T> = Result<T, EslError>;
 
 /// Comprehensive error types for ESL operations
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum EslError {
     /// IO error from underlying TCP operations
     #[error("IO error: {0}")]
@@ -103,28 +104,29 @@ pub enum EslError {
 }
 
 impl EslError {
-    /// Create a generic error with a custom message
     pub fn generic(message: impl Into<String>) -> Self {
         Self::Generic {
             message: message.into(),
         }
     }
 
-    /// Create a protocol error
     pub fn protocol_error(message: impl Into<String>) -> Self {
         Self::ProtocolError {
             message: message.into(),
         }
     }
 
-    /// Create an authentication error
     pub fn auth_failed(reason: impl Into<String>) -> Self {
         Self::AuthenticationFailed {
             reason: reason.into(),
         }
     }
 
-    /// Check if this is a recoverable error
+    /// `true` if the connection is still usable and the caller can retry.
+    ///
+    /// Recoverable: `Timeout`, `CommandFailed`, `UnexpectedReply`, `QueueFull`.
+    /// Non-recoverable errors (I/O, auth, disconnect) mean the connection is dead
+    /// and the caller should reconnect.
     pub fn is_recoverable(&self) -> bool {
         match self {
             EslError::Io(_) => false,
@@ -140,7 +142,9 @@ impl EslError {
         }
     }
 
-    /// Check if this error indicates a connection problem
+    /// `true` if the TCP session is dead and the caller should reconnect.
+    ///
+    /// Matches: `Io`, `NotConnected`, `ConnectionClosed`, `HeartbeatExpired`.
     pub fn is_connection_error(&self) -> bool {
         matches!(
             self,
