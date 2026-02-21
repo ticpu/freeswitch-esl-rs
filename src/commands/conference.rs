@@ -5,7 +5,9 @@ use std::fmt;
 /// Conference member mute/unmute action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MuteAction {
+    /// Mute the member's audio.
     Mute,
+    /// Unmute the member's audio.
     Unmute,
 }
 
@@ -21,8 +23,11 @@ impl fmt::Display for MuteAction {
 /// Mute or unmute a conference member: `conference <name> mute|unmute <member>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConferenceMute {
+    /// Conference room name.
     pub name: String,
+    /// Mute or unmute.
     pub action: MuteAction,
+    /// Conference member ID.
     pub member_id: String,
 }
 
@@ -39,7 +44,9 @@ impl fmt::Display for ConferenceMute {
 /// Conference member hold/unhold action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HoldAction {
+    /// Place the member on hold with music-on-hold.
     Hold,
+    /// Return the member to the conference.
     Unhold,
 }
 
@@ -57,7 +64,9 @@ impl fmt::Display for HoldAction {
 /// `Hold` plays music-on-hold to the member; `Unhold` returns them to the conference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConferenceHold {
+    /// Conference room name.
     pub name: String,
+    /// Hold or unhold.
     pub action: HoldAction,
     /// Member ID, or `"all"` for all members.
     pub member: String,
@@ -82,8 +91,11 @@ impl fmt::Display for ConferenceHold {
 /// Send DTMF to conference members: `conference <name> dtmf <member> <digits>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConferenceDtmf {
+    /// Conference room name.
     pub name: String,
+    /// Member ID, or `"all"`.
     pub member: String,
+    /// DTMF digit string (e.g. `"1234#"`).
     pub dtmf: String,
 }
 

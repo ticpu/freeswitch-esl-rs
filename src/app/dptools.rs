@@ -4,12 +4,13 @@ use crate::command::EslCommand;
 
 /// Constructors for common dptools application commands.
 ///
-/// Each method returns an [`EslCommand::Execute`] ready for
-/// [`EslClient::sendmsg()`](crate::EslClient::sendmsg).
+/// Each method returns a `sendmsg`/`execute` command ready for
+/// [`EslClient::send_command()`](crate::EslClient::send_command).
 /// The `uuid` field is `None` — set it on the command or pass it to `sendmsg()`.
 pub struct AppCommand;
 
 impl AppCommand {
+    /// Answer the channel. In outbound mode, answers the incoming call.
     pub fn answer() -> EslCommand {
         EslCommand::Execute {
             app: "answer".to_string(),
@@ -45,6 +46,7 @@ impl AppCommand {
         }
     }
 
+    /// Set a channel variable (`set` application).
     pub fn set_var(name: &str, value: &str) -> EslCommand {
         EslCommand::Execute {
             app: "set".to_string(),
@@ -53,6 +55,7 @@ impl AppCommand {
         }
     }
 
+    /// Park the channel (suspends dialplan execution until another command picks it up).
     pub fn park() -> EslCommand {
         EslCommand::Execute {
             app: "park".to_string(),
@@ -61,6 +64,7 @@ impl AppCommand {
         }
     }
 
+    /// Transfer the channel to another dialplan extension.
     pub fn transfer(extension: &str, dialplan: Option<&str>, context: Option<&str>) -> EslCommand {
         let mut args = extension.to_string();
         if let Some(dp) = dialplan {

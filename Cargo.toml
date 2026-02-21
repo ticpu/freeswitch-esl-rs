@@ -1,6 +1,6 @@
 [package]
 name = "freeswitch-esl-tokio"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "FreeSWITCH Event Socket Library (ESL) client for Rust"

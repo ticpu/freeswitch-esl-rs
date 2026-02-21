@@ -3,7 +3,9 @@ use super::EslArray;
 /// A single part from a SIP multipart body
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultipartItem {
+    /// MIME type (e.g. `application/sdp`).
     pub mime_type: String,
+    /// Body content for this part.
     pub data: String,
 }
 
@@ -14,6 +16,7 @@ pub struct MultipartItem {
 pub struct MultipartBody(Vec<MultipartItem>);
 
 impl MultipartBody {
+    /// Parse a `variable_sip_multipart` value. Returns `None` if not `ARRAY::` formatted.
     pub fn parse(s: &str) -> Option<Self> {
         let array = EslArray::parse(s)?;
         let items = array
@@ -30,10 +33,12 @@ impl MultipartBody {
         Some(Self(items))
     }
 
+    /// All parsed parts.
     pub fn items(&self) -> &[MultipartItem] {
         &self.0
     }
 
+    /// Collect body data for all parts matching the given MIME type.
     pub fn by_mime_type(&self, mime: &str) -> Vec<&str> {
         self.0
             .iter()

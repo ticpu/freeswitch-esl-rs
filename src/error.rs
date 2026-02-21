@@ -28,15 +28,24 @@ pub enum EslError {
 
     /// Authentication failed
     #[error("Authentication failed: {reason}")]
-    AuthenticationFailed { reason: String },
+    AuthenticationFailed {
+        /// Description from FreeSWITCH (e.g. "invalid" or "user not found").
+        reason: String,
+    },
 
     /// Protocol error - invalid message format
     #[error("Protocol error: {message}")]
-    ProtocolError { message: String },
+    ProtocolError {
+        /// What went wrong in the protocol exchange.
+        message: String,
+    },
 
     /// Command returned `-ERR` with an error message from FreeSWITCH
     #[error("Command failed: {reply_text}")]
-    CommandFailed { reply_text: String },
+    CommandFailed {
+        /// The full `Reply-Text` value (e.g. `-ERR invalid command`).
+        reply_text: String,
+    },
 
     /// Reply-Text did not match the expected `+OK`/`-ERR` protocol format.
     ///
@@ -44,15 +53,24 @@ pub enum EslError {
     /// A reply that matches neither indicates a protocol-level anomaly or a
     /// command with non-standard reply format (e.g. `getvar`).
     #[error("Unexpected reply: {reply_text}")]
-    UnexpectedReply { reply_text: String },
+    UnexpectedReply {
+        /// The full `Reply-Text` value that didn't match `+OK` or `-ERR`.
+        reply_text: String,
+    },
 
     /// Timeout waiting for response
     #[error("Operation timed out after {timeout_ms}ms")]
-    Timeout { timeout_ms: u64 },
+    Timeout {
+        /// Elapsed time in milliseconds before the operation was abandoned.
+        timeout_ms: u64,
+    },
 
     /// Invalid event format
     #[error("Invalid event format: {format}")]
-    InvalidEventFormat { format: String },
+    InvalidEventFormat {
+        /// The unrecognized format string.
+        format: String,
+    },
 
     /// JSON parsing error
     #[error("JSON parsing error: {0}")]
@@ -68,15 +86,26 @@ pub enum EslError {
 
     /// Buffer overflow - message too large
     #[error("Buffer overflow: message size {size} exceeds limit {limit}")]
-    BufferOverflow { size: usize, limit: usize },
+    BufferOverflow {
+        /// Actual message size in bytes.
+        size: usize,
+        /// Maximum allowed size in bytes.
+        limit: usize,
+    },
 
     /// Invalid header format
     #[error("Invalid header format: {header}")]
-    InvalidHeader { header: String },
+    InvalidHeader {
+        /// The malformed header line.
+        header: String,
+    },
 
     /// Missing required header
     #[error("Missing required header: {header}")]
-    MissingHeader { header: String },
+    MissingHeader {
+        /// Name of the header that was expected.
+        header: String,
+    },
 
     /// Connection closed by remote
     #[error("Connection closed by FreeSWITCH")]
@@ -84,11 +113,17 @@ pub enum EslError {
 
     /// Heartbeat/liveness timeout expired
     #[error("Heartbeat expired after {interval_ms}ms without traffic")]
-    HeartbeatExpired { interval_ms: u64 },
+    HeartbeatExpired {
+        /// Configured liveness interval in milliseconds.
+        interval_ms: u64,
+    },
 
     /// Invalid UUID format
     #[error("Invalid UUID format: {uuid}")]
-    InvalidUuid { uuid: String },
+    InvalidUuid {
+        /// The string that failed UUID validation.
+        uuid: String,
+    },
 
     /// Event queue full
     #[error("Event queue is full - dropping events")]
@@ -96,7 +131,10 @@ pub enum EslError {
 
     /// Generic error with custom message
     #[error("ESL error: {message}")]
-    Generic { message: String },
+    Generic {
+        /// Free-form error description.
+        message: String,
+    },
 
     /// Originate command builder error
     #[error("Originate error: {0}")]
@@ -104,18 +142,21 @@ pub enum EslError {
 }
 
 impl EslError {
+    /// Construct a generic error with a custom message.
     pub fn generic(message: impl Into<String>) -> Self {
         Self::Generic {
             message: message.into(),
         }
     }
 
+    /// Construct a protocol error with a description.
     pub fn protocol_error(message: impl Into<String>) -> Self {
         Self::ProtocolError {
             message: message.into(),
         }
     }
 
+    /// Construct an authentication failure with a reason.
     pub fn auth_failed(reason: impl Into<String>) -> Self {
         Self::AuthenticationFailed {
             reason: reason.into(),

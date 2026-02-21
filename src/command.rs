@@ -71,10 +71,12 @@ impl EslResponse {
         self.status == ReplyStatus::Ok
     }
 
+    /// Classification of the `Reply-Text` header.
     pub fn reply_status(&self) -> ReplyStatus {
         self.status
     }
 
+    /// Response body (the `api/` response payload, or `bgapi` result).
     pub fn body(&self) -> Option<&str> {
         self.body
             .as_deref()
@@ -88,12 +90,14 @@ impl EslResponse {
             .unwrap_or_default()
     }
 
+    /// Look up a response header by name.
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .get(name)
             .map(|s| s.as_str())
     }
 
+    /// All response headers.
     pub fn headers(&self) -> &HashMap<String, String> {
         &self.headers
     }
@@ -168,6 +172,7 @@ pub struct CommandBuilder {
 }
 
 impl CommandBuilder {
+    /// Start building a command with the given command line.
     pub fn new(command: &str) -> Self {
         Self {
             command: command.to_string(),

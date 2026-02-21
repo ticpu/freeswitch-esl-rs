@@ -32,7 +32,9 @@ fn event_types_to_string(events: &[EslEventType]) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectionStatus {
+    /// ESL session is active.
     Connected,
+    /// ESL session ended.
     Disconnected(DisconnectReason),
 }
 
@@ -124,6 +126,7 @@ struct SharedState {
 /// queue capacity. Use [`Default::default()`] for standard settings.
 #[derive(Debug, Clone)]
 pub struct EslConnectOptions {
+    /// Capacity of the mpsc channel delivering events. Default: 1000.
     pub event_queue_size: usize,
 }
 
@@ -1060,6 +1063,7 @@ impl EslClient {
             .store(duration.as_millis() as u64, Ordering::Relaxed);
     }
 
+    /// Whether the connection is alive (not yet disconnected).
     pub fn is_connected(&self) -> bool {
         matches!(
             *self
@@ -1069,6 +1073,7 @@ impl EslClient {
         )
     }
 
+    /// Current connection status snapshot.
     pub fn status(&self) -> ConnectionStatus {
         self.status_rx
             .borrow()
@@ -1103,6 +1108,7 @@ impl EslEventStream {
             .await
     }
 
+    /// Whether the connection is alive (not yet disconnected).
     pub fn is_connected(&self) -> bool {
         matches!(
             *self
@@ -1112,6 +1118,7 @@ impl EslEventStream {
         )
     }
 
+    /// Current connection status snapshot.
     pub fn status(&self) -> ConnectionStatus {
         self.status_rx
             .borrow()

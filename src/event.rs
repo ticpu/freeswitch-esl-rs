@@ -82,8 +82,11 @@ macro_rules! esl_event_types {
     ) => {
         /// FreeSWITCH event types matching the canonical order from `esl_event.h`
         /// and `switch_event.c` EVENT_NAMES[].
+        ///
+        /// Variant names are the canonical wire names (e.g. `ChannelCreate` = `CHANNEL_CREATE`).
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
         #[non_exhaustive]
+        #[allow(missing_docs)]
         pub enum EslEventType {
             $(
                 $(#[$attr])*
@@ -223,6 +226,7 @@ esl_event_types! {
     All => "ALL";
     // --- Not in libs/esl/ EVENT_NAMES[], only in switch_event.c ---
     // check-event-types.sh stops scanning at the All variant above.
+    /// Present in `switch_event.c` but not in `libs/esl/` EVENT_NAMES[].
     StartRecording => "START_RECORDING",
 }
 
@@ -242,8 +246,11 @@ impl std::error::Error for ParseEventTypeError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum EslEventPriority {
+    /// Default priority.
     Normal,
+    /// Lower than normal.
     Low,
+    /// Higher than normal.
     High,
 }
 
@@ -312,39 +319,47 @@ impl EslEvent {
         }
     }
 
+    /// Parsed event type, if recognized.
     pub fn event_type(&self) -> Option<EslEventType> {
         self.event_type
     }
 
+    /// Override the event type.
     pub fn set_event_type(&mut self, event_type: Option<EslEventType>) {
         self.event_type = event_type;
     }
 
+    /// Look up a header by name (case-sensitive).
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .get(name)
             .map(|s| s.as_str())
     }
 
+    /// All headers as a map.
     pub fn headers(&self) -> &HashMap<String, String> {
         &self.headers
     }
 
+    /// Set or overwrite a header.
     pub fn set_header(&mut self, name: impl Into<String>, value: impl Into<String>) {
         self.headers
             .insert(name.into(), value.into());
     }
 
+    /// Remove a header, returning its value if it existed.
     pub fn del_header(&mut self, name: &str) -> Option<String> {
         self.headers
             .remove(name)
     }
 
+    /// Event body (the content after the blank line in plain-text events).
     pub fn body(&self) -> Option<&str> {
         self.body
             .as_deref()
     }
 
+    /// Set the event body.
     pub fn set_body(&mut self, body: String) {
         self.body = Some(body);
     }
@@ -421,26 +436,32 @@ impl EslEvent {
             .or_else(|| self.header(HEADER_CALLER_UUID))
     }
 
+    /// `Job-UUID` header from `bgapi` `BACKGROUND_JOB` events.
     pub fn job_uuid(&self) -> Option<&str> {
         self.header("Job-UUID")
     }
 
+    /// `Channel-Name` header (e.g. `sofia/internal/1000@domain`).
     pub fn channel_name(&self) -> Option<&str> {
         self.header("Channel-Name")
     }
 
+    /// `Caller-Caller-ID-Number` header.
     pub fn caller_id_number(&self) -> Option<&str> {
         self.header("Caller-Caller-ID-Number")
     }
 
+    /// `Caller-Caller-ID-Name` header.
     pub fn caller_id_name(&self) -> Option<&str> {
         self.header("Caller-Caller-ID-Name")
     }
 
+    /// `Hangup-Cause` header (e.g. `NORMAL_CLEARING`, `USER_BUSY`).
     pub fn hangup_cause(&self) -> Option<&str> {
         self.header("Hangup-Cause")
     }
 
+    /// `Event-Subclass` header for `CUSTOM` events (e.g. `sofia::register`).
     pub fn event_subclass(&self) -> Option<&str> {
         self.header("Event-Subclass")
     }
@@ -454,6 +475,7 @@ impl EslEvent {
         self.header(&key)
     }
 
+    /// Check whether this event matches the given type.
     pub fn is_event_type(&self, event_type: EslEventType) -> bool {
         self.event_type == Some(event_type)
     }

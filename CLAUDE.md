@@ -11,6 +11,7 @@ This is a **library-first** crate. There is an examples/ folder buildable binari
 cargo fmt
 cargo check --message-format=short
 cargo clippy --fix --allow-dirty --message-format=short
+RUSTDOCFLAGS="-D missing_docs" cargo doc --no-deps
 cargo test --lib
 ```
 
@@ -36,10 +37,13 @@ git push --tags
 
 ## Documentation Style
 
+All public items must have doc comments — the pre-commit hook enforces
+`-D missing_docs`. Brief one-liners are fine for self-evident items.
+
 No "captain obvious" docs. Don't restate the struct/function name as the doc comment.
 Only document when it adds value: non-obvious behavior, FreeSWITCH-specific semantics,
 wire format details, gotchas. Silence over noise. If the name and signature tell the
-whole story, skip the doc comment.
+whole story, a brief one-liner suffices.
 
 ## Design Principles
 

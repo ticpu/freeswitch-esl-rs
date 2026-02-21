@@ -15,6 +15,12 @@ if ! cargo clippy --all-targets --message-format=short -- -D warnings; then
     exit 1
 fi
 
+echo "Checking documentation coverage..."
+if ! RUSTDOCFLAGS="-D missing_docs" cargo doc --no-deps 2>&1 | tail -1 | grep -q "Finished"; then
+    echo "❌ Missing public documentation. Run: RUSTDOCFLAGS='-W missing_docs' cargo doc --no-deps"
+    exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "Checking EslEventType against C ESL..."
 if ! "$SCRIPT_DIR/check-event-types.sh"; then

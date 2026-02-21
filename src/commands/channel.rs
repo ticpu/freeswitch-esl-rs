@@ -5,6 +5,7 @@ use std::fmt;
 /// Answer a channel: `uuid_answer <uuid>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UuidAnswer {
+    /// Channel UUID.
     pub uuid: String,
 }
 
@@ -17,7 +18,9 @@ impl fmt::Display for UuidAnswer {
 /// Bridge two channels: `uuid_bridge <uuid> <other_uuid>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UuidBridge {
+    /// Channel UUID.
     pub uuid: String,
+    /// UUID of the channel to bridge to.
     pub other: String,
 }
 
@@ -32,6 +35,7 @@ impl fmt::Display for UuidBridge {
 /// Sends a SIP REFER to the endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UuidDeflect {
+    /// Channel UUID.
     pub uuid: String,
     /// SIP URI to redirect to (e.g. `sip:user@host`).
     pub uri: String,
@@ -46,6 +50,7 @@ impl fmt::Display for UuidDeflect {
 /// Place a channel on hold or take it off hold: `uuid_hold [off] <uuid>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UuidHold {
+    /// Channel UUID.
     pub uuid: String,
     /// `true` = take off hold; `false` = place on hold.
     pub off: bool,
@@ -64,6 +69,7 @@ impl fmt::Display for UuidHold {
 /// Kill a channel: `uuid_kill <uuid> [cause]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UuidKill {
+    /// Channel UUID.
     pub uuid: String,
     /// Hangup cause string (e.g. `NORMAL_CLEARING`). If `None`, uses FreeSWITCH default.
     pub cause: Option<String>,
@@ -86,7 +92,9 @@ impl fmt::Display for UuidKill {
 /// [`ReplyStatus::Other`](crate::ReplyStatus::Other).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UuidGetVar {
+    /// Channel UUID.
     pub uuid: String,
+    /// Variable name to read.
     pub key: String,
 }
 
@@ -99,8 +107,11 @@ impl fmt::Display for UuidGetVar {
 /// Set a channel variable: `uuid_setvar <uuid> <key> <value>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UuidSetVar {
+    /// Channel UUID.
     pub uuid: String,
+    /// Variable name to set.
     pub key: String,
+    /// Variable value.
     pub value: String,
 }
 
@@ -113,7 +124,9 @@ impl fmt::Display for UuidSetVar {
 /// Transfer a channel to a new destination: `uuid_transfer <uuid> <dest> [dialplan]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UuidTransfer {
+    /// Channel UUID.
     pub uuid: String,
+    /// Destination extension or dial string.
     pub destination: String,
     /// Dialplan to use (e.g. `"XML"`). If `None`, uses the channel's current dialplan.
     pub dialplan: Option<String>,
@@ -132,6 +145,7 @@ impl fmt::Display for UuidTransfer {
 /// Send DTMF digits to a channel: `uuid_send_dtmf <uuid> <digits>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UuidSendDtmf {
+    /// Channel UUID.
     pub uuid: String,
     /// DTMF digit string (e.g. `"1234#"`).
     pub dtmf: String,

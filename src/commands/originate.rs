@@ -48,8 +48,11 @@ impl FromStr for DialplanType {
 /// - `Channel` (`[]`) — applies only to one specific channel
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VariablesType {
+    /// `<>` scope — applies across all `:_:` separated threads.
     Enterprise,
+    /// `{}` scope — applies to all channels in this originate.
     Default,
+    /// `[]` scope — applies to one specific channel.
     Channel,
 }
 
@@ -69,6 +72,7 @@ impl VariablesType {
 /// and values with spaces are wrapped in single quotes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variables {
+    /// Scope of these variables on the originate command.
     pub vars_type: VariablesType,
     inner: IndexMap<String, String>,
 }
@@ -94,6 +98,7 @@ fn unescape_value(value: &str) -> String {
 }
 
 impl Variables {
+    /// Create an empty variable set with the given scope.
     pub fn new(vars_type: VariablesType) -> Self {
         Self {
             vars_type,
@@ -101,6 +106,7 @@ impl Variables {
         }
     }
 
+    /// Create from an existing ordered map.
     pub fn with_vars(vars_type: VariablesType, vars: IndexMap<String, String>) -> Self {
         Self {
             vars_type,
@@ -108,27 +114,32 @@ impl Variables {
         }
     }
 
+    /// Insert or overwrite a variable.
     pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.inner
             .insert(key.into(), value.into());
     }
 
+    /// Look up a variable by name.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.inner
             .get(key)
             .map(|s| s.as_str())
     }
 
+    /// Whether the set contains no variables.
     pub fn is_empty(&self) -> bool {
         self.inner
             .is_empty()
     }
 
+    /// Number of variables.
     pub fn len(&self) -> usize {
         self.inner
             .len()
     }
 
+    /// Iterate over key-value pairs in insertion order.
     pub fn iter(&self) -> indexmap::map::Iter<'_, String, String> {
         self.inner
             .iter()
@@ -217,21 +228,29 @@ fn split_unescaped_commas(s: &str) -> Vec<&str> {
 pub enum Endpoint {
     /// Raw endpoint string (e.g. `sofia/internal/1000@domain`).
     Generic {
+        /// Endpoint URI or dial string.
         uri: String,
+        /// Per-channel variables prepended as `[key=value]`.
         variables: Option<Variables>,
     },
     /// Loopback endpoint: formats as `loopback/<uri>/<context>`.
     Loopback {
+        /// Loopback destination (extension number or pattern).
         uri: String,
+        /// Dialplan context for the loopback leg.
         context: String,
+        /// Per-channel variables prepended as `[key=value]`.
         variables: Option<Variables>,
     },
     /// Sofia gateway shorthand: formats as `sofia/gateway/[profile::]<gateway>/<uri>`.
     SofiaGateway {
+        /// Destination number or SIP user part.
         uri: String,
         /// SIP profile name to qualify the gateway lookup.
         profile: Option<String>,
+        /// Gateway name as configured in the SIP profile.
         gateway: String,
+        /// Per-channel variables prepended as `[key=value]`.
         variables: Option<Variables>,
     },
 }
@@ -308,11 +327,14 @@ impl FromStr for Endpoint {
 /// - XML: `&name(args)`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Application {
+    /// Application name (e.g. `park`, `conference`, `socket`).
     pub name: String,
+    /// Application arguments, if any.
     pub args: Option<String>,
 }
 
 impl Application {
+    /// Create an application with optional arguments.
     pub fn new(name: impl Into<String>, args: Option<impl Into<String>>) -> Self {
         Self {
             name: name.into(),
@@ -320,6 +342,7 @@ impl Application {
         }
     }
 
+    /// Format as inline (`name:args`) or XML (`&name(args)`) syntax.
     pub fn to_string_with_dialplan(&self, dialplan: &DialplanType) -> String {
         let args = self
             .args
@@ -339,6 +362,7 @@ impl Application {
 pub struct ApplicationList(pub Vec<Application>);
 
 impl ApplicationList {
+    /// Format the list for the given dialplan type. XML allows exactly one app.
     pub fn to_string_with_dialplan(
         &self,
         dialplan: &DialplanType,
@@ -372,11 +396,17 @@ impl ApplicationList {
 /// Implements both `Display` (for wire format) and `FromStr` (for round-trip parsing).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Originate {
+    /// Dial target (sofia gateway, loopback, or raw URI).
     pub endpoint: Endpoint,
+    /// Application(s) to execute on the originated channel.
     pub applications: ApplicationList,
+    /// Dialplan engine. `None` defaults to XML.
     pub dialplan: Option<DialplanType>,
+    /// Dialplan context. `None` uses the profile's default.
     pub context: Option<String>,
+    /// Caller ID name for the originated leg.
     pub cid_name: Option<String>,
+    /// Caller ID number for the originated leg.
     pub cid_num: Option<String>,
     /// Timeout in seconds. `None` uses FreeSWITCH default (60s).
     pub timeout: Option<u32>,
@@ -490,10 +520,13 @@ impl FromStr for Originate {
 /// Errors from originate command parsing or construction.
 #[derive(Debug, thiserror::Error)]
 pub enum OriginateError {
+    /// A single-quoted token was never closed.
     #[error("unclosed quote at: {0}")]
     UnclosedQuote(String),
+    /// XML dialplan only allows one application; multiple were given.
     #[error("too many applications for non-inline dialplan")]
     TooManyApplications,
+    /// General parse failure with a description.
     #[error("parse error: {0}")]
     ParseError(String),
 }
