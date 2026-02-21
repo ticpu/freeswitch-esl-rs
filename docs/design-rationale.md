@@ -98,6 +98,32 @@ so callers can decide handling without matching every variant. Connection errors
 session is dead. Recoverable errors (`Timeout`, `CommandFailed`,
 `UnexpectedReply`, `QueueFull`) mean the connection is still usable.
 
+## Protocol correctness vs NEventSocket
+
+NEventSocket (.NET) is the most mature high-level ESL client. It works well in
+practice but makes trade-offs that silently absorb protocol errors:
+
+- **No Content-Type validation** — messages without Content-Type are accepted
+  silently. A corrupted Content-Length that causes protocol desync produces
+  garbage messages with no error signal. This library requires Content-Type on
+  every message; its absence returns a protocol error so the caller can
+  disconnect and reconnect from a known-good state.
+
+- **No message or buffer size limits** — NEventSocket pre-allocates whatever
+  Content-Length says with no upper bound. A malformed or malicious
+  Content-Length can cause unbounded memory allocation. This library enforces
+  8MB per message and 16MB total buffer.
+
+- **Silent error recovery** — parse exceptions are caught with an empty handler
+  and the stream continues. This masks protocol desync. This library propagates
+  all parse errors to the caller via `EslResult`, with `is_connection_error()`
+  and `is_recoverable()` helpers for classification.
+
+These differences reflect a design choice: NEventSocket prioritizes resilience
+(keep going), this library prioritizes correctness (stop and signal). For
+telephony applications where a desynced connection produces wrong call control
+decisions, explicit failure is safer than silent corruption.
+
 ## Command builders as pure Display types
 
 Command builders in `commands/`, `app/`, and `variables/` implement `Display`

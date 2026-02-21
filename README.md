@@ -2,18 +2,18 @@
 
 Production-grade async Rust client for FreeSWITCH's
 [Event Socket Library](https://developer.signalwire.com/freeswitch/FreeSWITCH-Explained/Client-and-Developer-Interfaces/Event-Socket-Library/).
-Full feature parity with the C `libesl`, built on Tokio with a split
-reader/writer architecture that lets you send commands and receive events
-concurrently — something no other Rust ESL crate offers.
+Built on Tokio with a split reader/writer architecture that lets you send
+commands and receive events concurrently — something no other Rust ESL crate
+offers.
 
 ## Why this crate
 
 - **Concurrent by design** — `EslClient` is `Clone + Send`. Pass it to any
   Tokio task. Events arrive on a separate `EslEventStream` channel. No mutex
   juggling, no blocking the event loop to send a command.
-- **Complete ESL coverage** — all 28 protocol commands, all 94 event types
-  (verified against the C source), inbound and outbound modes, plain/JSON/XML
-  event formats.
+- **Complete ESL coverage** — all protocol commands, 93 event types (verified
+  against the C ESL `EVENT_NAMES[]` array), inbound and outbound modes,
+  plain/JSON/XML event formats.
 - **Typed command builders** — `Originate`, `UuidKill`, `ConferenceDtmf`,
   dptools (`answer`, `bridge`, `playback`, ...) — all implement `Display` with
   no transport coupling. Build commands, unit test them, use them with
@@ -23,7 +23,7 @@ concurrently — something no other Rust ESL crate offers.
   `is_connection_error()` / `is_recoverable()` error classification.
 - **Correct wire format** — two-part event framing, percent-decoded headers,
   Content-Type-based format detection. Matches `mod_event_socket.c` exactly.
-- **Extensively tested** — 191 tests: 150 unit, 32 integration (mock server),
+- **Extensively tested** — 199 tests: 158 unit, 32 integration (mock server),
   9 live FreeSWITCH tests. Round-trip `parse` ↔ `to_string` on all builders.
 
 ## Architecture
@@ -235,9 +235,8 @@ let pidf = body.by_mime_type("application/pidf+xml");
 | Command timeout | yes (default 5s) | no | no | no |
 | Error classification | yes | no | no | no |
 | Command builders | 13 typed structs | none | basic | none |
-| Event types | 94 (verified vs C) | — | — | — |
-| Test count | 191 | — | — | — |
-| Status | 1.0 stable | 0.1 WIP (stale) | 0.1 RC | 0.3 (stale) |
+| Event types | 93 (verified vs C) | — | — | — |
+| Test count | 199 | — | — | — |
 
 ## Development
 
