@@ -703,7 +703,10 @@ impl EslClient {
             .map(|_| ())
     }
 
-    /// Execute API command.
+    /// Execute API command. Blocks until FreeSWITCH completes the command.
+    ///
+    /// FreeSWITCH blocks the ESL socket during `api` — no events are delivered
+    /// until it returns. Use [`bgapi`](Self::bgapi) for long-running commands.
     ///
     /// ```rust,no_run
     /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), freeswitch_esl_tokio::EslError> {
@@ -1056,7 +1059,9 @@ impl EslClient {
     ///
     /// Applies to `send_command()`, `api()`, `bgapi()`, `subscribe_events()`,
     /// and all other methods that send a command and await a reply.
-    /// For long-running API calls (e.g., `originate`), increase this value.
+    ///
+    /// If increased for long-running `api()` calls, also increase or disable
+    /// the liveness timeout — `api` blocks the socket, starving the liveness timer.
     pub fn set_command_timeout(&self, duration: Duration) {
         self.shared
             .command_timeout_ms
