@@ -36,10 +36,38 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Check EslEventType vs C ESL
-        run: hooks/check-event-types.sh
+        run: |
+          hooks/check-event-types.sh
+          count=$(sed -n '/impl fmt::Display for EslEventType/,/=> "ALL"/p' src/event.rs | grep -c '=> "')
+          echo "EVENT_TYPE_COUNT=$count" >> "$GITHUB_ENV"
 
       - name: Test
-        run: cargo test
+        run: |
+          cargo test 2>&1 | tee test-output.txt
+          passed=$(grep '^test result:' test-output.txt | sed 's/.*ok\. \([0-9]*\) passed.*/\1/' | paste -sd+ | bc)
+          echo "TEST_PASSED=$passed" >> "$GITHUB_ENV"
+
+      - name: Update test count badge
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_SECRET }}
+          gistID: def178758b6a88effff310aca87b6b50
+          filename: test-count.json
+          label: tests
+          message: "${{ env.TEST_PASSED }} passed"
+          color: brightgreen
+
+      - name: Update event type count badge
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_SECRET }}
+          gistID: def178758b6a88effff310aca87b6b50
+          filename: event-type-count.json
+          label: event types
+          message: "${{ env.EVENT_TYPE_COUNT }} (verified vs C)"
+          color: blue
 
       - name: Build
         run: cargo build --release

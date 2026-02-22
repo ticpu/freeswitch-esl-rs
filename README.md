@@ -1,5 +1,11 @@
 # freeswitch-esl-tokio
 
+[![CI](https://github.com/ticpu/freeswitch-esl-tokio/actions/workflows/ci.yml/badge.svg)](https://github.com/ticpu/freeswitch-esl-tokio/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/ticpu/def178758b6a88effff310aca87b6b50/raw/test-count.json)](https://github.com/ticpu/freeswitch-esl-tokio/actions/workflows/ci.yml)
+[![Event Types](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/ticpu/def178758b6a88effff310aca87b6b50/raw/event-type-count.json)](https://github.com/ticpu/freeswitch-esl-tokio/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/freeswitch-esl-tokio)](https://crates.io/crates/freeswitch-esl-tokio)
+[![docs.rs](https://img.shields.io/docsrs/freeswitch-esl-tokio)](https://docs.rs/freeswitch-esl-tokio)
+
 Production-grade async Rust client for FreeSWITCH's
 [Event Socket Library](https://developer.signalwire.com/freeswitch/FreeSWITCH-Explained/Client-and-Developer-Interfaces/Event-Socket-Library/).
 Built on Tokio with a split reader/writer architecture that lets you send
@@ -11,8 +17,8 @@ offers.
 - **Concurrent by design** — `EslClient` is `Clone + Send`. Pass it to any
   Tokio task. Events arrive on a separate `EslEventStream` channel. No mutex
   juggling, no blocking the event loop to send a command.
-- **Complete ESL coverage** — all protocol commands, 93 event types (verified
-  against the C ESL `EVENT_NAMES[]` array), inbound and outbound modes,
+- **Complete ESL coverage** — all protocol commands, event types verified
+  against the C ESL `EVENT_NAMES[]` array, inbound and outbound modes,
   plain/JSON/XML event formats.
 - **Typed command builders** — `Originate`, `UuidKill`, `ConferenceDtmf`,
   dptools (`answer`, `bridge`, `playback`, ...) — all implement `Display` with
@@ -23,8 +29,8 @@ offers.
   `is_connection_error()` / `is_recoverable()` error classification.
 - **Correct wire format** — two-part event framing, percent-decoded headers,
   Content-Type-based format detection. Matches `mod_event_socket.c` exactly.
-- **Extensively tested** — 199 tests: 158 unit, 32 integration (mock server),
-  9 live FreeSWITCH tests. Round-trip `parse` ↔ `to_string` on all builders.
+- **Extensively tested** — round-trip `parse` ↔ `to_string` on all builders,
+  mock-server integration tests, and live FreeSWITCH tests.
 
 ## Architecture
 
@@ -235,8 +241,8 @@ let pidf = body.by_mime_type("application/pidf+xml");
 | Command timeout | yes (default 5s) | no | no | no |
 | Error classification | yes | no | no | no |
 | Command builders | 13 typed structs | none | basic | none |
-| Event types | 93 (verified vs C) | — | — | — |
-| Test count | 199 | — | — | — |
+| Event types | ![Event Types](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/ticpu/def178758b6a88effff310aca87b6b50/raw/event-type-count.json) | — | — | — |
+| Test count | ![Tests](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/ticpu/def178758b6a88effff310aca87b6b50/raw/test-count.json) | — | — | — |
 
 ## Development
 
