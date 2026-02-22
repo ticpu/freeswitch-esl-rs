@@ -778,6 +778,24 @@ impl EslEvent {
             .ok()
     }
 
+    /// Extract timetable from timestamp headers with the given prefix.
+    ///
+    /// Returns `None` if no timestamp headers with this prefix are present.
+    /// Common prefixes: `"Caller"`, `"Other-Leg"`, `"Channel"`.
+    pub fn timetable(&self, prefix: &str) -> Option<crate::channel::ChannelTimetable> {
+        crate::channel::ChannelTimetable::from_event(self, prefix)
+    }
+
+    /// Caller-leg channel timetable (`Caller-*-Time` headers).
+    pub fn caller_timetable(&self) -> Option<crate::channel::ChannelTimetable> {
+        self.timetable("Caller")
+    }
+
+    /// Other-leg channel timetable (`Other-Leg-*-Time` headers).
+    pub fn other_leg_timetable(&self) -> Option<crate::channel::ChannelTimetable> {
+        self.timetable("Other-Leg")
+    }
+
     /// `Event-Subclass` header for `CUSTOM` events (e.g. `sofia::register`).
     pub fn event_subclass(&self) -> Option<&str> {
         self.header("Event-Subclass")

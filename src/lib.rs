@@ -125,6 +125,7 @@
 //! ```
 
 pub mod app;
+pub mod channel;
 pub mod commands;
 pub mod connection;
 pub mod error;
@@ -137,6 +138,7 @@ pub(crate) mod constants;
 pub(crate) mod protocol;
 
 pub use app::dptools::AppCommand;
+pub use channel::ChannelTimetable;
 pub use command::{CommandBuilder, EslResponse, ReplyStatus};
 pub use commands::{
     Application, ApplicationList, ConferenceDtmf, ConferenceHold, ConferenceMute, DialplanType,
