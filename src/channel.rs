@@ -43,9 +43,43 @@ impl ChannelTimetable {
     ///
     /// Returns `None` if no timestamp headers with this prefix are present
     /// or parseable. Common prefixes: `"Caller"`, `"Other-Leg"`.
-    pub fn from_event(_event: &EslEvent, _prefix: &str) -> Option<Self> {
-        // Stub — will be implemented after tests confirm failure
-        None
+    pub fn from_event(event: &EslEvent, prefix: &str) -> Option<Self> {
+        let mut tt = Self::default();
+        let mut found = false;
+
+        macro_rules! field {
+            ($field:ident, $suffix:literal) => {
+                let header = format!("{}-{}", prefix, $suffix);
+                if let Some(v) = event
+                    .header(&header)
+                    .and_then(|s| {
+                        s.parse()
+                            .ok()
+                    })
+                {
+                    tt.$field = Some(v);
+                    found = true;
+                }
+            };
+        }
+
+        field!(profile_created, "Profile-Created-Time");
+        field!(created, "Channel-Created-Time");
+        field!(answered, "Channel-Answered-Time");
+        field!(progress, "Channel-Progress-Time");
+        field!(progress_media, "Channel-Progress-Media-Time");
+        field!(hungup, "Channel-Hangup-Time");
+        field!(transferred, "Channel-Transfer-Time");
+        field!(resurrected, "Channel-Resurrect-Time");
+        field!(bridged, "Channel-Bridged-Time");
+        field!(last_hold, "Channel-Last-Hold");
+        field!(hold_accum, "Channel-Hold-Accum");
+
+        if found {
+            Some(tt)
+        } else {
+            None
+        }
     }
 }
 
