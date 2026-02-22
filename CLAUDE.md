@@ -110,6 +110,10 @@ custom event delivery.
 
 To check if FreeSWITCH is listening: `ss -tlnp sport = :8022`
 
+**Always run live tests before committing** when FreeSWITCH is available.
+Check with `ss -tlnp sport = :8022` — if listening, run them. If not
+available, skip but note it in the commit process.
+
 ## Examples — Use the Library's Own API
 
 Examples must showcase the library's typed API, not reimplement C ESL patterns.

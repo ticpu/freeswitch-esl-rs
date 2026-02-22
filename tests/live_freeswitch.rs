@@ -367,3 +367,98 @@ async fn live_api_err_body() {
         body
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn live_channel_timetable_on_create() {
+    let (client, mut events) = connect().await;
+
+    client
+        .subscribe_events(
+            EventFormat::Plain,
+            &[EslEventType::ChannelCreate, EslEventType::ChannelDestroy],
+        )
+        .await
+        .unwrap();
+
+    // Originate a call to &park() — creates a channel that immediately parks
+    let resp = client
+        .api("originate null/test &park()")
+        .await
+        .unwrap();
+    let body = resp
+        .body()
+        .unwrap_or("");
+    assert!(
+        body.starts_with("+OK") || body.contains("-"),
+        "originate response: {}",
+        body
+    );
+
+    if !body.starts_with("+OK") {
+        eprintln!(
+            "originate failed ({}), skipping timetable test",
+            body.trim()
+        );
+        return;
+    }
+
+    // Extract the UUID from "+OK <uuid>"
+    let uuid = body
+        .trim()
+        .strip_prefix("+OK ")
+        .expect("expected UUID after +OK");
+
+    // Wait for CHANNEL_CREATE with our UUID
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut found_timetable = false;
+    while Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => {
+                if evt.event_type() == Some(EslEventType::ChannelCreate)
+                    && evt.unique_id() == Some(uuid)
+                {
+                    let tt = evt
+                        .caller_timetable()
+                        .expect("CHANNEL_CREATE should have Caller timetable");
+
+                    // created must be a positive epoch-microsecond timestamp
+                    assert!(
+                        tt.created
+                            .unwrap_or(0)
+                            > 1_000_000_000_000_000,
+                        "created timestamp should be a recent epoch-us value: {:?}",
+                        tt.created
+                    );
+                    assert!(
+                        tt.profile_created
+                            .unwrap_or(0)
+                            > 1_000_000_000_000_000,
+                        "profile_created should be a recent epoch-us value: {:?}",
+                        tt.profile_created
+                    );
+                    // answered/hungup should be 0 at creation time
+                    assert_eq!(tt.answered, Some(0), "answered should be 0 at create");
+                    assert_eq!(tt.hungup, Some(0), "hungup should be 0 at create");
+
+                    found_timetable = true;
+                    break;
+                }
+            }
+            Ok(Some(Err(e))) => panic!("event error: {}", e),
+            Ok(None) => panic!("event stream closed"),
+            Err(_) => break,
+        }
+    }
+
+    // Clean up: hang up the parked channel
+    let _ = client
+        .api(&format!("uuid_kill {}", uuid))
+        .await;
+
+    assert!(
+        found_timetable,
+        "did not receive CHANNEL_CREATE with timetable for {}",
+        uuid
+    );
+}
