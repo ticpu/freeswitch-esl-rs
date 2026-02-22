@@ -71,6 +71,10 @@ impl MockEslServer {
 }
 
 impl MockClient {
+    pub fn from_stream(stream: TcpStream) -> Self {
+        Self { stream }
+    }
+
     pub async fn send_raw(&mut self, data: &str) {
         self.stream
             .write_all(data.as_bytes())
@@ -180,6 +184,44 @@ impl MockClient {
     pub async fn reply_raw_text(&mut self, text: &str) {
         let msg = format!("Content-Type: command/reply\nReply-Text: {}\n\n", text);
         self.send_raw(&msg)
+            .await;
+    }
+
+    /// Send a connect response in the flat serialized format FreeSWITCH uses.
+    ///
+    /// FreeSWITCH's `connect` handler calls `switch_event_serialize()` which
+    /// percent-encodes ALL header values and sends the result as a flat blob
+    /// (no outer envelope wrapper). This is unlike normal `command/reply`
+    /// responses which write literal `Content-Type: command/reply\n`.
+    pub async fn send_connect_response(&mut self, channel_headers: &HashMap<String, String>) {
+        let mut data = String::new();
+
+        // Channel data headers first (like switch_channel_event_set_data)
+        for (key, value) in channel_headers {
+            data.push_str(&format!(
+                "{}: {}\n",
+                key,
+                percent_encode(value.as_bytes(), NON_ALPHANUMERIC)
+            ));
+        }
+
+        // Protocol headers last (like switch_event_add_header_string STACK_BOTTOM)
+        let protocol_headers = [
+            ("Content-Type", "command/reply"),
+            ("Reply-Text", "+OK"),
+            ("Socket-Mode", "async"),
+            ("Control", "full"),
+        ];
+        for (key, value) in &protocol_headers {
+            data.push_str(&format!(
+                "{}: {}\n",
+                key,
+                percent_encode(value.as_bytes(), NON_ALPHANUMERIC)
+            ));
+        }
+        data.push('\n');
+
+        self.send_raw(&data)
             .await;
     }
 

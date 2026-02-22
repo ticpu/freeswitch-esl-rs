@@ -227,9 +227,11 @@ impl EslParser {
                 let key = line[..colon_pos]
                     .trim()
                     .to_string();
-                let value = line[colon_pos + 1..]
-                    .trim()
-                    .to_string();
+                let raw_value = line[colon_pos + 1..].trim();
+                let value = percent_decode_str(raw_value)
+                    .decode_utf8()
+                    .map(|s| s.into_owned())
+                    .unwrap_or_else(|_| raw_value.to_string());
                 headers.insert(key, value);
             } else {
                 return Err(EslError::InvalidHeader {
@@ -835,5 +837,141 @@ mod tests {
             result.is_err(),
             "Non-numeric Content-Length must be rejected"
         );
+    }
+
+    #[test]
+    fn test_parse_headers_percent_decodes_values() {
+        let parser = EslParser::new();
+        let headers = parser
+            .parse_headers("Content-Type: command%2Freply\nReply-Text: %2BOK")
+            .unwrap();
+
+        assert_eq!(
+            headers
+                .get("Content-Type")
+                .map(|s| s.as_str()),
+            Some("command/reply")
+        );
+        assert_eq!(
+            headers
+                .get("Reply-Text")
+                .map(|s| s.as_str()),
+            Some("+OK")
+        );
+    }
+
+    #[test]
+    fn test_parse_headers_noop_for_plain_values() {
+        let parser = EslParser::new();
+        let headers = parser
+            .parse_headers("Content-Type: command/reply\nReply-Text: +OK")
+            .unwrap();
+
+        assert_eq!(
+            headers
+                .get("Content-Type")
+                .map(|s| s.as_str()),
+            Some("command/reply")
+        );
+        assert_eq!(
+            headers
+                .get("Reply-Text")
+                .map(|s| s.as_str()),
+            Some("+OK")
+        );
+    }
+
+    #[test]
+    fn test_parse_headers_invalid_percent_sequence() {
+        let parser = EslParser::new();
+        let headers = parser
+            .parse_headers("X-Bad: %ZZinvalid\nX-Good: clean")
+            .unwrap();
+
+        assert_eq!(
+            headers
+                .get("X-Bad")
+                .map(|s| s.as_str()),
+            Some("%ZZinvalid"),
+            "Invalid percent sequence should fall back to raw value"
+        );
+        assert_eq!(
+            headers
+                .get("X-Good")
+                .map(|s| s.as_str()),
+            Some("clean")
+        );
+    }
+
+    #[test]
+    fn test_parse_connect_response() {
+        use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
+
+        let mut parser = EslParser::new();
+
+        // Simulate FreeSWITCH's connect response: switch_event_serialize()
+        // encodes ALL values, sent as a flat blob (no outer envelope wrapper).
+        let headers = [
+            ("Content-Type", "command/reply"),
+            ("Reply-Text", "+OK"),
+            ("Socket-Mode", "async"),
+            ("Control", "full"),
+            ("Event-Name", "CHANNEL_DATA"),
+            ("Channel-Name", "sofia/internal/1000@example.com"),
+            ("Unique-ID", "abcd-1234"),
+            ("Caller-Caller-ID-Name", "Test User"),
+        ];
+
+        let mut data = String::new();
+        for (key, value) in &headers {
+            data.push_str(&format!(
+                "{}: {}\n",
+                key,
+                percent_encode(value.as_bytes(), NON_ALPHANUMERIC)
+            ));
+        }
+        data.push('\n');
+
+        parser
+            .add_data(data.as_bytes())
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(message.message_type, MessageType::CommandReply);
+        assert_eq!(
+            message
+                .headers
+                .get("Channel-Name")
+                .map(|s| s.as_str()),
+            Some("sofia/internal/1000@example.com")
+        );
+        assert_eq!(
+            message
+                .headers
+                .get("Caller-Caller-ID-Name")
+                .map(|s| s.as_str()),
+            Some("Test User")
+        );
+        assert_eq!(
+            message
+                .headers
+                .get("Socket-Mode")
+                .map(|s| s.as_str()),
+            Some("async")
+        );
+        assert_eq!(
+            message
+                .headers
+                .get("Control")
+                .map(|s| s.as_str()),
+            Some("full")
+        );
+
+        let response = message.into_response();
+        assert!(response.is_success());
+        assert_eq!(response.reply_text(), Some("+OK"));
     }
 }

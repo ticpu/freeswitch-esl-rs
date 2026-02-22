@@ -6,7 +6,7 @@ use freeswitch_esl_tokio::{
     ConnectionStatus, DisconnectReason, EslClient, EslError, EslEvent, EslEventStream,
     EslEventType, EventFormat,
 };
-use mock_server::{setup_connected_pair, MockEslServer};
+use mock_server::{setup_connected_pair, MockClient, MockEslServer};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -751,4 +751,70 @@ async fn test_getvar_command() {
         .unwrap()
         .unwrap();
     assert_eq!(value, "John Doe");
+}
+
+#[tokio::test]
+async fn test_outbound_connect_session() {
+    use tokio::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let port = listener
+        .local_addr()
+        .unwrap()
+        .port();
+
+    // Mock FreeSWITCH connects to our listener, then we send connect
+    let (accept_result, mock_stream) = tokio::join!(
+        EslClient::accept_outbound(&listener),
+        TcpStream::connect(("127.0.0.1", port))
+    );
+
+    let (client, _events) = accept_result.unwrap();
+    let mut mock = MockClient::from_stream(mock_stream.unwrap());
+
+    // Client sends connect, mock replies with serialized channel data
+    let connect_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .connect_session()
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "connect\n\n");
+
+    let mut channel_headers = HashMap::new();
+    channel_headers.insert("Event-Name".to_string(), "CHANNEL_DATA".to_string());
+    channel_headers.insert(
+        "Channel-Name".to_string(),
+        "sofia/internal/1000@example.com".to_string(),
+    );
+    channel_headers.insert("Unique-ID".to_string(), "abcd-1234-efgh".to_string());
+    channel_headers.insert("Caller-Caller-ID-Name".to_string(), "Test User".to_string());
+    channel_headers.insert("Caller-Caller-ID-Number".to_string(), "1000".to_string());
+    mock.send_connect_response(&channel_headers)
+        .await;
+
+    let response = connect_task
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(response.is_success());
+    assert_eq!(response.reply_text(), Some("+OK"));
+    assert_eq!(
+        response.header("Channel-Name"),
+        Some("sofia/internal/1000@example.com")
+    );
+    assert_eq!(response.header("Unique-ID"), Some("abcd-1234-efgh"));
+    assert_eq!(response.header("Caller-Caller-ID-Name"), Some("Test User"));
+    assert_eq!(response.header("Caller-Caller-ID-Number"), Some("1000"));
+    assert_eq!(response.header("Socket-Mode"), Some("async"));
+    assert_eq!(response.header("Control"), Some("full"));
 }
