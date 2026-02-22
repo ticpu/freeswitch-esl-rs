@@ -138,7 +138,7 @@ pub(crate) mod constants;
 pub(crate) mod protocol;
 
 pub use app::dptools::AppCommand;
-pub use channel::ChannelTimetable;
+pub use channel::{AnswerState, CallDirection, CallState, ChannelState, ChannelTimetable};
 pub use command::{CommandBuilder, EslResponse, ReplyStatus};
 pub use commands::{
     Application, ApplicationList, ConferenceDtmf, ConferenceHold, ConferenceMute, DialplanType,
@@ -152,8 +152,5 @@ pub use connection::{
 };
 pub use constants::DEFAULT_ESL_PORT;
 pub use error::{EslError, EslResult};
-pub use event::{
-    AnswerState, CallDirection, CallState, ChannelState, EslEvent, EslEventPriority, EslEventType,
-    EventFormat,
-};
+pub use event::{EslEvent, EslEventPriority, EslEventType, EventFormat};
 pub use variables::{EslArray, MultipartBody, MultipartItem};
