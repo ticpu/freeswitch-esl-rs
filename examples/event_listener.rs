@@ -84,14 +84,15 @@ fn process_event(
         Some(EslEventType::ChannelCreate) => {
             if let Some(uuid) = event.unique_id() {
                 let caller_id = event
-                    .header("Caller-Caller-ID-Number")
+                    .caller_id_number()
                     .unwrap_or("Unknown");
                 let destination = event
                     .header("Caller-Destination-Number")
                     .unwrap_or("Unknown");
                 let direction = event
-                    .header("Call-Direction")
-                    .unwrap_or("Unknown");
+                    .call_direction()
+                    .map(|d| d.to_string())
+                    .unwrap_or_else(|| "Unknown".into());
 
                 let call_info = CallInfo {
                     caller_id: caller_id.to_string(),
@@ -122,7 +123,7 @@ fn process_event(
             if let Some(uuid) = event.unique_id() {
                 if let Some(call_info) = active_calls.get(uuid) {
                     let cause = event
-                        .header("Hangup-Cause")
+                        .hangup_cause()
                         .unwrap_or("UNKNOWN");
                     let talk_time = call_info
                         .answered_time

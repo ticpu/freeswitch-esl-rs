@@ -1,7 +1,8 @@
 //! Channel state tracker — reference example for ESL channel lifecycle monitoring.
 //!
-//! Tracks all active channels with typed state enums and a flat data map
-//! storing all event headers and uuid_dump variables.
+//! Tracks all active channels as flat data maps storing event headers and
+//! uuid_dump variables. Typed state accessors (`channel_state()`, `call_state()`,
+//! etc.) parse on demand from the stored headers — no separate fields to sync.
 //!
 //! Bootstrap flow: subscribe → `show channels as json` → fake CHANNEL_CREATE
 //! events → bgapi uuid_dump per channel. Single code path for bootstrap and
@@ -13,13 +14,25 @@
 //! Usage: RUST_LOG=info cargo run --example channel_tracker [-- [host[:port]] [password]]
 
 use std::collections::HashMap;
+use std::fmt::Display;
 
 use freeswitch_esl_tokio::{
-    AnswerState, CallDirection, CallState, ChannelState, EslClient, EslError, EslEvent,
-    EslEventType, EventFormat, DEFAULT_ESL_PORT,
+    CallDirection, CallState, ChannelState, EslClient, EslError, EslEvent, EslEventType,
+    EventFormat, DEFAULT_ESL_PORT,
 };
 use percent_encoding::percent_decode_str;
 use tracing::{debug, error, info, warn};
+
+fn short_uuid(uuid: &str) -> &str {
+    &uuid[..8.min(uuid.len())]
+}
+
+fn display_or<T: Display>(opt: Option<T>) -> String {
+    match opt {
+        Some(v) => v.to_string(),
+        None => "-".into(),
+    }
+}
 
 /// Mapping from `show channels as json` field names to ESL event header names.
 /// Used to build fake CHANNEL_CREATE events from bootstrap data so that
@@ -61,63 +74,43 @@ fn fake_channel_create(row: &serde_json::Value) -> Option<EslEvent> {
     Some(event)
 }
 
+/// Flat data map — all event headers and uuid_dump variables accumulated over
+/// the channel's lifetime. Typed state is parsed on demand from stored headers.
 struct TrackedChannel {
-    uuid: String,
-    channel_state: Option<ChannelState>,
-    call_state: Option<CallState>,
-    answer_state: Option<AnswerState>,
-    call_direction: Option<CallDirection>,
-    other_leg_uuid: Option<String>,
-    hangup_cause: Option<String>,
-    held: bool,
-    secure: bool,
-    /// Flat data map — all event headers and uuid_dump variables.
-    /// Keys use raw header names: `Channel-Name`, `variable_sip_from_user`, etc.
     data: HashMap<String, String>,
 }
 
 impl TrackedChannel {
-    fn new(uuid: String) -> Self {
+    fn new() -> Self {
         Self {
-            uuid,
-            channel_state: None,
-            call_state: None,
-            answer_state: None,
-            call_direction: None,
-            other_leg_uuid: None,
-            hangup_cause: None,
-            held: false,
-            secure: false,
             data: HashMap::new(),
         }
     }
 
-    /// Merge all event headers into the data map and update typed fields.
-    fn update_from_event(&mut self, event: &EslEvent) {
-        if let Some(state) = event.channel_state() {
-            self.channel_state = Some(state);
-        }
-        if let Some(state) = event.call_state() {
-            self.call_state = Some(state);
-        }
-        if let Some(state) = event.answer_state() {
-            self.answer_state = Some(state);
-        }
-        if let Some(dir) = event.call_direction() {
-            self.call_direction = Some(dir);
-        }
-        if let Some(cause) = event.hangup_cause() {
-            self.hangup_cause = Some(cause.to_string());
-        }
-        if let Some(other) = event.header("Other-Leg-Unique-ID") {
-            if other.is_empty() {
-                self.other_leg_uuid = None;
-            } else {
-                self.other_leg_uuid = Some(other.to_string());
-            }
-        }
+    fn channel_state(&self) -> Option<ChannelState> {
+        self.get("Channel-State")?
+            .parse()
+            .ok()
+    }
 
-        // Store ALL headers — envelope + variable_* alike.
+    fn call_state(&self) -> Option<CallState> {
+        self.get("Channel-Call-State")?
+            .parse()
+            .ok()
+    }
+
+    fn call_direction(&self) -> Option<CallDirection> {
+        self.get("Call-Direction")?
+            .parse()
+            .ok()
+    }
+
+    fn hangup_cause(&self) -> Option<&str> {
+        self.get("Hangup-Cause")
+    }
+
+    /// Merge all event headers into the data map.
+    fn update_from_event(&mut self, event: &EslEvent) {
         for (key, value) in event.headers() {
             self.data
                 .insert(key.clone(), value.clone());
@@ -125,8 +118,7 @@ impl TrackedChannel {
     }
 
     /// Parse uuid_dump response body (Key: Value lines, percent-encoded values)
-    /// and merge into the data map. Gets the full variable set that isn't
-    /// available from CHANNEL_CREATE events or `show channels`.
+    /// and merge into the data map.
     fn update_from_dump(&mut self, body: &str) {
         for line in body.lines() {
             if let Some((key, value)) = line.split_once(": ") {
@@ -137,61 +129,30 @@ impl TrackedChannel {
                     .insert(key.to_string(), decoded);
             }
         }
-        // Re-derive typed fields from dump data.
-        if let Some(state) = self
-            .data
-            .get("Channel-State")
-            .and_then(|s| {
-                s.parse()
-                    .ok()
-            })
-        {
-            self.channel_state = Some(state);
-        }
-        if let Some(state) = self
-            .data
-            .get("Channel-Call-State")
-            .and_then(|s| {
-                s.parse()
-                    .ok()
-            })
-        {
-            self.call_state = Some(state);
-        }
-        if let Some(state) = self
-            .data
-            .get("Answer-State")
-            .and_then(|s| {
-                s.parse()
-                    .ok()
-            })
-        {
-            self.answer_state = Some(state);
-        }
-        if let Some(dir) = self
-            .data
-            .get("Call-Direction")
-            .and_then(|s| {
-                s.parse()
-                    .ok()
-            })
-        {
-            self.call_direction = Some(dir);
-        }
     }
 
-    /// Look up a raw header/data key.
     fn get(&self, key: &str) -> Option<&str> {
         self.data
             .get(key)
             .map(|s| s.as_str())
     }
 
-    /// Look up a channel variable by name (prepends `variable_`).
     fn var(&self, name: &str) -> Option<&str> {
         self.data
             .get(&format!("variable_{}", name))
             .map(|s| s.as_str())
+    }
+
+    fn format_fields(&self) -> (String, String, String, &str, &str) {
+        (
+            display_or(self.channel_state()),
+            display_or(self.call_state()),
+            display_or(self.call_direction()),
+            self.get("Caller-Caller-ID-Number")
+                .unwrap_or("-"),
+            self.get("Channel-Name")
+                .unwrap_or("-"),
+        )
     }
 }
 
@@ -245,18 +206,16 @@ impl ChannelTracker {
         uuids
     }
 
-    /// Feed a uuid_dump BACKGROUND_JOB result into the tracked channel.
     fn apply_dump(&mut self, uuid: &str, body: &str) {
         if let Some(ch) = self
             .channels
             .get_mut(uuid)
         {
             ch.update_from_dump(body);
-            debug!("uuid_dump applied for {}", &uuid[..8.min(uuid.len())]);
+            debug!("uuid_dump applied for {}", short_uuid(uuid));
         }
     }
 
-    /// Handle a BACKGROUND_JOB event — check if it's a pending uuid_dump.
     fn handle_background_job(&mut self, event: &EslEvent) {
         let job_uuid = match event.job_uuid() {
             Some(j) => j,
@@ -277,7 +236,6 @@ impl ChannelTracker {
             Some(t) => t,
             None => return,
         };
-
         let uuid = match event.unique_id() {
             Some(u) => u.to_string(),
             None => return,
@@ -285,11 +243,10 @@ impl ChannelTracker {
 
         match event_type {
             EslEventType::ChannelCreate => {
-                let mut ch = TrackedChannel::new(uuid.clone());
+                let mut ch = TrackedChannel::new();
                 ch.update_from_event(event);
                 self.channels
                     .insert(uuid.clone(), ch);
-                self.print_channel_event(&uuid, "CREATE");
             }
             EslEventType::ChannelDestroy => {
                 if let Some(ch) = self
@@ -297,52 +254,31 @@ impl ChannelTracker {
                     .get_mut(&uuid)
                 {
                     ch.update_from_event(event);
-                    let cause = ch
-                        .hangup_cause
-                        .as_deref()
-                        .unwrap_or("UNKNOWN");
-                    let name = ch
-                        .get("Channel-Name")
-                        .unwrap_or("-");
                     info!(
-                        "DESTROY   {} cause={} name={}",
-                        &uuid[..8.min(uuid.len())],
-                        cause,
-                        name,
+                        "{} {} cause={} name={}",
+                        event_type,
+                        short_uuid(&uuid),
+                        ch.hangup_cause()
+                            .unwrap_or("UNKNOWN"),
+                        ch.get("Channel-Name")
+                            .unwrap_or("-"),
                     );
                     self.channels
                         .remove(&uuid);
                 } else {
-                    info!("DESTROY   {} (untracked)", &uuid[..8.min(uuid.len())]);
+                    info!("{} {} (untracked)", event_type, short_uuid(&uuid));
                 }
-            }
-            EslEventType::ChannelAnswer => {
-                self.update_channel(&uuid, event);
-                self.print_channel_event(&uuid, "ANSWER");
+                return;
             }
             EslEventType::ChannelHangup | EslEventType::ChannelHangupComplete => {
                 self.update_channel(&uuid, event);
                 let cause = self
                     .channels
                     .get(&uuid)
-                    .and_then(|ch| {
-                        ch.hangup_cause
-                            .as_deref()
-                    })
+                    .and_then(|ch| ch.hangup_cause())
                     .unwrap_or("-");
-                info!("HANGUP    {} cause={}", &uuid[..8.min(uuid.len())], cause,);
-            }
-            EslEventType::ChannelBridge => {
-                if let Some(ch) = self
-                    .channels
-                    .get_mut(&uuid)
-                {
-                    ch.update_from_event(event);
-                    if let Some(other) = event.header("Other-Leg-Unique-ID") {
-                        ch.other_leg_uuid = Some(other.to_string());
-                    }
-                }
-                self.print_channel_event(&uuid, "BRIDGE");
+                info!("{} {} cause={}", event_type, short_uuid(&uuid), cause);
+                return;
             }
             EslEventType::ChannelUnbridge => {
                 if let Some(ch) = self
@@ -350,45 +286,15 @@ impl ChannelTracker {
                     .get_mut(&uuid)
                 {
                     ch.update_from_event(event);
-                    ch.other_leg_uuid = None;
+                    ch.data
+                        .remove("Other-Leg-Unique-ID");
                 }
-                self.print_channel_event(&uuid, "UNBRIDGE");
-            }
-            EslEventType::ChannelHold => {
-                if let Some(ch) = self
-                    .channels
-                    .get_mut(&uuid)
-                {
-                    ch.held = true;
-                    ch.update_from_event(event);
-                }
-                self.print_channel_event(&uuid, "HOLD");
-            }
-            EslEventType::ChannelUnhold => {
-                if let Some(ch) = self
-                    .channels
-                    .get_mut(&uuid)
-                {
-                    ch.held = false;
-                    ch.update_from_event(event);
-                }
-                self.print_channel_event(&uuid, "UNHOLD");
-            }
-            EslEventType::CallSecure => {
-                if let Some(ch) = self
-                    .channels
-                    .get_mut(&uuid)
-                {
-                    ch.secure = true;
-                    ch.update_from_event(event);
-                }
-                self.print_channel_event(&uuid, "SECURE");
             }
             _ => {
                 self.update_channel(&uuid, event);
-                self.print_channel_event(&uuid, &event_type.to_string());
             }
         }
+        self.print_channel_event(&uuid, event_type);
     }
 
     fn update_channel(&mut self, uuid: &str, event: &EslEvent) {
@@ -400,39 +306,24 @@ impl ChannelTracker {
         }
     }
 
-    fn print_channel_event(&self, uuid: &str, event_name: &str) {
-        let short_uuid = &uuid[..8.min(uuid.len())];
+    fn print_channel_event(&self, uuid: &str, event_type: EslEventType) {
         if let Some(ch) = self
             .channels
             .get(uuid)
         {
-            let state = ch
-                .channel_state
-                .as_ref()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let call_state = ch
-                .call_state
-                .as_ref()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let dir = ch
-                .call_direction
-                .as_ref()
-                .map(|d| d.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let cid = ch
-                .get("Caller-Caller-ID-Number")
-                .unwrap_or("-");
-            let name = ch
-                .get("Channel-Name")
-                .unwrap_or("-");
+            let (state, call_state, dir, cid, name) = ch.format_fields();
             info!(
                 "{:<9} {} state={} callstate={} dir={} cid={} name={}",
-                event_name, short_uuid, state, call_state, dir, cid, name,
+                event_type,
+                short_uuid(uuid),
+                state,
+                call_state,
+                dir,
+                cid,
+                name,
             );
         } else {
-            info!("{:<9} {} (untracked)", event_name, short_uuid);
+            info!("{:<9} {} (untracked)", event_type, short_uuid(uuid));
         }
     }
 
@@ -453,52 +344,36 @@ impl ChannelTracker {
             "{:<36}  {:<14} {:<10} {:<8} {:<16} {:<16} NAME",
             "UUID", "STATE", "CALLSTATE", "DIR", "CID-NUM", "DEST",
         );
-        let mut sorted: Vec<&TrackedChannel> = self
+        let mut sorted: Vec<(&str, &TrackedChannel)> = self
             .channels
-            .values()
+            .iter()
+            .map(|(k, v)| (k.as_str(), v))
             .collect();
-        sorted.sort_by_key(|ch| &ch.uuid);
-        for ch in sorted {
-            let state = ch
-                .channel_state
-                .as_ref()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let call_state = ch
-                .call_state
-                .as_ref()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let dir = ch
-                .call_direction
-                .as_ref()
-                .map(|d| d.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            let cid = ch
-                .get("Caller-Caller-ID-Number")
-                .unwrap_or("-");
+        sorted.sort_by_key(|(uuid, _)| *uuid);
+        for (uuid, ch) in sorted {
+            let (state, call_state, dir, cid, name) = ch.format_fields();
             let dest = ch
                 .get("Caller-Destination-Number")
                 .unwrap_or("-");
-            let name = ch
-                .get("Channel-Name")
-                .unwrap_or("-");
             let mut flags = String::new();
-            if ch.held {
+            if ch.call_state() == Some(CallState::Held) {
                 flags.push_str("[HELD]");
             }
-            if ch.secure {
+            if ch
+                .var("rtp_secure_media_confirmed")
+                .is_some()
+            {
                 flags.push_str("[SEC]");
             }
-            if let Some(ref other) = ch.other_leg_uuid {
-                flags.push_str(&format!("[B:{}]", &other[..8.min(other.len())]));
+            if let Some(other) = ch.get("Other-Leg-Unique-ID") {
+                flags.push_str(&format!("[B:{}]", short_uuid(other)));
             }
             if let Some(call_id) = ch.var("sip_call_id") {
                 flags.push_str(&format!("[SIP:{}]", &call_id[..16.min(call_id.len())]));
             }
             println!(
                 "{:<36}  {:<14} {:<10} {:<8} {:<16} {:<16} {}{}",
-                ch.uuid,
+                uuid,
                 state,
                 call_state,
                 dir,
@@ -530,11 +405,7 @@ async fn request_dump(client: &EslClient, tracker: &mut ChannelTracker, uuid: &s
             }
         }
         Err(e) => {
-            debug!(
-                "bgapi uuid_dump {} failed: {}",
-                &uuid[..8.min(uuid.len())],
-                e,
-            );
+            debug!("bgapi uuid_dump {} failed: {}", short_uuid(uuid), e);
         }
     }
 }

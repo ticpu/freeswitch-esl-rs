@@ -217,17 +217,19 @@ fn parse_event_type(name: &str) -> Result<EslEventType, String> {
 
 fn format_event_summary(event: &freeswitch_esl_tokio::EslEvent) -> String {
     let event_name = event
-        .header("Event-Name")
-        .unwrap_or("UNKNOWN");
+        .event_type()
+        .map(|t| t.to_string())
+        .unwrap_or_else(|| "UNKNOWN".into());
     let caller_id = event
-        .header("Caller-Caller-ID-Number")
+        .caller_id_number()
         .unwrap_or("-");
     let dest = event
         .header("Caller-Destination-Number")
         .unwrap_or("-");
     let direction = event
-        .header("Call-Direction")
-        .unwrap_or("-");
+        .call_direction()
+        .map(|d| d.to_string())
+        .unwrap_or_else(|| "-".into());
     let uuid = event
         .unique_id()
         .map(|s| &s[..8.min(s.len())])

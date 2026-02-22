@@ -110,6 +110,21 @@ custom event delivery.
 
 To check if FreeSWITCH is listening: `ss -tlnp sport = :8022`
 
+## Examples — Use the Library's Own API
+
+Examples must showcase the library's typed API, not reimplement C ESL patterns.
+
+- Use typed accessors (`event.caller_id_number()`, `event.hangup_cause()`,
+  `event.call_direction()`, `event.channel_state()`) — never raw
+  `event.header("Caller-Caller-ID-Number")` for headers that have accessors.
+- Use `EslEventType`'s `Display` impl — never hardcode event name strings
+  like `"CREATE"` or `"HANGUP"` when you have the enum value.
+- Don't store fields that are already in the data you're accumulating. If
+  headers are merged into a map, derive typed state on access (`parse().ok()`)
+  rather than maintaining parallel fields to keep in sync.
+- The C ESL ecosystem is entirely string-based. LLMs default to that pattern.
+  Review generated example code specifically for this anti-pattern.
+
 ## Development Methodology — TDD
 
 This project follows test-driven development:
