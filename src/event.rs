@@ -1,6 +1,9 @@
 //! ESL event types and structures
 
-use crate::constants::{HEADER_CALLER_UUID, HEADER_UNIQUE_ID};
+use crate::constants::{
+    HEADER_ANSWER_STATE, HEADER_CALLER_UUID, HEADER_CALL_DIRECTION, HEADER_CHANNEL_CALL_STATE,
+    HEADER_CHANNEL_STATE, HEADER_CHANNEL_STATE_NUMBER, HEADER_UNIQUE_ID,
+};
 use crate::variables::EslArray;
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
@@ -292,6 +295,283 @@ impl FromStr for EslEventPriority {
     }
 }
 
+/// Channel state from `switch_channel_state_t` — carried in the `Channel-State` header
+/// as a string (`CS_ROUTING`) and in `Channel-State-Number` as an integer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+#[repr(u8)]
+#[allow(missing_docs)]
+pub enum ChannelState {
+    CsNew = 0,
+    CsInit = 1,
+    CsRouting = 2,
+    CsSoftExecute = 3,
+    CsExecute = 4,
+    CsExchangeMedia = 5,
+    CsPark = 6,
+    CsConsumeMedia = 7,
+    CsHibernate = 8,
+    CsReset = 9,
+    CsHangup = 10,
+    CsReporting = 11,
+    CsDestroy = 12,
+    CsNone = 13,
+}
+
+impl ChannelState {
+    /// Parse from the `Channel-State-Number` integer header value.
+    pub fn from_number(n: u8) -> Option<Self> {
+        match n {
+            0 => Some(Self::CsNew),
+            1 => Some(Self::CsInit),
+            2 => Some(Self::CsRouting),
+            3 => Some(Self::CsSoftExecute),
+            4 => Some(Self::CsExecute),
+            5 => Some(Self::CsExchangeMedia),
+            6 => Some(Self::CsPark),
+            7 => Some(Self::CsConsumeMedia),
+            8 => Some(Self::CsHibernate),
+            9 => Some(Self::CsReset),
+            10 => Some(Self::CsHangup),
+            11 => Some(Self::CsReporting),
+            12 => Some(Self::CsDestroy),
+            13 => Some(Self::CsNone),
+            _ => None,
+        }
+    }
+
+    /// Integer discriminant matching `switch_channel_state_t`.
+    pub fn as_number(&self) -> u8 {
+        *self as u8
+    }
+}
+
+impl fmt::Display for ChannelState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::CsNew => "CS_NEW",
+            Self::CsInit => "CS_INIT",
+            Self::CsRouting => "CS_ROUTING",
+            Self::CsSoftExecute => "CS_SOFT_EXECUTE",
+            Self::CsExecute => "CS_EXECUTE",
+            Self::CsExchangeMedia => "CS_EXCHANGE_MEDIA",
+            Self::CsPark => "CS_PARK",
+            Self::CsConsumeMedia => "CS_CONSUME_MEDIA",
+            Self::CsHibernate => "CS_HIBERNATE",
+            Self::CsReset => "CS_RESET",
+            Self::CsHangup => "CS_HANGUP",
+            Self::CsReporting => "CS_REPORTING",
+            Self::CsDestroy => "CS_DESTROY",
+            Self::CsNone => "CS_NONE",
+        };
+        f.write_str(name)
+    }
+}
+
+/// Error returned when parsing an invalid channel state string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseChannelStateError(pub String);
+
+impl fmt::Display for ParseChannelStateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown channel state: {}", self.0)
+    }
+}
+
+impl std::error::Error for ParseChannelStateError {}
+
+impl FromStr for ChannelState {
+    type Err = ParseChannelStateError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s
+            .to_uppercase()
+            .as_str()
+        {
+            "CS_NEW" => Ok(Self::CsNew),
+            "CS_INIT" => Ok(Self::CsInit),
+            "CS_ROUTING" => Ok(Self::CsRouting),
+            "CS_SOFT_EXECUTE" => Ok(Self::CsSoftExecute),
+            "CS_EXECUTE" => Ok(Self::CsExecute),
+            "CS_EXCHANGE_MEDIA" => Ok(Self::CsExchangeMedia),
+            "CS_PARK" => Ok(Self::CsPark),
+            "CS_CONSUME_MEDIA" => Ok(Self::CsConsumeMedia),
+            "CS_HIBERNATE" => Ok(Self::CsHibernate),
+            "CS_RESET" => Ok(Self::CsReset),
+            "CS_HANGUP" => Ok(Self::CsHangup),
+            "CS_REPORTING" => Ok(Self::CsReporting),
+            "CS_DESTROY" => Ok(Self::CsDestroy),
+            "CS_NONE" => Ok(Self::CsNone),
+            _ => Err(ParseChannelStateError(s.to_string())),
+        }
+    }
+}
+
+/// Call state from `switch_channel_callstate_t` — carried in the `Channel-Call-State` header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+#[allow(missing_docs)]
+pub enum CallState {
+    Down,
+    Dialing,
+    Ringing,
+    Early,
+    Active,
+    Held,
+    RingWait,
+    Hangup,
+    Unheld,
+}
+
+impl fmt::Display for CallState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Down => "DOWN",
+            Self::Dialing => "DIALING",
+            Self::Ringing => "RINGING",
+            Self::Early => "EARLY",
+            Self::Active => "ACTIVE",
+            Self::Held => "HELD",
+            Self::RingWait => "RING_WAIT",
+            Self::Hangup => "HANGUP",
+            Self::Unheld => "UNHELD",
+        };
+        f.write_str(name)
+    }
+}
+
+/// Error returned when parsing an invalid call state string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseCallStateError(pub String);
+
+impl fmt::Display for ParseCallStateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown call state: {}", self.0)
+    }
+}
+
+impl std::error::Error for ParseCallStateError {}
+
+impl FromStr for CallState {
+    type Err = ParseCallStateError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s
+            .to_uppercase()
+            .as_str()
+        {
+            "DOWN" => Ok(Self::Down),
+            "DIALING" => Ok(Self::Dialing),
+            "RINGING" => Ok(Self::Ringing),
+            "EARLY" => Ok(Self::Early),
+            "ACTIVE" => Ok(Self::Active),
+            "HELD" => Ok(Self::Held),
+            "RING_WAIT" => Ok(Self::RingWait),
+            "HANGUP" => Ok(Self::Hangup),
+            "UNHELD" => Ok(Self::Unheld),
+            _ => Err(ParseCallStateError(s.to_string())),
+        }
+    }
+}
+
+/// Answer state from the `Answer-State` header. Wire format is lowercase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+#[allow(missing_docs)]
+pub enum AnswerState {
+    Hangup,
+    Answered,
+    Early,
+    Ringing,
+}
+
+impl fmt::Display for AnswerState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Hangup => "hangup",
+            Self::Answered => "answered",
+            Self::Early => "early",
+            Self::Ringing => "ringing",
+        };
+        f.write_str(name)
+    }
+}
+
+/// Error returned when parsing an invalid answer state string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseAnswerStateError(pub String);
+
+impl fmt::Display for ParseAnswerStateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown answer state: {}", self.0)
+    }
+}
+
+impl std::error::Error for ParseAnswerStateError {}
+
+impl FromStr for AnswerState {
+    type Err = ParseAnswerStateError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s
+            .to_lowercase()
+            .as_str()
+        {
+            "hangup" => Ok(Self::Hangup),
+            "answered" => Ok(Self::Answered),
+            "early" => Ok(Self::Early),
+            "ringing" => Ok(Self::Ringing),
+            _ => Err(ParseAnswerStateError(s.to_string())),
+        }
+    }
+}
+
+/// Call direction from the `Call-Direction` header. Wire format is lowercase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+#[allow(missing_docs)]
+pub enum CallDirection {
+    Inbound,
+    Outbound,
+}
+
+impl fmt::Display for CallDirection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Inbound => "inbound",
+            Self::Outbound => "outbound",
+        };
+        f.write_str(name)
+    }
+}
+
+/// Error returned when parsing an invalid call direction string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseCallDirectionError(pub String);
+
+impl fmt::Display for ParseCallDirectionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown call direction: {}", self.0)
+    }
+}
+
+impl std::error::Error for ParseCallDirectionError {}
+
+impl FromStr for CallDirection {
+    type Err = ParseCallDirectionError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s
+            .to_lowercase()
+            .as_str()
+        {
+            "inbound" => Ok(Self::Inbound),
+            "outbound" => Ok(Self::Outbound),
+            _ => Err(ParseCallDirectionError(s.to_string())),
+        }
+    }
+}
+
 /// ESL Event structure containing headers and optional body
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EslEvent {
@@ -459,6 +739,43 @@ impl EslEvent {
     /// `Hangup-Cause` header (e.g. `NORMAL_CLEARING`, `USER_BUSY`).
     pub fn hangup_cause(&self) -> Option<&str> {
         self.header("Hangup-Cause")
+    }
+
+    /// Parse the `Channel-State` header into a [`ChannelState`].
+    pub fn channel_state(&self) -> Option<ChannelState> {
+        self.header(HEADER_CHANNEL_STATE)?
+            .parse()
+            .ok()
+    }
+
+    /// Parse the `Channel-State-Number` header into a [`ChannelState`].
+    pub fn channel_state_number(&self) -> Option<ChannelState> {
+        let n: u8 = self
+            .header(HEADER_CHANNEL_STATE_NUMBER)?
+            .parse()
+            .ok()?;
+        ChannelState::from_number(n)
+    }
+
+    /// Parse the `Channel-Call-State` header into a [`CallState`].
+    pub fn call_state(&self) -> Option<CallState> {
+        self.header(HEADER_CHANNEL_CALL_STATE)?
+            .parse()
+            .ok()
+    }
+
+    /// Parse the `Answer-State` header into an [`AnswerState`].
+    pub fn answer_state(&self) -> Option<AnswerState> {
+        self.header(HEADER_ANSWER_STATE)?
+            .parse()
+            .ok()
+    }
+
+    /// Parse the `Call-Direction` header into a [`CallDirection`].
+    pub fn call_direction(&self) -> Option<CallDirection> {
+        self.header(HEADER_CALL_DIRECTION)?
+            .parse()
+            .ok()
     }
 
     /// `Event-Subclass` header for `CUSTOM` events (e.g. `sofia::register`).

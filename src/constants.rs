@@ -39,6 +39,17 @@ pub const HEADER_UNIQUE_ID: &str = "Unique-ID";
 pub const HEADER_CALLER_UUID: &str = "Caller-Unique-ID";
 pub const HEADER_JOB_UUID: &str = "Job-UUID";
 
+/// Channel state headers
+pub const HEADER_CHANNEL_STATE: &str = "Channel-State";
+/// Channel state number header (integer form of Channel-State)
+pub const HEADER_CHANNEL_STATE_NUMBER: &str = "Channel-State-Number";
+/// Channel call state header (DOWN, ACTIVE, HELD, etc.)
+pub const HEADER_CHANNEL_CALL_STATE: &str = "Channel-Call-State";
+/// Answer state header (hangup, answered, early, ringing)
+pub const HEADER_ANSWER_STATE: &str = "Answer-State";
+/// Call direction header (inbound, outbound)
+pub const HEADER_CALL_DIRECTION: &str = "Call-Direction";
+
 /// Connection timeout in milliseconds
 pub const DEFAULT_TIMEOUT_MS: u64 = 2000;
 

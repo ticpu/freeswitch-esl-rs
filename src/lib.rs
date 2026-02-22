@@ -150,5 +150,8 @@ pub use connection::{
 };
 pub use constants::DEFAULT_ESL_PORT;
 pub use error::{EslError, EslResult};
-pub use event::{EslEvent, EslEventPriority, EslEventType, EventFormat};
+pub use event::{
+    AnswerState, CallDirection, CallState, ChannelState, EslEvent, EslEventPriority, EslEventType,
+    EventFormat,
+};
 pub use variables::{EslArray, MultipartBody, MultipartItem};
