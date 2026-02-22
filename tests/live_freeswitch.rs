@@ -7,6 +7,7 @@ use freeswitch_esl_tokio::{
     EslClient, EslError, EslEvent, EslEventPriority, EslEventType, EventFormat, ReplyStatus,
 };
 use std::time::Duration;
+use tokio::time::Instant;
 
 const ESL_HOST: &str = "127.0.0.1";
 const ESL_PORT: u16 = 8022;
@@ -235,6 +236,116 @@ async fn live_reply_status_err() {
         "expected CommandFailed, got: {:?}",
         err
     );
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_noevents_stops_delivery() {
+    let (client, mut events) = connect().await;
+    let subclass = format!("esl_test::noev_{}", std::process::id());
+
+    client
+        .subscribe_events_raw(EventFormat::Plain, &format!("CUSTOM {}", subclass))
+        .await
+        .unwrap();
+
+    // Fire event and confirm delivery
+    let mut evt1 = EslEvent::with_type(EslEventType::Custom);
+    evt1.set_header("Event-Name", "CUSTOM");
+    evt1.set_header("Event-Subclass", subclass.clone());
+    evt1.set_header("X-Phase", "before");
+    client
+        .sendevent(evt1)
+        .await
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) if evt.header("Event-Subclass") == Some(subclass.as_str()) => break,
+            Ok(Some(Ok(_))) => continue,
+            other => panic!("expected custom event before noevents: {:?}", other),
+        }
+    }
+
+    // Unsubscribe from all events
+    client
+        .noevents()
+        .await
+        .unwrap();
+
+    // Fire another event — should not arrive
+    let mut evt2 = EslEvent::with_type(EslEventType::Custom);
+    evt2.set_header("Event-Name", "CUSTOM");
+    evt2.set_header("Event-Subclass", subclass.clone());
+    evt2.set_header("X-Phase", "after");
+    client
+        .sendevent(evt2)
+        .await
+        .unwrap();
+
+    match tokio::time::timeout(Duration::from_secs(2), events.recv()).await {
+        Err(_) => {} // timeout — correct
+        Ok(Some(Ok(evt))) => panic!(
+            "received event after noevents: {:?} phase={}",
+            evt.event_type(),
+            evt.header("X-Phase")
+                .unwrap_or("?")
+        ),
+        Ok(Some(Err(e))) => panic!("event error: {}", e),
+        Ok(None) => {}
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn live_nixevent_selective_unsubscribe() {
+    let (client, mut events) = connect().await;
+    let subclass = format!("esl_test::nix_{}", std::process::id());
+
+    // Subscribe to both HEARTBEAT and CUSTOM
+    client
+        .subscribe_events_raw(
+            EventFormat::Plain,
+            &format!("HEARTBEAT CUSTOM {}", subclass),
+        )
+        .await
+        .unwrap();
+
+    // Unsubscribe only HEARTBEAT
+    client
+        .nixevent(&[EslEventType::Heartbeat])
+        .await
+        .unwrap();
+
+    // Send a custom event — should still arrive
+    let mut event = EslEvent::with_type(EslEventType::Custom);
+    event.set_header("Event-Name", "CUSTOM");
+    event.set_header("Event-Subclass", subclass.clone());
+    client
+        .sendevent(event)
+        .await
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => {
+                assert_ne!(
+                    evt.event_type(),
+                    Some(EslEventType::Heartbeat),
+                    "received HEARTBEAT after nixevent"
+                );
+                if evt.header("Event-Subclass") == Some(subclass.as_str()) {
+                    return; // custom event delivered — nixevent was selective
+                }
+            }
+            Ok(Some(Err(e))) => panic!("event error: {}", e),
+            Ok(None) => panic!("event stream closed"),
+            Err(_) => break,
+        }
+    }
+    panic!("did not receive custom event after nixevent HEARTBEAT");
 }
 
 #[tokio::test]
