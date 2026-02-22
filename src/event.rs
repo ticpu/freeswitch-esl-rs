@@ -905,4 +905,249 @@ mod tests {
             EventFormat::Plain
         );
     }
+
+    // --- ChannelState tests ---
+
+    #[test]
+    fn test_channel_state_display() {
+        assert_eq!(ChannelState::CsNew.to_string(), "CS_NEW");
+        assert_eq!(ChannelState::CsInit.to_string(), "CS_INIT");
+        assert_eq!(ChannelState::CsRouting.to_string(), "CS_ROUTING");
+        assert_eq!(ChannelState::CsSoftExecute.to_string(), "CS_SOFT_EXECUTE");
+        assert_eq!(ChannelState::CsExecute.to_string(), "CS_EXECUTE");
+        assert_eq!(
+            ChannelState::CsExchangeMedia.to_string(),
+            "CS_EXCHANGE_MEDIA"
+        );
+        assert_eq!(ChannelState::CsPark.to_string(), "CS_PARK");
+        assert_eq!(ChannelState::CsConsumeMedia.to_string(), "CS_CONSUME_MEDIA");
+        assert_eq!(ChannelState::CsHibernate.to_string(), "CS_HIBERNATE");
+        assert_eq!(ChannelState::CsReset.to_string(), "CS_RESET");
+        assert_eq!(ChannelState::CsHangup.to_string(), "CS_HANGUP");
+        assert_eq!(ChannelState::CsReporting.to_string(), "CS_REPORTING");
+        assert_eq!(ChannelState::CsDestroy.to_string(), "CS_DESTROY");
+        assert_eq!(ChannelState::CsNone.to_string(), "CS_NONE");
+    }
+
+    #[test]
+    fn test_channel_state_from_str() {
+        assert_eq!("CS_NEW".parse::<ChannelState>(), Ok(ChannelState::CsNew));
+        assert_eq!(
+            "CS_EXECUTE".parse::<ChannelState>(),
+            Ok(ChannelState::CsExecute)
+        );
+        assert_eq!(
+            "CS_HANGUP".parse::<ChannelState>(),
+            Ok(ChannelState::CsHangup)
+        );
+        assert_eq!(
+            "CS_DESTROY".parse::<ChannelState>(),
+            Ok(ChannelState::CsDestroy)
+        );
+    }
+
+    #[test]
+    fn test_channel_state_from_str_case_insensitive() {
+        assert_eq!("cs_new".parse::<ChannelState>(), Ok(ChannelState::CsNew));
+        assert_eq!(
+            "Cs_Routing".parse::<ChannelState>(),
+            Ok(ChannelState::CsRouting)
+        );
+    }
+
+    #[test]
+    fn test_channel_state_from_str_unknown() {
+        assert!("CS_BOGUS"
+            .parse::<ChannelState>()
+            .is_err());
+        assert!(""
+            .parse::<ChannelState>()
+            .is_err());
+    }
+
+    #[test]
+    fn test_channel_state_from_number() {
+        assert_eq!(ChannelState::from_number(0), Some(ChannelState::CsNew));
+        assert_eq!(ChannelState::from_number(4), Some(ChannelState::CsExecute));
+        assert_eq!(ChannelState::from_number(10), Some(ChannelState::CsHangup));
+        assert_eq!(ChannelState::from_number(13), Some(ChannelState::CsNone));
+        assert_eq!(ChannelState::from_number(14), None);
+        assert_eq!(ChannelState::from_number(255), None);
+    }
+
+    #[test]
+    fn test_channel_state_as_number() {
+        assert_eq!(ChannelState::CsNew.as_number(), 0);
+        assert_eq!(ChannelState::CsExecute.as_number(), 4);
+        assert_eq!(ChannelState::CsHangup.as_number(), 10);
+        assert_eq!(ChannelState::CsNone.as_number(), 13);
+    }
+
+    // --- CallState tests ---
+
+    #[test]
+    fn test_call_state_display() {
+        assert_eq!(CallState::Down.to_string(), "DOWN");
+        assert_eq!(CallState::Dialing.to_string(), "DIALING");
+        assert_eq!(CallState::Ringing.to_string(), "RINGING");
+        assert_eq!(CallState::Early.to_string(), "EARLY");
+        assert_eq!(CallState::Active.to_string(), "ACTIVE");
+        assert_eq!(CallState::Held.to_string(), "HELD");
+        assert_eq!(CallState::RingWait.to_string(), "RING_WAIT");
+        assert_eq!(CallState::Hangup.to_string(), "HANGUP");
+        assert_eq!(CallState::Unheld.to_string(), "UNHELD");
+    }
+
+    #[test]
+    fn test_call_state_from_str() {
+        assert_eq!("DOWN".parse::<CallState>(), Ok(CallState::Down));
+        assert_eq!("ACTIVE".parse::<CallState>(), Ok(CallState::Active));
+        assert_eq!("RING_WAIT".parse::<CallState>(), Ok(CallState::RingWait));
+        assert_eq!("UNHELD".parse::<CallState>(), Ok(CallState::Unheld));
+    }
+
+    #[test]
+    fn test_call_state_from_str_case_insensitive() {
+        assert_eq!("down".parse::<CallState>(), Ok(CallState::Down));
+        assert_eq!("Active".parse::<CallState>(), Ok(CallState::Active));
+    }
+
+    #[test]
+    fn test_call_state_from_str_unknown() {
+        assert!("BOGUS"
+            .parse::<CallState>()
+            .is_err());
+    }
+
+    // --- AnswerState tests ---
+
+    #[test]
+    fn test_answer_state_display() {
+        assert_eq!(AnswerState::Hangup.to_string(), "hangup");
+        assert_eq!(AnswerState::Answered.to_string(), "answered");
+        assert_eq!(AnswerState::Early.to_string(), "early");
+        assert_eq!(AnswerState::Ringing.to_string(), "ringing");
+    }
+
+    #[test]
+    fn test_answer_state_from_str() {
+        assert_eq!("hangup".parse::<AnswerState>(), Ok(AnswerState::Hangup));
+        assert_eq!("answered".parse::<AnswerState>(), Ok(AnswerState::Answered));
+        assert_eq!("early".parse::<AnswerState>(), Ok(AnswerState::Early));
+        assert_eq!("ringing".parse::<AnswerState>(), Ok(AnswerState::Ringing));
+    }
+
+    #[test]
+    fn test_answer_state_from_str_case_insensitive() {
+        assert_eq!("HANGUP".parse::<AnswerState>(), Ok(AnswerState::Hangup));
+        assert_eq!("Answered".parse::<AnswerState>(), Ok(AnswerState::Answered));
+    }
+
+    #[test]
+    fn test_answer_state_from_str_unknown() {
+        assert!("bogus"
+            .parse::<AnswerState>()
+            .is_err());
+    }
+
+    // --- CallDirection tests ---
+
+    #[test]
+    fn test_call_direction_display() {
+        assert_eq!(CallDirection::Inbound.to_string(), "inbound");
+        assert_eq!(CallDirection::Outbound.to_string(), "outbound");
+    }
+
+    #[test]
+    fn test_call_direction_from_str() {
+        assert_eq!(
+            "inbound".parse::<CallDirection>(),
+            Ok(CallDirection::Inbound)
+        );
+        assert_eq!(
+            "outbound".parse::<CallDirection>(),
+            Ok(CallDirection::Outbound)
+        );
+    }
+
+    #[test]
+    fn test_call_direction_from_str_case_insensitive() {
+        assert_eq!(
+            "INBOUND".parse::<CallDirection>(),
+            Ok(CallDirection::Inbound)
+        );
+        assert_eq!(
+            "Outbound".parse::<CallDirection>(),
+            Ok(CallDirection::Outbound)
+        );
+    }
+
+    #[test]
+    fn test_call_direction_from_str_unknown() {
+        assert!("bogus"
+            .parse::<CallDirection>()
+            .is_err());
+    }
+
+    // --- EslEvent accessor tests ---
+
+    #[test]
+    fn test_event_channel_state_accessor() {
+        let mut event = EslEvent::new();
+        event.set_header("Channel-State", "CS_EXECUTE");
+        assert_eq!(event.channel_state(), Some(ChannelState::CsExecute));
+    }
+
+    #[test]
+    fn test_event_channel_state_number_accessor() {
+        let mut event = EslEvent::new();
+        event.set_header("Channel-State-Number", "4");
+        assert_eq!(event.channel_state_number(), Some(ChannelState::CsExecute));
+    }
+
+    #[test]
+    fn test_event_call_state_accessor() {
+        let mut event = EslEvent::new();
+        event.set_header("Channel-Call-State", "ACTIVE");
+        assert_eq!(event.call_state(), Some(CallState::Active));
+    }
+
+    #[test]
+    fn test_event_answer_state_accessor() {
+        let mut event = EslEvent::new();
+        event.set_header("Answer-State", "answered");
+        assert_eq!(event.answer_state(), Some(AnswerState::Answered));
+    }
+
+    #[test]
+    fn test_event_call_direction_accessor() {
+        let mut event = EslEvent::new();
+        event.set_header("Call-Direction", "inbound");
+        assert_eq!(event.call_direction(), Some(CallDirection::Inbound));
+    }
+
+    #[test]
+    fn test_event_typed_accessors_missing_headers() {
+        let event = EslEvent::new();
+        assert_eq!(event.channel_state(), None);
+        assert_eq!(event.channel_state_number(), None);
+        assert_eq!(event.call_state(), None);
+        assert_eq!(event.answer_state(), None);
+        assert_eq!(event.call_direction(), None);
+    }
+
+    #[test]
+    fn test_event_typed_accessors_invalid_values() {
+        let mut event = EslEvent::new();
+        event.set_header("Channel-State", "BOGUS");
+        event.set_header("Channel-State-Number", "999");
+        event.set_header("Channel-Call-State", "BOGUS");
+        event.set_header("Answer-State", "bogus");
+        event.set_header("Call-Direction", "bogus");
+        assert_eq!(event.channel_state(), None);
+        assert_eq!(event.channel_state_number(), None);
+        assert_eq!(event.call_state(), None);
+        assert_eq!(event.answer_state(), None);
+        assert_eq!(event.call_direction(), None);
+    }
 }
