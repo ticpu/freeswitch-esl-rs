@@ -5,13 +5,14 @@ This is a **library-first** crate. There is an examples/ folder buildable binari
 
 ## Build & Test Workflow
 
-**Always run `cargo fmt` before every commit.** The pre-commit hook enforces formatting.
+**Always run `cargo fmt` before every commit.** The pre-commit hook enforces
+formatting, clippy warnings, `-D missing_docs` doc coverage, and EslEventType
+sync with C ESL.
 
 ```sh
 cargo fmt
 cargo check --message-format=short
 cargo clippy --fix --allow-dirty --message-format=short
-RUSTDOCFLAGS="-D missing_docs" cargo doc --no-deps
 cargo test --lib
 ```
 

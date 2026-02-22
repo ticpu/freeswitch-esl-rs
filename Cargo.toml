@@ -48,3 +48,7 @@ path = "examples/event_filter.rs"
 [[example]]
 name = "outbound_test"
 path = "examples/outbound_test.rs"
+
+[[example]]
+name = "channel_tracker"
+path = "examples/channel_tracker.rs"
