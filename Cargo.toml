@@ -19,7 +19,7 @@ exclude = ["CLAUDE.md", "hooks/", "tests/", "docs/"]
 
 [dependencies]
 # major-only caret: path build always uses the in-tree crate; published builds take any 1.x
-freeswitch-types = { path = "freeswitch-types", version = "1" }
+freeswitch-types = { path = "freeswitch-types", version = "1.2" }
 indexmap = "2"
 tokio = { version = "1.47", features = ["net", "io-util", "rt", "rt-multi-thread", "sync", "time", "macros"] }
 bytes = "1.11"
