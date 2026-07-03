@@ -698,7 +698,7 @@ empty strings at the boundary — an invalid config fails at load time
 rather than on the wire.
 
 The `event_raw()` / `events_raw()` pair is the escape hatch for events
-FreeSWITCH adds before we update [`EslEventType`](../freeswitch-types/src/event.rs).
+FreeSWITCH adds before we update [`EslEventType`](../freeswitch-types/src/event/event_type.rs).
 Without it, a freshly-added upstream event would force callers to bypass
 `EventSubscription` entirely and drop down to raw `subscribe_events_raw`,
 defeating the whole config-driven story. Raw events appear on the wire
