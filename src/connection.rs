@@ -1465,23 +1465,23 @@ impl EslClient {
 
     /// Replace the current subscription with a new one.
     ///
-    /// Minimizes the event gap by applying the new subscription *before*
-    /// tearing down the old one. The sequence is:
+    /// The sequence is:
     ///
-    /// 1. Send the new `event` command (additive -- no events are lost)
+    /// 1. Send the new `event` command (additive -- no events are lost yet)
     /// 2. Clear all filters and re-add the new ones
     /// 3. `noevents` + re-send `event` to remove stale event types
     ///
-    /// Between steps 2 and 3 there is a brief window where stale event
-    /// types from the old subscription may still be delivered. This is
-    /// harmless (extra events, not missing events). Filter state is
-    /// atomic per `filter delete all` + re-add, so the filter gap is
-    /// minimal.
+    /// **Step 3 introduces a hard event-loss window.** `noevents` unsubscribes
+    /// from all events; any events that arrive between `noevents` and the
+    /// subsequent `event` command are permanently lost. Between steps 2 and 3
+    /// there is also a brief window where stale event types from the old
+    /// subscription may be delivered (extra events, not missing events).
     ///
-    /// For truly gap-free transitions where even stale events are
-    /// unacceptable, use [`resubscribe_from`](Self::resubscribe_from)
-    /// which diffs the old and new subscriptions and uses `nixevent`
-    /// to remove only the delta.
+    /// For loss-free subscription changes use
+    /// [`resubscribe_from`](Self::resubscribe_from), which diffs old and new
+    /// and uses `nixevent` to remove only the delta — new types are subscribed
+    /// before old ones are removed, so no desired event type is ever
+    /// unsubscribed.
     pub async fn resubscribe(&self, sub: &freeswitch_types::EventSubscription) -> EslResult<()> {
         // Step 1: add new event types (additive, no gap)
         if let Some(events_str) = sub.to_event_string() {
