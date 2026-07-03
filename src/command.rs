@@ -1535,4 +1535,73 @@ mod tests {
             EslError::ProtocolError { .. }
         ));
     }
+
+    // --- Finding 2: EslResponse SipHeaderLookup ARRAY encoding ---
+
+    #[test]
+    fn esl_response_call_info_array_encoding() {
+        use freeswitch_types::sip_header::SipHeaderLookup;
+
+        let headers: IndexMap<String, String> = [(
+            "Call-Info".into(),
+            "ARRAY::<urn:emergency:uid:callid:abc>;purpose=emergency-CallId\
+             |:<urn:emergency:uid:incidentid:def>;purpose=emergency-IncidentId"
+                .into(),
+        )]
+        .into();
+        let resp = EslResponse::new(headers, None);
+        let ci = resp
+            .call_info()
+            .expect("should parse")
+            .expect("should be present");
+        assert_eq!(
+            ci.entries()
+                .len(),
+            2,
+            "ARRAY:: entries should expand"
+        );
+    }
+
+    #[test]
+    fn esl_response_call_info_plain_value_unchanged() {
+        use freeswitch_types::sip_header::SipHeaderLookup;
+
+        let headers: IndexMap<String, String> = [(
+            "Call-Info".into(),
+            "<sip:pbx.example.com>;purpose=icon".into(),
+        )]
+        .into();
+        let resp = EslResponse::new(headers, None);
+        let ci = resp
+            .call_info()
+            .expect("plain value should parse")
+            .expect("should be present");
+        assert_eq!(
+            ci.entries()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn esl_response_alert_info_array_encoding() {
+        use freeswitch_types::sip_header::SipHeaderLookup;
+
+        let headers: IndexMap<String, String> = [(
+            "Alert-Info".into(),
+            "ARRAY::<http://pbx.example.com/bell.wav>|:<http://pbx.example.com/siren.wav>".into(),
+        )]
+        .into();
+        let resp = EslResponse::new(headers, None);
+        let ai = resp
+            .alert_info()
+            .expect("should parse")
+            .expect("should be present");
+        assert_eq!(
+            ai.entries()
+                .len(),
+            2,
+            "ARRAY:: entries should expand"
+        );
+    }
 }

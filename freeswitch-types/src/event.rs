@@ -2383,4 +2383,72 @@ mod tests {
             Some("HEARTBEAT CUSTOM sofia::gateway_state".to_string())
         );
     }
+
+    // --- Finding 2: EslEvent SipHeaderLookup ARRAY encoding ---
+
+    #[test]
+    fn esl_event_call_info_array_encoding() {
+        use sip_header::SipHeaderLookup;
+
+        let mut event = EslEvent::new();
+        event.set_header(
+            "Call-Info".to_string(),
+            "ARRAY::<urn:emergency:uid:callid:abc>;purpose=emergency-CallId\
+             |:<urn:emergency:uid:incidentid:def>;purpose=emergency-IncidentId"
+                .to_string(),
+        );
+        let ci = event
+            .call_info()
+            .expect("should parse")
+            .expect("should be present");
+        assert_eq!(
+            ci.entries()
+                .len(),
+            2,
+            "ARRAY:: entries should expand"
+        );
+    }
+
+    #[test]
+    fn esl_event_call_info_plain_value_unchanged() {
+        use sip_header::SipHeaderLookup;
+
+        let mut event = EslEvent::new();
+        event.set_header(
+            "Call-Info".to_string(),
+            "<sip:pbx.example.com>;purpose=icon".to_string(),
+        );
+        let ci = event
+            .call_info()
+            .expect("plain value should parse")
+            .expect("should be present");
+        assert_eq!(
+            ci.entries()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn esl_event_history_info_array_encoding() {
+        use sip_header::SipHeaderLookup;
+
+        let mut event = EslEvent::new();
+        event.set_header(
+            "History-Info".to_string(),
+            "ARRAY::<sip:user@pbx.example.com>;index=1\
+             |:<sip:forward@pbx.example.com?Reason=unconditional>;index=1.1"
+                .to_string(),
+        );
+        let hi = event
+            .history_info()
+            .expect("should parse")
+            .expect("should be present");
+        assert_eq!(
+            hi.entries()
+                .len(),
+            2,
+            "ARRAY:: entries should expand"
+        );
+    }
 }
