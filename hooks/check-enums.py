@@ -183,9 +183,22 @@ def rust_display_impl_names(
 
 
 def rust_timetable_suffixes(path: Path) -> set[str]:
-    """Extract timetable suffixes from the field! macro calls."""
+    """Extract timetable suffixes from the timetable field definition.
+
+    Handles two source forms:
+    - Legacy: ``field!(field_name, "Suffix")`` calls inside from_lookup
+    - New: ``field_name => "Suffix"`` rows inside channel_timetable_fields!
+    """
     text = path.read_text()
-    return set(re.findall(r'field!\(\w+,\s*"([^"]+)"\)', text))
+    # Legacy: field! macro calls inside from_lookup
+    names = set(re.findall(r'field!\(\w+,\s*"([^"]+)"\)', text))
+    if names:
+        return names
+    # New: declarative channel_timetable_fields! table
+    m = re.search(r'channel_timetable_fields!\s*\{(.*?)\}', text, re.DOTALL)
+    if m:
+        return set(re.findall(r'\w+\s*=>\s*"([^"]+)"', m.group(1)))
+    return names
 
 
 # ── Check definitions ────────────────────────────────────────────────

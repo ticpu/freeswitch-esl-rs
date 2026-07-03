@@ -365,101 +365,94 @@ impl ParseTimetableError {
     }
 }
 
-impl ChannelTimetable {
-    /// Header suffixes extracted by `from_lookup()`.
-    ///
-    /// Combine with a `TimetablePrefix` to build full header names for event
-    /// subscriptions or filters:
-    ///
-    /// ```
-    /// use freeswitch_types::{ChannelTimetable, TimetablePrefix};
-    ///
-    /// let prefix = TimetablePrefix::Caller.as_str();
-    /// let headers: Vec<String> = ChannelTimetable::SUFFIXES
-    ///     .iter()
-    ///     .map(|suffix| format!("{prefix}-{suffix}"))
-    ///     .collect();
-    /// assert!(headers.contains(&"Caller-Channel-Created-Time".to_string()));
-    /// ```
-    pub const SUFFIXES: &'static [&'static str] = &[
-        "Profile-Created-Time",
-        "Channel-Created-Time",
-        "Channel-Answered-Time",
-        "Channel-Progress-Time",
-        "Channel-Progress-Media-Time",
-        "Channel-Hangup-Time",
-        "Channel-Transfer-Time",
-        "Channel-Resurrect-Time",
-        "Channel-Bridged-Time",
-        "Channel-Last-Hold",
-        "Channel-Hold-Accum",
-    ];
+/// Generate `ChannelTimetable::SUFFIXES` and `ChannelTimetable::from_lookup` from
+/// a single `(field => "Suffix")` table, eliminating the risk of drift between the
+/// advertised suffix list and the fields actually extracted.
+macro_rules! channel_timetable_fields {
+    ($($field:ident => $suffix:literal),+ $(,)?) => {
+        /// Header suffixes extracted by `from_lookup()`.
+        ///
+        /// Combine with a `TimetablePrefix` to build full header names for event
+        /// subscriptions or filters:
+        ///
+        /// ```
+        /// use freeswitch_types::{ChannelTimetable, TimetablePrefix};
+        ///
+        /// let prefix = TimetablePrefix::Caller.as_str();
+        /// let headers: Vec<String> = ChannelTimetable::SUFFIXES
+        ///     .iter()
+        ///     .map(|suffix| format!("{prefix}-{suffix}"))
+        ///     .collect();
+        /// assert!(headers.contains(&"Caller-Channel-Created-Time".to_string()));
+        /// ```
+        pub const SUFFIXES: &'static [&'static str] = &[$($suffix),+];
 
-    /// Extract a timetable by looking up prefixed header names via a closure.
-    ///
-    /// The closure receives full header names (e.g. `"Caller-Channel-Created-Time"`)
-    /// and should return the raw value if present. Works with any key-value store:
-    /// `HashMap<String, String>`, `EslEvent`, `BTreeMap`, etc.
-    ///
-    /// Returns `Ok(None)` if no timestamp headers with this prefix are present.
-    /// Returns `Err` if a header is present but contains an invalid (non-`i64`) value.
-    ///
-    /// ```
-    /// use std::collections::HashMap;
-    /// use freeswitch_types::{ChannelTimetable, TimetablePrefix};
-    ///
-    /// let mut headers: HashMap<String, String> = HashMap::new();
-    /// headers.insert("Caller-Channel-Created-Time".into(), "1700000001000000".into());
-    ///
-    /// // With enum:
-    /// let tt = ChannelTimetable::from_lookup(TimetablePrefix::Caller, |k| headers.get(k).map(|v: &String| v.as_str()));
-    /// assert!(tt.unwrap().unwrap().created.is_some());
-    ///
-    /// // With raw string (e.g. for dynamic "Call-1" prefix):
-    /// let tt = ChannelTimetable::from_lookup("Caller", |k| headers.get(k).map(|v: &String| v.as_str()));
-    /// assert!(tt.unwrap().unwrap().created.is_some());
-    /// ```
-    pub fn from_lookup<'a>(
-        prefix: impl AsRef<str>,
-        lookup: impl Fn(&str) -> Option<&'a str>,
-    ) -> Result<Option<Self>, ParseTimetableError> {
-        let prefix = prefix.as_ref();
-        let mut tt = Self::default();
-        let mut found = false;
-
-        macro_rules! field {
-            ($field:ident, $suffix:literal) => {
-                let header = format!("{}-{}", prefix, $suffix);
-                if let Some(raw) = lookup(&header) {
-                    let v: i64 = raw
-                        .parse()
-                        .map_err(|_| ParseTimetableError {
+        /// Extract a timetable by looking up prefixed header names via a closure.
+        ///
+        /// The closure receives full header names (e.g. `"Caller-Channel-Created-Time"`)
+        /// and should return the raw value if present. Works with any key-value store:
+        /// `HashMap<String, String>`, `EslEvent`, `BTreeMap`, etc.
+        ///
+        /// Returns `Ok(None)` if no timestamp headers with this prefix are present.
+        /// Returns `Err` if a header is present but contains an invalid (non-`i64`) value.
+        ///
+        /// ```
+        /// use std::collections::HashMap;
+        /// use freeswitch_types::{ChannelTimetable, TimetablePrefix};
+        ///
+        /// let mut headers: HashMap<String, String> = HashMap::new();
+        /// headers.insert("Caller-Channel-Created-Time".into(), "1700000001000000".into());
+        ///
+        /// // With enum:
+        /// let tt = ChannelTimetable::from_lookup(TimetablePrefix::Caller, |k| headers.get(k).map(|v: &String| v.as_str()));
+        /// assert!(tt.unwrap().unwrap().created.is_some());
+        ///
+        /// // With raw string (e.g. for dynamic "Call-1" prefix):
+        /// let tt = ChannelTimetable::from_lookup("Caller", |k| headers.get(k).map(|v: &String| v.as_str()));
+        /// assert!(tt.unwrap().unwrap().created.is_some());
+        /// ```
+        pub fn from_lookup<'a>(
+            prefix: impl AsRef<str>,
+            lookup: impl Fn(&str) -> Option<&'a str>,
+        ) -> Result<Option<Self>, ParseTimetableError> {
+            let prefix = prefix.as_ref();
+            let mut tt = Self::default();
+            let mut found = false;
+            $(
+                {
+                    let header = format!("{}-{}", prefix, $suffix);
+                    if let Some(raw) = lookup(&header) {
+                        let v: i64 = raw.parse().map_err(|_| ParseTimetableError {
                             header: header.clone(),
                             value: raw.to_string(),
                         })?;
-                    tt.$field = Some(v);
-                    found = true;
+                        tt.$field = Some(v);
+                        found = true;
+                    }
                 }
-            };
+            )+
+            if found {
+                Ok(Some(tt))
+            } else {
+                Ok(None)
+            }
         }
+    };
+}
 
-        field!(profile_created, "Profile-Created-Time");
-        field!(created, "Channel-Created-Time");
-        field!(answered, "Channel-Answered-Time");
-        field!(progress, "Channel-Progress-Time");
-        field!(progress_media, "Channel-Progress-Media-Time");
-        field!(hungup, "Channel-Hangup-Time");
-        field!(transferred, "Channel-Transfer-Time");
-        field!(resurrected, "Channel-Resurrect-Time");
-        field!(bridged, "Channel-Bridged-Time");
-        field!(last_hold, "Channel-Last-Hold");
-        field!(hold_accum, "Channel-Hold-Accum");
-
-        if found {
-            Ok(Some(tt))
-        } else {
-            Ok(None)
-        }
+impl ChannelTimetable {
+    channel_timetable_fields! {
+        profile_created => "Profile-Created-Time",
+        created         => "Channel-Created-Time",
+        answered        => "Channel-Answered-Time",
+        progress        => "Channel-Progress-Time",
+        progress_media  => "Channel-Progress-Media-Time",
+        hungup          => "Channel-Hangup-Time",
+        transferred     => "Channel-Transfer-Time",
+        resurrected     => "Channel-Resurrect-Time",
+        bridged         => "Channel-Bridged-Time",
+        last_hold       => "Channel-Last-Hold",
+        hold_accum      => "Channel-Hold-Accum",
     }
 }
 
