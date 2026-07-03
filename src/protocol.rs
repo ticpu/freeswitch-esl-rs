@@ -194,7 +194,10 @@ impl EslParser {
 
     /// Try to parse a complete message from the buffer
     pub fn parse_message(&mut self) -> EslResult<Option<EslMessage>> {
-        match &self.state {
+        // Take ownership of the state so the WaitingForBody arm can move its
+        // fields into the finished message without cloning. Every path below
+        // either restores the taken state or assigns the correct next one.
+        match std::mem::replace(&mut self.state, ParseState::WaitingForHeaders) {
             ParseState::WaitingForHeaders => {
                 // Check if we have complete headers
                 let terminator = HEADER_TERMINATOR.as_bytes();
@@ -279,29 +282,27 @@ impl EslParser {
                     Ok(None)
                 }
             }
-            ParseState::WaitingForBody { body_length, .. } => {
-                let body_length = *body_length;
+            ParseState::WaitingForBody {
+                message_type,
+                headers,
+                body_length,
+            } => {
                 if self
                     .buffer
                     .len()
                     < body_length
                 {
+                    self.state = ParseState::WaitingForBody {
+                        message_type,
+                        headers,
+                        body_length,
+                    };
                     return Ok(None);
                 }
-                // Enough data: replace state first to move fields out without cloning
-                let ParseState::WaitingForBody {
-                    message_type,
-                    headers,
-                    ..
-                } = std::mem::replace(&mut self.state, ParseState::WaitingForHeaders)
-                else {
-                    // Structurally guaranteed: we just matched this variant above
-                    unreachable!("state is WaitingForBody: just matched")
-                };
                 let body_data = self
                     .buffer
                     .extract_bytes(body_length)
-                    .expect("body_length <= buffer.len(): verified before state replace");
+                    .expect("body_length <= buffer.len(): verified above");
                 self.buffer
                     .compact();
                 let body_str = String::from_utf8(body_data)
