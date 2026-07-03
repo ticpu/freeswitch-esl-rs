@@ -241,7 +241,7 @@ class CheckResult:
 
 
 def check_event_types(repo: Path, src: SourceResolver) -> CheckResult:
-    rust_file = repo / "freeswitch-types" / "src" / "event.rs"
+    rust_file = repo / "freeswitch-types" / "src" / "event" / "event_type.rs"
     rust = rust_display_impl_names(rust_file, "EslEventType", stop_at="ALL")
 
     c_text = src.read("libs/esl/src/esl_event.c")
