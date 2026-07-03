@@ -1187,6 +1187,29 @@ impl sip_header::SipHeaderLookup for EslEvent {
     fn sip_header_str(&self, name: &str) -> Option<&str> {
         EslEvent::header_str(self, name)
     }
+
+    fn call_info(&self) -> Result<Option<sip_header::UriInfo>, sip_header::UriInfoError> {
+        match self.sip_header(sip_header::SipHeader::CallInfo) {
+            Some(s) => crate::variables::EslHeaders::parse_uri_info(s).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn history_info(
+        &self,
+    ) -> Result<Option<sip_header::HistoryInfo>, sip_header::HistoryInfoError> {
+        match self.sip_header(sip_header::SipHeader::HistoryInfo) {
+            Some(s) => crate::variables::EslHeaders::parse_history_info(s).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn alert_info(&self) -> Result<Option<sip_header::UriInfo>, sip_header::UriInfoError> {
+        match self.sip_header(sip_header::SipHeader::AlertInfo) {
+            Some(s) => crate::variables::EslHeaders::parse_uri_info(s).map(Some),
+            None => Ok(None),
+        }
+    }
 }
 
 impl PartialEq for EslEvent {
