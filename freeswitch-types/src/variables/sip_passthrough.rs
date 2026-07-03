@@ -124,14 +124,46 @@ pub struct SipPassthroughHeader {
 }
 
 /// Prefix patterns ordered longest-first for unambiguous `FromStr` matching.
-const PREFIX_PATTERNS: &[(SipHeaderPrefix, &str)] = &[
-    (SipHeaderPrefix::NoBye, "sip_nobye_h_"),
-    (SipHeaderPrefix::Bye, "sip_bye_h_"),
-    (SipHeaderPrefix::Provisional, "sip_ph_"),
-    (SipHeaderPrefix::Response, "sip_rh_"),
-    (SipHeaderPrefix::Invite, "sip_i_"),
-    (SipHeaderPrefix::Request, "sip_h_"),
+///
+/// Ordered so that longer prefixes (e.g. `sip_nobye_h_`) are tried before
+/// shorter ones that share a common start (e.g. `sip_bye_h_`). The order
+/// here is the single source of truth — `as_str()` provides the actual strings.
+const PREFIX_PATTERNS: &[SipHeaderPrefix] = &[
+    SipHeaderPrefix::NoBye,
+    SipHeaderPrefix::Bye,
+    SipHeaderPrefix::Provisional,
+    SipHeaderPrefix::Response,
+    SipHeaderPrefix::Invite,
+    SipHeaderPrefix::Request,
 ];
+
+/// Derive the canonical SIP header name from a wire suffix under a given prefix.
+///
+/// For `Invite`, reverses the lowercase+underscore transformation:
+/// `"call_info"` → `"call-info"` → tried against `SipHeader::from_str`.
+/// For all other prefixes, the suffix is used verbatim or matched against
+/// known `SipHeader` variants for canonicalization.
+fn canonical_from_suffix(prefix: SipHeaderPrefix, suffix: &str) -> String {
+    match prefix {
+        SipHeaderPrefix::Invite => {
+            // Reverse the lowercase+underscore transformation:
+            // "call_info" → "call-info" → try SipHeader::from_str
+            let with_hyphens = suffix.replace('_', "-");
+            match with_hyphens.parse::<SipHeader>() {
+                Ok(h) => h
+                    .as_str()
+                    .to_string(),
+                Err(_) => with_hyphens,
+            }
+        }
+        _ => match suffix.parse::<SipHeader>() {
+            Ok(h) => h
+                .as_str()
+                .to_string(),
+            Err(_) => suffix.to_string(),
+        },
+    }
+}
 
 fn validate_header_name(name: &str) -> Result<(), InvalidHeaderName> {
     if name.is_empty() || crate::wire_safety::contains_wire_terminator(name) {
@@ -322,32 +354,12 @@ impl std::str::FromStr for SipPassthroughHeader {
     type Err = ParseSipPassthroughError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        for &(prefix, pat) in PREFIX_PATTERNS {
-            if let Some(suffix) = s.strip_prefix(pat) {
+        for &prefix in PREFIX_PATTERNS {
+            if let Some(suffix) = s.strip_prefix(prefix.as_str()) {
                 if suffix.is_empty() {
                     return Err(ParseSipPassthroughError(s.to_string()));
                 }
-
-                let canonical = match prefix {
-                    SipHeaderPrefix::Invite => {
-                        // Reverse the lowercase+underscore transformation:
-                        // "call_info" → "call-info" → try SipHeader::from_str
-                        let with_hyphens = suffix.replace('_', "-");
-                        match with_hyphens.parse::<SipHeader>() {
-                            Ok(h) => h
-                                .as_str()
-                                .to_string(),
-                            Err(_) => with_hyphens,
-                        }
-                    }
-                    _ => match suffix.parse::<SipHeader>() {
-                        Ok(h) => h
-                            .as_str()
-                            .to_string(),
-                        Err(_) => suffix.to_string(),
-                    },
-                };
-
+                let canonical = canonical_from_suffix(prefix, suffix);
                 return Ok(Self {
                     prefix,
                     canonical_name: canonical,
@@ -360,28 +372,12 @@ impl std::str::FromStr for SipPassthroughHeader {
         // uppercase in some contexts)
         let lower = s.to_ascii_lowercase();
         if lower != s {
-            for &(prefix, pat) in PREFIX_PATTERNS {
-                if let Some(suffix) = lower.strip_prefix(pat) {
+            for &prefix in PREFIX_PATTERNS {
+                if let Some(suffix) = lower.strip_prefix(prefix.as_str()) {
                     if suffix.is_empty() {
                         return Err(ParseSipPassthroughError(s.to_string()));
                     }
-                    let canonical = match prefix {
-                        SipHeaderPrefix::Invite => {
-                            let with_hyphens = suffix.replace('_', "-");
-                            match with_hyphens.parse::<SipHeader>() {
-                                Ok(h) => h
-                                    .as_str()
-                                    .to_string(),
-                                Err(_) => with_hyphens,
-                            }
-                        }
-                        _ => match suffix.parse::<SipHeader>() {
-                            Ok(h) => h
-                                .as_str()
-                                .to_string(),
-                            Err(_) => suffix.to_string(),
-                        },
-                    };
+                    let canonical = canonical_from_suffix(prefix, suffix);
                     let wire = build_wire(prefix, &canonical);
                     return Ok(Self {
                         prefix,
@@ -703,6 +699,36 @@ mod tests {
         assert!(h
             .extract_from(msg)
             .is_empty());
+    }
+
+    // --- PREFIX_PATTERNS completeness ---
+
+    #[test]
+    fn prefix_patterns_covers_all_variants_exactly_once() {
+        let all_variants = [
+            SipHeaderPrefix::Invite,
+            SipHeaderPrefix::Request,
+            SipHeaderPrefix::Response,
+            SipHeaderPrefix::Provisional,
+            SipHeaderPrefix::Bye,
+            SipHeaderPrefix::NoBye,
+        ];
+        for &variant in &all_variants {
+            let count = PREFIX_PATTERNS
+                .iter()
+                .filter(|&&p| p == variant)
+                .count();
+            assert_eq!(
+                count, 1,
+                "{:?} appears {count} times in PREFIX_PATTERNS (expected exactly 1)",
+                variant
+            );
+        }
+        assert_eq!(
+            PREFIX_PATTERNS.len(),
+            all_variants.len(),
+            "PREFIX_PATTERNS length differs from all-variants count"
+        );
     }
 
     // --- VariableName trait ---
