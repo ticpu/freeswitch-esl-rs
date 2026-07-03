@@ -192,6 +192,21 @@ impl MockClient {
             .await;
     }
 
+    /// Send a command reply with a specific Reply-Text (for correlation tests).
+    pub async fn reply_ok_text(&mut self, text: &str) {
+        let msg = format!("Content-Type: command/reply\nReply-Text: +OK {}\n\n", text);
+        self.send_raw(&msg)
+            .await;
+    }
+
+    /// Sleep, then send a +OK reply (simulates a delayed server response).
+    #[allow(dead_code)]
+    pub async fn reply_ok_after(&mut self, delay: std::time::Duration) {
+        tokio::time::sleep(delay).await;
+        self.reply_ok()
+            .await;
+    }
+
     /// Send an api/response with body
     pub async fn reply_api(&mut self, body: &str) {
         let data = format!(

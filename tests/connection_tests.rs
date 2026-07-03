@@ -502,6 +502,109 @@ async fn test_command_timeout_cleanup() {
     assert!(result.is_ok());
 }
 
+// --- Finding 1: stale reply discard after timeout ---
+
+#[tokio::test]
+async fn timeout_stale_reply_does_not_corrupt_next_command() {
+    // Regression: before the stale-reply counter fix, the server's late reply
+    // for command A was delivered to command B's waiter, giving B the wrong reply.
+    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+
+    // Short timeout so A times out before the mock replies.
+    client.set_command_timeout(Duration::from_millis(100));
+
+    // Spawn A and let it time out.
+    let client_a = client.clone();
+    let cmd_a = tokio::spawn(async move {
+        client_a
+            .api("status")
+            .await
+    });
+    let _cmd_a_str = mock
+        .read_command()
+        .await;
+
+    let a_result = tokio::time::timeout(Duration::from_secs(2), cmd_a)
+        .await
+        .expect("cmd_a join timeout")
+        .expect("cmd_a panicked");
+    assert!(
+        matches!(a_result, Err(EslError::Timeout { .. })),
+        "command A should timeout, got: {:?}",
+        a_result
+    );
+
+    // Restore normal timeout and spawn B.
+    client.set_command_timeout(Duration::from_secs(5));
+    let client_b = client.clone();
+    let cmd_b = tokio::spawn(async move {
+        client_b
+            .api("version")
+            .await
+    });
+
+    // Wait until mock can read B's command — sender is installed before bytes
+    // are written, so reading B confirms B's sender is in the slot.
+    let _cmd_b_str = mock
+        .read_command()
+        .await;
+
+    // Send A's stale reply first, then B's actual reply.
+    mock.reply_ok_text("reply-for-A")
+        .await;
+    mock.reply_ok_text("reply-for-B")
+        .await;
+
+    let b_result = tokio::time::timeout(Duration::from_secs(2), cmd_b)
+        .await
+        .expect("cmd_b join timeout")
+        .expect("cmd_b panicked")
+        .expect("command B should succeed");
+
+    let reply_text = b_result
+        .reply_text()
+        .expect("B should have Reply-Text");
+    assert!(
+        reply_text.contains("reply-for-B"),
+        "B must get B's reply, got: {}",
+        reply_text
+    );
+}
+
+#[tokio::test]
+async fn timeout_normal_reply_still_routes_correctly() {
+    // Regression: verify reply routing works normally when there is no timeout.
+    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+
+    let api_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("status")
+                .await
+        }
+    });
+
+    let _cmd = mock
+        .read_command()
+        .await;
+    mock.reply_ok_text("normal-reply")
+        .await;
+
+    let resp = api_task
+        .await
+        .expect("join")
+        .expect("should succeed");
+    let reply_text = resp
+        .reply_text()
+        .expect("should have Reply-Text");
+    assert!(
+        reply_text.contains("normal-reply"),
+        "reply should route correctly, got: {}",
+        reply_text
+    );
+}
+
 #[tokio::test]
 async fn test_sendevent_command() {
     let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
