@@ -486,13 +486,19 @@ async fn test_command_timeout_cleanup() {
         }
     });
 
-    // Mock reads the timed-out command then the new one
+    // Mock reads the timed-out command then the second one. In real FreeSWITCH
+    // the server eventually replies to every command it received; simulate that
+    // by sending A's late reply first, then B's reply.
     let _cmd1 = mock
         .read_command()
         .await;
     let _cmd2 = mock
         .read_command()
         .await;
+    // A's late reply — reader discards it via stale-reply counter.
+    mock.reply_api("stale")
+        .await;
+    // B's actual reply.
     mock.reply_api("1.0")
         .await;
 

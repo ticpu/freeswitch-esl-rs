@@ -168,9 +168,35 @@ pub enum ConnectionMode {
 /// Default command timeout in milliseconds (5 seconds)
 const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 5000;
 
+/// Slot for the in-flight command waiter and its stale-reply counter.
+///
+/// ESL is a serial protocol with no correlation IDs. After a command times
+/// out the server may still send the late reply. `stale_replies` tracks how
+/// many such late replies to silently discard so the next command's reply
+/// is not consumed by the wrong waiter.
+///
+/// Invariant: `stale_replies > 0` only while `waiting` is `None` (the timed-
+/// out sender was already taken at timeout; the count tells the reader how
+/// many more unsolicited replies to skip before resuming normal dispatch).
+struct PendingReply {
+    /// Waiter for the currently in-flight command (`None` between commands).
+    waiting: Option<oneshot::Sender<EslMessage>>,
+    /// Number of stale replies to discard before resuming normal dispatch.
+    stale_replies: u32,
+}
+
+impl PendingReply {
+    fn new() -> Self {
+        Self {
+            waiting: None,
+            stale_replies: 0,
+        }
+    }
+}
+
 /// Shared state between EslClient and the reader task
 struct SharedState {
-    pending_reply: Mutex<Option<oneshot::Sender<EslMessage>>>,
+    pending_reply: Mutex<PendingReply>,
     /// Connection status sender (shared so disconnect() can set ClientRequested)
     status_tx: watch::Sender<ConnectionStatus>,
     /// Liveness timeout in milliseconds (0 = disabled)
@@ -612,12 +638,41 @@ async fn reader_loop_inner(
                             .pending_reply
                             .lock()
                             .await;
-                        if let Some(tx) = pending.take() {
-                            let _ = tx.send(message);
+                        if pending.stale_replies > 0 {
+                            // A previous command timed out and its server reply
+                            // arrived late. Discard to preserve correlation.
+                            pending.stale_replies -= 1;
+                            let reply_text = message
+                                .headers
+                                .get("Reply-Text")
+                                .map(|s| s.as_str())
+                                .unwrap_or("<none>");
+                            warn!(
+                                "Discarded stale {:?} reply (Reply-Text: {}) to preserve \
+                                 command-reply correlation; {} stale replies remaining",
+                                message.message_type, reply_text, pending.stale_replies,
+                            );
+                        } else if let Some(tx) = pending
+                            .waiting
+                            .take()
+                        {
+                            if tx
+                                .send(message)
+                                .is_err()
+                            {
+                                // Caller's receiver was dropped: timeout raced the
+                                // delivery. The timeout arm did not increment
+                                // stale_replies (it saw waiting=None), so this reply
+                                // is already accounted for — no counter adjustment.
+                                debug!(
+                                    "Reply channel closed before delivery (timeout race); \
+                                     reply discarded"
+                                );
+                            }
                         } else {
                             warn!(
-                                "Received {:?} but no pending command",
-                                "CommandReply/ApiResponse"
+                                "Received unsolicited {:?} with no pending command",
+                                message.message_type,
                             );
                         }
                     }
@@ -1072,7 +1127,7 @@ impl EslClient {
         let (result_tx, result_rx) = oneshot::channel();
 
         let shared = Arc::new(SharedState {
-            pending_reply: Mutex::new(None),
+            pending_reply: Mutex::new(PendingReply::new()),
             status_tx,
             liveness_timeout_ms: AtomicU64::new(0),
             command_timeout_ms: AtomicU64::new(DEFAULT_COMMAND_TIMEOUT_MS),
@@ -1141,7 +1196,7 @@ impl EslClient {
                 .pending_reply
                 .lock()
                 .await;
-            *pending = Some(tx);
+            pending.waiting = Some(tx);
         }
 
         // Write command
@@ -1168,7 +1223,20 @@ impl EslClient {
                     .pending_reply
                     .lock()
                     .await;
-                pending.take();
+                // waiting.take() == Some means the reader has NOT yet consumed
+                // this sender — the server reply is still in flight and will
+                // arrive at the next waiter. Count it so the reader can discard
+                // that one stale reply instead of routing it to the next command.
+                // waiting.take() == None means the reader already took the sender
+                // and raced the timeout (its send() failed into the dropped rx).
+                // The reply is already consumed; do not increment.
+                if pending
+                    .waiting
+                    .take()
+                    .is_some()
+                {
+                    pending.stale_replies += 1;
+                }
                 drop(writer);
                 return Err(EslError::Timeout { timeout_ms });
             }
@@ -1958,7 +2026,10 @@ impl EslClient {
                 .pending_reply
                 .lock()
                 .await;
-            if pending.is_some() {
+            if pending
+                .waiting
+                .is_some()
+            {
                 return Err(EslError::ReexecFailed {
                     reason: "command still in-flight".into(),
                 });

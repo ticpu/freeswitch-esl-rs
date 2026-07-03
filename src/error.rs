@@ -58,7 +58,12 @@ pub enum EslError {
         reply_text: String,
     },
 
-    /// Timeout waiting for response
+    /// Timeout waiting for a command reply.
+    ///
+    /// The connection remains usable. The library increments an internal
+    /// stale-reply counter so that the server's late reply — when it
+    /// eventually arrives — is silently discarded rather than routed to
+    /// the next command's waiter, preserving reply correlation.
     #[error("Operation timed out after {timeout_ms}ms")]
     Timeout {
         /// Elapsed time in milliseconds before the operation was abandoned.
