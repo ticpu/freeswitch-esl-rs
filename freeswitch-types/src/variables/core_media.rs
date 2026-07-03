@@ -47,10 +47,9 @@ impl fmt::Display for RtpStatUnit {
     }
 }
 
-parse_error! { ParseCoreMediaVariableError("core media variable"); }
-
 sip_header::define_header_enum! {
-    error_type: ParseCoreMediaVariableError,
+    tests_mod: core_media_variable_generated_tests,
+    error_type: ParseCoreMediaVariableError => "unknown core media variable",
     /// RTP media statistics channel variable names (the part after the `variable_` prefix).
     ///
     /// Set by `switch_core_media_set_stats()` at channel teardown for each media type
@@ -444,27 +443,5 @@ mod tests {
         assert_eq!(RtpStatUnit::Milliseconds.to_string(), "ms");
         assert_eq!(RtpStatUnit::Ratio.to_string(), "");
         assert_eq!(RtpStatUnit::Count.to_string(), "");
-    }
-
-    #[test]
-    fn from_str_round_trip_sample() {
-        let variants = [
-            CoreMediaVariable::RtpAudioInMos,
-            CoreMediaVariable::RtpAudioOutCngPacketCount,
-            CoreMediaVariable::RtpAudioRtcpPacketCount,
-            CoreMediaVariable::RtpVideoInQualityPercentage,
-            CoreMediaVariable::RtpVideoOutRawBytes,
-            CoreMediaVariable::RtpVideoRtcpOctetCount,
-            CoreMediaVariable::RtpTextInFlawTotal,
-            CoreMediaVariable::RtpTextOutMediaBytes,
-            CoreMediaVariable::RtpTextRtcpPacketCount,
-        ];
-        for v in variants {
-            let wire = v.to_string();
-            let parsed: CoreMediaVariable = wire
-                .parse()
-                .unwrap();
-            assert_eq!(parsed, v, "round-trip failed for {wire}");
-        }
     }
 }

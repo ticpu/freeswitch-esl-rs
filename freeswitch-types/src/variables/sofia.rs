@@ -1,9 +1,8 @@
 //! Typed mod_sofia / SIP channel variable names.
 
-parse_error! { ParseSofiaVariableError("sofia variable"); }
-
 sip_header::define_header_enum! {
-    error_type: ParseSofiaVariableError,
+    tests_mod: sofia_variable_generated_tests,
+    error_type: ParseSofiaVariableError => "unknown sofia variable",
     /// mod_sofia / SIP channel variable names (the part after the `variable_` prefix).
     ///
     /// Use with [`HeaderLookup::variable()`](crate::HeaderLookup::variable) for type-safe lookups.
@@ -206,29 +205,5 @@ mod tests {
     fn from_str_unknown() {
         let err = "nonexistent_sip_var".parse::<SofiaVariable>();
         assert!(err.is_err());
-    }
-
-    #[test]
-    fn from_str_round_trip_sample() {
-        let variants = [
-            SofiaVariable::SipCallId,
-            SofiaVariable::SipFromUser,
-            SofiaVariable::SipToHost,
-            SofiaVariable::SipNetworkIp,
-            SofiaVariable::SipHangupDisposition,
-            SofiaVariable::SipPAssertedIdentity,
-            SofiaVariable::SofiaProfileName,
-            SofiaVariable::RtpSecureMediaConfirmed,
-            SofiaVariable::SipGatewayName,
-            SofiaVariable::SipInviteCallId,
-            SofiaVariable::SipMultipart,
-        ];
-        for v in variants {
-            let wire = v.to_string();
-            let parsed: SofiaVariable = wire
-                .parse()
-                .unwrap();
-            assert_eq!(parsed, v, "round-trip failed for {wire}");
-        }
     }
 }

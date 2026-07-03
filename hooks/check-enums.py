@@ -111,9 +111,11 @@ def rust_define_header_enum_names(path: Path) -> set[str]:
             depth = 0
         if in_block:
             depth += line.count("{") - line.count("}")
-            m = re.search(r'=> "([^"]+)"', line)
-            if m:
-                names.add(m.group(1))
+            # error_type: ParseFooError => "message" is macro config, not a variant
+            if not line.lstrip().startswith("error_type:"):
+                m = re.search(r'=> "([^"]+)"', line)
+                if m:
+                    names.add(m.group(1))
             if depth <= 0 and names:
                 break
     return names

@@ -1,9 +1,8 @@
 //! Typed channel variable names from FreeSWITCH core.
 
-parse_error! { ParseChannelVariableError("channel variable"); }
-
 sip_header::define_header_enum! {
-    error_type: ParseChannelVariableError,
+    tests_mod: channel_variable_generated_tests,
+    error_type: ParseChannelVariableError => "unknown channel variable",
     /// Core FreeSWITCH channel variable names (the part after the `variable_` prefix).
     ///
     /// Use with [`HeaderLookup::variable()`](crate::HeaderLookup::variable) for type-safe lookups. Only includes
@@ -231,33 +230,5 @@ mod tests {
                 .to_string(),
             "unknown channel variable: nonexistent_var"
         );
-    }
-
-    #[test]
-    fn from_str_round_trip_sample() {
-        let variants = [
-            ChannelVariable::Uuid,
-            ChannelVariable::Direction,
-            ChannelVariable::CallerIdName,
-            ChannelVariable::BridgeUuid,
-            ChannelVariable::OriginationCallerIdNumber,
-            ChannelVariable::CallUuid,
-            ChannelVariable::IsOutbound,
-            ChannelVariable::BridgeHangupCause,
-            ChannelVariable::OriginateDisposition,
-            ChannelVariable::Billsec,
-            ChannelVariable::HoldAccumSeconds,
-            ChannelVariable::RtpSecureMedia,
-            ChannelVariable::DtmfType,
-            ChannelVariable::SocketResume,
-            ChannelVariable::PlaybackTerminators,
-        ];
-        for v in variants {
-            let wire = v.to_string();
-            let parsed: ChannelVariable = wire
-                .parse()
-                .unwrap();
-            assert_eq!(parsed, v, "round-trip failed for {wire}");
-        }
     }
 }
