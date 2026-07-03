@@ -5,10 +5,12 @@
 //! enums for those subclass values and for the structured state headers
 //! they carry.
 
+mod channel_name;
 mod event_subclass;
 mod gateway;
 mod sip_user;
 
+pub use channel_name::SofiaChannelName;
 pub use event_subclass::{ParseSofiaEventSubclassError, SofiaEventSubclass};
 pub use gateway::{
     GatewayPingStatus, GatewayRegState, ParseGatewayPingStatusError, ParseGatewayRegStateError,
