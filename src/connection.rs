@@ -175,9 +175,10 @@ const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 5000;
 /// many such late replies to silently discard so the next command's reply
 /// is not consumed by the wrong waiter.
 ///
-/// Invariant: `stale_replies > 0` only while `waiting` is `None` (the timed-
-/// out sender was already taken at timeout; the count tells the reader how
-/// many more unsolicited replies to skip before resuming normal dispatch).
+/// `stale_replies > 0` can coexist with `waiting: Some` — the next command
+/// installs its waiter while the timed-out command's reply is still in
+/// flight. The reader always drains the stale count before dispatching to
+/// `waiting`, which is what restores correlation.
 struct PendingReply {
     /// Waiter for the currently in-flight command (`None` between commands).
     waiting: Option<oneshot::Sender<EslMessage>>,

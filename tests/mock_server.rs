@@ -199,14 +199,6 @@ impl MockClient {
             .await;
     }
 
-    /// Sleep, then send a +OK reply (simulates a delayed server response).
-    #[allow(dead_code)]
-    pub async fn reply_ok_after(&mut self, delay: std::time::Duration) {
-        tokio::time::sleep(delay).await;
-        self.reply_ok()
-            .await;
-    }
-
     /// Send an api/response with body
     pub async fn reply_api(&mut self, body: &str) {
         let data = format!(
