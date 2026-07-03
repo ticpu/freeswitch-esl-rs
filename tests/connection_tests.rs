@@ -1542,8 +1542,32 @@ async fn rude_rejection_returns_access_denied() {
     );
 
     match client.status() {
-        ConnectionStatus::Disconnected(DisconnectReason::IoError(_)) => {}
-        other => panic!("expected Disconnected(IoError), got: {:?}", other),
+        ConnectionStatus::Disconnected(DisconnectReason::AccessDenied(_)) => {}
+        other => panic!("expected Disconnected(AccessDenied), got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn parser_error_reports_protocol_error() {
+    let (mut mock, client, mut events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+
+    // An unrecognized Content-Type triggers a ProtocolError from parse_message().
+    mock.send_raw("Content-Type: text/garbage\n\n")
+        .await;
+
+    // Event stream should close (no valid event emitted for a protocol error).
+    let closed = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .expect("timeout");
+    assert!(
+        closed.is_none(),
+        "stream should close on parser error, got: {:?}",
+        closed
+    );
+
+    match client.status() {
+        ConnectionStatus::Disconnected(DisconnectReason::ProtocolError(_)) => {}
+        other => panic!("expected Disconnected(ProtocolError), got: {:?}", other),
     }
 }
 
