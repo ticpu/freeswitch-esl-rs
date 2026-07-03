@@ -22,8 +22,15 @@ impl<'a> SofiaChannelName<'a> {
     /// Parses a channel name; `Some` only for well-formed
     /// `sofia/<profile>/<destination>` names (non-empty profile).
     pub fn parse(name: &'a str) -> Option<Self> {
-        let _ = name;
-        None
+        let rest = name.strip_prefix("sofia/")?;
+        let (profile, destination) = rest.split_once('/')?;
+        if profile.is_empty() {
+            return None;
+        }
+        Some(Self {
+            profile,
+            destination,
+        })
     }
 
     /// Sofia profile name (second segment).
@@ -41,7 +48,9 @@ impl<'a> SofiaChannelName<'a> {
     /// no `@`. The split is on the *last* `@` because mod_sofia URL-decodes
     /// the user part, which may therefore contain `@`; a host never can.
     pub fn user(&self) -> Option<&'a str> {
-        None
+        self.destination
+            .rsplit_once('@')
+            .map(|(user, _)| user)
     }
 
     /// Part of the destination after the last `@` (may include `:port`), or
@@ -49,7 +58,9 @@ impl<'a> SofiaChannelName<'a> {
     /// (bare host on inbound, user/number on gateway dials) — use
     /// [`destination`](Self::destination) and decide from context.
     pub fn host(&self) -> Option<&'a str> {
-        None
+        self.destination
+            .rsplit_once('@')
+            .map(|(_, host)| host)
     }
 }
 

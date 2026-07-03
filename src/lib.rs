@@ -160,10 +160,10 @@ pub use freeswitch_types::{
     ParseEventFormatError, ParseEventHeaderError, ParseEventTypeError, ParseGatewayPingStatusError,
     ParseGatewayRegStateError, ParseGroupCallOrderError, ParseHangupCauseError, ParsePriorityError,
     ParseSipUserPingStatusError, ParseSofiaEventSubclassError, ParseTimetableError, RtpStatUnit,
-    SipHeaderPrefix, SipPassthroughHeader, SipUserPingStatus, SofiaEventSubclass, TimetablePrefix,
-    UuidAnswer, UuidBridge, UuidDeflect, UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar,
-    UuidTransfer, VariableName, Variables, VariablesType, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
-    MAX_ARRAY_ITEMS,
+    SipHeaderPrefix, SipPassthroughHeader, SipUserPingStatus, SofiaChannelName, SofiaEventSubclass,
+    TimetablePrefix, UuidAnswer, UuidBridge, UuidDeflect, UuidGetVar, UuidHold, UuidKill,
+    UuidSendDtmf, UuidSetVar, UuidTransfer, VariableName, Variables, VariablesType,
+    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT, MAX_ARRAY_ITEMS,
 };
 
 pub use app::dptools::AppCommand;

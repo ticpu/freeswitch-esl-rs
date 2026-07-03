@@ -71,7 +71,7 @@ pub use sip_header::{
 };
 pub use sofia::{
     GatewayPingStatus, GatewayRegState, ParseGatewayPingStatusError, ParseGatewayRegStateError,
-    ParseSipUserPingStatusError, ParseSofiaEventSubclassError, SipUserPingStatus,
+    ParseSipUserPingStatusError, ParseSofiaEventSubclassError, SipUserPingStatus, SofiaChannelName,
     SofiaEventSubclass,
 };
 #[cfg(feature = "esl")]
