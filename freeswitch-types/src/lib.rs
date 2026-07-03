@@ -63,7 +63,7 @@ pub use event::{
     EslEvent, EslEventPriority, EslEventType, EventFormat, EventSubscription,
     EventSubscriptionError, ParseEventFormatError, ParseEventTypeError, ParsePriorityError,
 };
-pub use headers::{normalize_header_key, EventHeader, ParseEventHeaderError};
+pub use headers::{case_alias_key, normalize_header_key, EventHeader, ParseEventHeaderError};
 pub use lookup::HeaderLookup;
 #[cfg(feature = "esl")]
 pub use lossy_values::{LossyValue, LossyValues};

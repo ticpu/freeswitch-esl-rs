@@ -196,6 +196,25 @@ sip_header::define_header_enum! {
     }
 }
 
+/// Return a lowercase case-alias for `key` when case-insensitive aliasing applies.
+///
+/// The aliasing rule: keys containing `_` (channel variables such as
+/// `variable_*`, and SIP passthrough headers such as `sip_h_*` / `sip_i_*`)
+/// are excluded from case-insensitive aliasing because their suffix encodes
+/// original SIP wire casing that must be preserved verbatim. All other keys
+/// (dash-separated event and framing headers) may be looked up case-insensitively
+/// via their lowercase form.
+///
+/// Returns `Some(key.to_ascii_lowercase())` when aliasing applies, `None` for
+/// underscore-containing keys.
+pub fn case_alias_key(key: &str) -> Option<String> {
+    if key.contains('_') {
+        None
+    } else {
+        Some(key.to_ascii_lowercase())
+    }
+}
+
 /// Normalize a header key to its canonical form for case-insensitive storage.
 ///
 /// FreeSWITCH's C ESL uses case-insensitive header lookups (`strcasecmp`), but
@@ -207,9 +226,7 @@ sip_header::define_header_enum! {
 /// **Strategy:**
 /// 1. Known [`EventHeader`] variants are matched first (case-insensitive) and
 ///    returned in their canonical wire form (e.g. `unique-id` → `Unique-ID`).
-/// 2. Unknown keys containing underscores are returned **unchanged** -- these
-///    are channel variables (`variable_*`) or `sip_h_*` passthrough headers
-///    where the suffix preserves the original SIP header casing.
+/// 2. Keys containing underscores pass through verbatim (see [`case_alias_key`]).
 /// 3. Unknown dash-separated keys are Title-Cased to match FreeSWITCH's
 ///    dominant convention for event and framing headers.
 pub fn normalize_header_key(raw: &str) -> String {
@@ -218,7 +235,7 @@ pub fn normalize_header_key(raw: &str) -> String {
             .as_str()
             .to_string();
     }
-    if raw.contains('_') {
+    if case_alias_key(raw).is_none() {
         raw.to_string()
     } else {
         title_case_dashes(raw)
@@ -823,5 +840,24 @@ mod tests {
                 .unwrap();
             assert_eq!(parsed, v, "round-trip failed for {wire}");
         }
+    }
+
+    #[test]
+    fn case_alias_key_underscore_excluded() {
+        // Underscore keys are excluded from case-insensitive aliasing.
+        assert_eq!(case_alias_key("variable_foo"), None);
+        assert_eq!(case_alias_key("sip_h_Call-Info"), None);
+        assert_eq!(case_alias_key("sip_i_contact"), None);
+    }
+
+    #[test]
+    fn case_alias_key_dash_keys_lowercased() {
+        // Dash-separated keys return their lowercase alias.
+        assert_eq!(
+            case_alias_key("Content-Type"),
+            Some("content-type".to_string())
+        );
+        assert_eq!(case_alias_key("UNIQUE-ID"), Some("unique-id".to_string()));
+        assert_eq!(case_alias_key("reply-text"), Some("reply-text".to_string()));
     }
 }

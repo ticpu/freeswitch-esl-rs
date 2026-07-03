@@ -1,6 +1,6 @@
 //! ESL event types and structures
 
-use crate::headers::{normalize_header_key, EventHeader};
+use crate::headers::{case_alias_key, normalize_header_key, EventHeader};
 use crate::lookup::HeaderLookup;
 use crate::lossy_values::LossyValues;
 use crate::sofia::SofiaEventSubclass;
@@ -1037,7 +1037,7 @@ impl EslEvent {
     pub fn set_header(&mut self, name: impl Into<String>, value: impl Into<String>) {
         let original = name.into();
         let normalized = normalize_header_key(&original);
-        if original != normalized {
+        if case_alias_key(&original).is_some() && original != normalized {
             self.original_keys
                 .insert(original, normalized.clone());
         }

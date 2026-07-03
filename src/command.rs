@@ -4,7 +4,7 @@ use crate::{
     constants::{HEADER_REPLY_TEXT, HEADER_TERMINATOR, LINE_TERMINATOR},
     error::{EslError, EslResult},
     event::EslEvent,
-    headers::EventHeader,
+    headers::{case_alias_key, EventHeader},
     lookup::HeaderLookup,
     LossyValues,
 };
@@ -138,8 +138,7 @@ impl EslResponse {
     pub fn new(headers: IndexMap<String, String>, body: Option<String>) -> Self {
         let case_index = headers
             .keys()
-            .filter(|k| !k.contains('_'))
-            .map(|k| (k.to_ascii_lowercase(), k.clone()))
+            .filter_map(|k| case_alias_key(k).map(|alias| (alias, k.clone())))
             .collect();
         let status = match headers
             .get(HEADER_REPLY_TEXT)
