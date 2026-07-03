@@ -2,23 +2,17 @@
 
 use std::fmt;
 
-/// Conference member mute/unmute action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum MuteAction {
-    /// Mute the member's audio.
-    Mute,
-    /// Unmute the member's audio.
-    Unmute,
-}
-
-impl fmt::Display for MuteAction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Mute => f.write_str("mute"),
-            Self::Unmute => f.write_str("unmute"),
-        }
+wire_enum! {
+    /// Conference member mute/unmute action.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum MuteAction {
+        /// Mute the member's audio.
+        Mute => "mute",
+        /// Unmute the member's audio.
+        Unmute => "unmute",
     }
+    error ParseMuteActionError("mute action");
+    tests: mute_action_tests;
 }
 
 /// Mute or unmute a conference member: `conference <name> mute|unmute <member>`.
@@ -54,23 +48,17 @@ impl fmt::Display for ConferenceMute {
     }
 }
 
-/// Conference member hold/unhold action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum HoldAction {
-    /// Place the member on hold with music-on-hold.
-    Hold,
-    /// Return the member to the conference.
-    Unhold,
-}
-
-impl fmt::Display for HoldAction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Hold => f.write_str("hold"),
-            Self::Unhold => f.write_str("unhold"),
-        }
+wire_enum! {
+    /// Conference member hold/unhold action.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum HoldAction {
+        /// Place the member on hold with music-on-hold.
+        Hold => "hold",
+        /// Return the member to the conference.
+        Unhold => "unhold",
     }
+    error ParseHoldActionError("hold action");
+    tests: hold_action_tests;
 }
 
 /// Hold or unhold a conference member: `conference <name> hold|unhold <member> [stream]`.

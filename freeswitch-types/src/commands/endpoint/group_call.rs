@@ -4,52 +4,19 @@ use std::str::FromStr;
 use super::{extract_variables, write_variables};
 use crate::commands::originate::{OriginateError, Variables};
 
-/// Distribution order for group_call dial strings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
-pub enum GroupCallOrder {
-    /// Ring all members simultaneously.
-    All,
-    /// Enterprise-style hunt (try each in order, across domains).
-    Enterprise,
-    /// Ring first available member only.
-    First,
-}
-
-/// Error returned when parsing an unknown group call order string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseGroupCallOrderError(pub String);
-
-impl fmt::Display for ParseGroupCallOrderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown group call order: {}", self.0)
+wire_enum! {
+    /// Distribution order for group_call dial strings.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum GroupCallOrder {
+        /// Ring all members simultaneously.
+        All => "A",
+        /// Enterprise-style hunt (try each in order, across domains).
+        Enterprise => "E",
+        /// Ring first available member only.
+        First => "F",
     }
-}
-
-impl std::error::Error for ParseGroupCallOrderError {}
-
-impl fmt::Display for GroupCallOrder {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::All => f.write_str("A"),
-            Self::Enterprise => f.write_str("E"),
-            Self::First => f.write_str("F"),
-        }
-    }
-}
-
-impl FromStr for GroupCallOrder {
-    type Err = ParseGroupCallOrderError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "A" => Ok(Self::All),
-            "E" => Ok(Self::Enterprise),
-            "F" => Ok(Self::First),
-            _ => Err(ParseGroupCallOrderError(s.to_string())),
-        }
-    }
+    error ParseGroupCallOrderError("group call order");
+    tests: group_call_order_tests;
 }
 
 /// Runtime expression resolving directory group members:
@@ -193,37 +160,5 @@ mod tests {
         let json = serde_json::to_string(&ep).unwrap();
         let parsed: GroupCall = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, ep);
-    }
-
-    #[test]
-    fn group_call_order_display() {
-        assert_eq!(GroupCallOrder::All.to_string(), "A");
-        assert_eq!(GroupCallOrder::Enterprise.to_string(), "E");
-        assert_eq!(GroupCallOrder::First.to_string(), "F");
-    }
-
-    #[test]
-    fn group_call_order_from_str() {
-        assert_eq!(
-            "A".parse::<GroupCallOrder>()
-                .unwrap(),
-            GroupCallOrder::All
-        );
-        assert_eq!(
-            "E".parse::<GroupCallOrder>()
-                .unwrap(),
-            GroupCallOrder::Enterprise
-        );
-        assert_eq!(
-            "F".parse::<GroupCallOrder>()
-                .unwrap(),
-            GroupCallOrder::First
-        );
-        assert!("e"
-            .parse::<GroupCallOrder>()
-            .is_err());
-        assert!("X"
-            .parse::<GroupCallOrder>()
-            .is_err());
     }
 }
