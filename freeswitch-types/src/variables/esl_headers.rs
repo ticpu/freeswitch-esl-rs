@@ -406,6 +406,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_uri_info_structural_failure_is_malformed() {
+        let value = format!(
+            "ARRAY::{}",
+            vec!["<sip:a@example.com>"; crate::variables::MAX_ARRAY_ITEMS + 1].join("|:")
+        );
+        let err = EslHeaders::parse_uri_info(&value).expect_err("over-limit array must fail");
+        assert!(matches!(err, UriInfoError::Malformed(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn parse_history_info_structural_failure_is_malformed() {
+        let value = format!(
+            "ARRAY::{}",
+            vec!["<sip:a@example.com>;index=1"; crate::variables::MAX_ARRAY_ITEMS + 1].join("|:")
+        );
+        let err = EslHeaders::parse_history_info(&value).expect_err("over-limit array must fail");
+        assert!(matches!(err, HistoryInfoError::Malformed(_)), "got {err:?}");
+    }
+
+    #[test]
     fn parse_history_info_array_form() {
         let value = "ARRAY::<sip:a@example.com>;index=1|:<sip:b@example.com>;index=1.1";
         let info = EslHeaders::parse_history_info(value).expect("parse ARRAY form");
