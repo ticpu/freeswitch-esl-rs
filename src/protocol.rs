@@ -23,7 +23,7 @@ use percent_encoding::percent_decode_str;
 /// upstream will turn into new variants here rather than a catch-all
 /// `Unknown` — unrecognized content-types are now hard protocol errors,
 /// surfaced by [`MessageType::from_content_type`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum MessageType {
     /// Authentication request from server
@@ -279,30 +279,34 @@ impl EslParser {
                     Ok(None)
                 }
             }
-            ParseState::WaitingForBody {
-                message_type,
-                headers,
-                body_length,
-            } => {
-                if let Some(body_data) = self
+            ParseState::WaitingForBody { body_length, .. } => {
+                let body_length = *body_length;
+                if self
                     .buffer
-                    .extract_bytes(*body_length)
+                    .len()
+                    < body_length
                 {
-                    // Compact buffer to free consumed body data
-                    self.buffer
-                        .compact();
-
-                    let body_str = String::from_utf8(body_data)
-                        .map_err(|_| EslError::protocol_error("Invalid UTF-8 in body"))?;
-
-                    let message =
-                        EslMessage::new(message_type.clone(), headers.clone(), Some(body_str));
-                    self.state = ParseState::WaitingForHeaders;
-                    Ok(Some(message))
-                } else {
-                    // Not enough body data yet
-                    Ok(None)
+                    return Ok(None);
                 }
+                // Enough data: replace state first to move fields out without cloning
+                let ParseState::WaitingForBody {
+                    message_type,
+                    headers,
+                    ..
+                } = std::mem::replace(&mut self.state, ParseState::WaitingForHeaders)
+                else {
+                    // Structurally guaranteed: we just matched this variant above
+                    unreachable!("state is WaitingForBody: just matched")
+                };
+                let body_data = self
+                    .buffer
+                    .extract_bytes(body_length)
+                    .expect("body_length <= buffer.len(): verified before state replace");
+                self.buffer
+                    .compact();
+                let body_str = String::from_utf8(body_data)
+                    .map_err(|_| EslError::protocol_error("Invalid UTF-8 in body"))?;
+                Ok(Some(EslMessage::new(message_type, headers, Some(body_str))))
             }
         }
     }
@@ -512,22 +516,22 @@ impl EslParser {
 
         let mut event = EslEvent::new();
 
-        if let Some(obj) = json_value.as_object() {
-            for (key, value) in obj {
+        if let serde_json::Value::Object(map) = json_value {
+            for (key, value) in map {
                 // FreeSWITCH puts the event body under a "_body" key in JSON events
                 if key == "_body" {
                     let body_str = match value {
-                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::String(s) => s,
                         _ => value.to_string(),
                     };
                     event.set_body(body_str);
                     continue;
                 }
                 let value_str = match value {
-                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::String(s) => s,
                     _ => value.to_string(),
                 };
-                event.set_header(key.clone(), value_str);
+                event.set_header(key, value_str);
             }
         }
 
