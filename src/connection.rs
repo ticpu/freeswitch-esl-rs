@@ -210,6 +210,8 @@ struct SharedState {
     dropped_event_count: AtomicU64,
     /// Auth response from inbound connect (None for outbound)
     auth_response: Option<EslResponse>,
+    /// Whether this is an inbound or outbound ESL connection
+    mode: ConnectionMode,
     /// Re-exec channel caller half (taken by teardown_for_reexec)
     #[cfg(unix)]
     reexec: Mutex<Option<ReexecCaller>>,
@@ -1002,6 +1004,7 @@ impl EslClient {
             parser,
             options,
             Some(auth_response),
+            ConnectionMode::Inbound,
         ))
     }
 
@@ -1069,6 +1072,7 @@ impl EslClient {
             EslParser::new().with_strict_header_utf8(options.strict_header_utf8()),
             options,
             None,
+            ConnectionMode::Outbound,
         )
     }
 
@@ -1103,7 +1107,11 @@ impl EslClient {
             parser.add_data(residual_bytes)?;
         }
         Ok(Self::split_and_spawn_with_options(
-            stream, parser, options, None,
+            stream,
+            parser,
+            options,
+            None,
+            ConnectionMode::Inbound,
         ))
     }
 
@@ -1112,6 +1120,7 @@ impl EslClient {
         parser: EslParser,
         options: EslConnectOptions,
         auth_response: Option<EslResponse>,
+        mode: ConnectionMode,
     ) -> (Self, EslEventStream) {
         let queue_size = options
             .event_queue_size
@@ -1135,6 +1144,7 @@ impl EslClient {
             event_overflow: AtomicBool::new(false),
             dropped_event_count: AtomicU64::new(0),
             auth_response,
+            mode,
             #[cfg(unix)]
             reexec: Mutex::new(Some(ReexecCaller { stop_tx, result_rx })),
         });
@@ -1809,7 +1819,7 @@ impl EslClient {
 
     /// Remove all event filters.
     pub async fn filter_delete_all(&self) -> EslResult<()> {
-        self.filter_delete_raw("all", None)
+        self.send_command_ok(EslCommand::FilterDeleteAll)
             .await
     }
 
@@ -1893,6 +1903,13 @@ impl EslClient {
     pub async fn exit(&self) -> EslResult<EslResponse> {
         self.send_command(EslCommand::Exit)
             .await
+    }
+
+    /// Whether this is an inbound (client→FreeSWITCH) or outbound
+    /// (FreeSWITCH→client) connection.
+    pub fn connection_mode(&self) -> ConnectionMode {
+        self.shared
+            .mode
     }
 
     /// Authentication response from the inbound connect handshake.

@@ -13,6 +13,7 @@ use indexmap::IndexMap;
 use std::borrow::Cow;
 use std::fmt;
 use std::time::Duration;
+use tracing::warn;
 
 /// Wraps a string so `Debug` prints `[REDACTED]` instead of the value.
 ///
@@ -619,6 +620,10 @@ pub enum EslCommand {
     },
     /// Request channel data in outbound mode.
     Connect,
+    /// Remove all event filters.
+    ///
+    /// Prefer this over `FilterDelete { header: "all", .. }`.
+    FilterDeleteAll,
 }
 
 impl EslCommand {
@@ -792,6 +797,13 @@ impl EslCommand {
                     validate_no_newlines(v, "filter delete value")?;
                 }
                 if header == "all" {
+                    if value.is_some() {
+                        warn!(
+                            "FilterDelete with header=\"all\" ignores value; use FilterDeleteAll \
+                             for delete-all or FilterDelete with a specific header to delete by \
+                             value"
+                        );
+                    }
                     Ok(Self::format_simple_command("filter", &["delete", "all"]))
                 } else {
                     Ok(match value {
@@ -799,6 +811,9 @@ impl EslCommand {
                         None => Self::format_simple_command("filter", &["delete", header]),
                     })
                 }
+            }
+            EslCommand::FilterDeleteAll => {
+                Ok(Self::format_simple_command("filter", &["delete", "all"]))
             }
             EslCommand::DivertEvents { on } => {
                 let arg = if *on { "on" } else { "off" };
