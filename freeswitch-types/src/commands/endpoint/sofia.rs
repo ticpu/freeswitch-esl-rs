@@ -2,7 +2,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use super::{extract_variables, strip_endpoint_prefix, write_variables};
-use crate::commands::originate::{OriginateError, Variables};
+use crate::commands::originate::OriginateError;
+use crate::commands::variables::Variables;
 
 /// SIP endpoint via a named profile: `sofia/{profile}/{destination}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -248,7 +249,7 @@ impl FromStr for SofiaContact {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::originate::VariablesType;
+    use crate::commands::variables::VariablesType;
 
     // --- SofiaEndpoint ---
 

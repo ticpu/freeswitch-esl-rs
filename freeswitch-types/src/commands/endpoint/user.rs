@@ -2,7 +2,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use super::{strip_endpoint_prefix, write_variables};
-use crate::commands::originate::{OriginateError, Variables};
+use crate::commands::originate::OriginateError;
+use crate::commands::variables::Variables;
 
 /// Directory-based endpoint: `user/{name}[@{domain}]`.
 #[derive(Debug, Clone, PartialEq, Eq)]

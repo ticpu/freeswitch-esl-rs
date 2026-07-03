@@ -2,7 +2,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use super::{strip_endpoint_prefix, write_variables};
-use crate::commands::originate::{OriginateError, Variables};
+use crate::commands::originate::OriginateError;
+use crate::commands::variables::Variables;
 
 /// Internal loopback endpoint: `loopback/{extension}[/{context}]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +80,7 @@ impl FromStr for LoopbackEndpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::originate::VariablesType;
+    use crate::commands::variables::VariablesType;
 
     #[test]
     fn loopback_display_no_context() {

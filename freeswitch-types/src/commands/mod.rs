@@ -13,6 +13,7 @@ pub mod channel;
 pub mod conference;
 pub mod endpoint;
 pub mod originate;
+pub mod variables;
 
 pub use bridge::BridgeDialString;
 pub use channel::{

@@ -1,7 +1,8 @@
 use std::fmt;
 
 use super::{extract_variables, write_variables};
-use crate::commands::originate::{OriginateError, Variables};
+use crate::commands::originate::OriginateError;
+use crate::commands::variables::Variables;
 
 /// Audio device endpoint for portaudio, pulseaudio, or ALSA modules.
 ///

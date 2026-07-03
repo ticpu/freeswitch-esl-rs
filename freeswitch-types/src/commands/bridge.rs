@@ -8,7 +8,8 @@ use std::str::FromStr;
 
 use super::endpoint::Endpoint;
 use super::find_matching_bracket;
-use super::originate::{OriginateError, Variables};
+use super::originate::OriginateError;
+use super::variables::Variables;
 
 /// Typed bridge dial string.
 ///
@@ -183,7 +184,7 @@ fn split_respecting_brackets(s: &str, sep: char) -> Vec<&str> {
 mod tests {
     use super::*;
     use crate::commands::endpoint::{ErrorEndpoint, LoopbackEndpoint, SofiaEndpoint, SofiaGateway};
-    use crate::commands::originate::VariablesType;
+    use crate::commands::variables::VariablesType;
 
     // === Display ===
 

@@ -23,7 +23,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use super::find_matching_bracket;
-use super::originate::{OriginateError, Variables};
+use super::originate::OriginateError;
+use super::variables::Variables;
 
 /// Common interface for anything that formats as a FreeSWITCH dial string.
 ///
@@ -331,7 +332,7 @@ impl DialString for Endpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::originate::VariablesType;
+    use crate::commands::variables::VariablesType;
 
     // --- extract_variables depth-aware bracket matching ---
 

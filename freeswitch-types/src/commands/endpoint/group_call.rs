@@ -2,7 +2,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use super::{extract_variables, write_variables};
-use crate::commands::originate::{OriginateError, Variables};
+use crate::commands::originate::OriginateError;
+use crate::commands::variables::Variables;
 
 wire_enum! {
     /// Distribution order for group_call dial strings.
