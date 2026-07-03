@@ -4,12 +4,15 @@ use crate::{
     constants::*,
     error::{EslError, EslResult},
 };
-use bytes::{BufMut, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 
 /// Buffer wrapper for efficient ESL protocol parsing
 pub struct EslBuffer {
     buffer: BytesMut,
-    position: usize,
+    /// How far into `buffer` we have already scanned for a pattern.
+    /// Backed up by `pattern_len - 1` on each new search to catch patterns
+    /// that straddle the previously-scanned boundary.
+    scan_offset: usize,
 }
 
 impl EslBuffer {
@@ -17,15 +20,14 @@ impl EslBuffer {
     pub fn new() -> Self {
         Self {
             buffer: BytesMut::with_capacity(BUF_CHUNK),
-            position: 0,
+            scan_offset: 0,
         }
     }
 
-    /// Get current length of data in buffer
+    /// Get current length of unconsumed data in buffer
     pub fn len(&self) -> usize {
         self.buffer
             .len()
-            - self.position
     }
 
     /// Extend buffer with more data
@@ -57,12 +59,12 @@ impl EslBuffer {
             .extend_from_slice(data);
     }
 
-    /// Get reference to current data
+    /// Get reference to unconsumed data
     pub fn data(&self) -> &[u8] {
-        &self.buffer[self.position..]
+        &self.buffer
     }
 
-    /// Consume bytes from the front of buffer.
+    /// Consume bytes from the front of the buffer.
     ///
     /// Returns `Err` if `count` exceeds the available data.
     pub fn advance(&mut self, count: usize) -> EslResult<()> {
@@ -73,66 +75,89 @@ impl EslBuffer {
                 count, available
             )));
         }
-        self.position += count;
+        self.buffer
+            .advance(count);
+        self.scan_offset = self
+            .scan_offset
+            .saturating_sub(count);
         Ok(())
     }
 
-    /// Find position of pattern in buffer, starting from current position
-    pub fn find_pattern(&self, pattern: &[u8]) -> Option<usize> {
-        let data = self.data();
-        if pattern.is_empty() || data.len() < pattern.len() {
+    /// Find the position of `pattern` in the buffer using `memchr::memmem`.
+    ///
+    /// A scan-offset watermark avoids re-scanning bytes that were already
+    /// searched in a previous call. On each call the search starts from
+    /// `watermark - (pattern.len() - 1)` to catch patterns that straddle
+    /// the old boundary. The watermark advances to the end of the buffer on
+    /// a miss, and to just past the found pattern on a hit.
+    pub fn find_pattern(&mut self, pattern: &[u8]) -> Option<usize> {
+        if pattern.is_empty()
+            || self
+                .buffer
+                .len()
+                < pattern.len()
+        {
             return None;
         }
-
-        (0..=(data.len() - pattern.len())).find(|&i| data[i..i + pattern.len()] == *pattern)
-    }
-
-    /// Extract data up to (but not including) the pattern
-    pub fn extract_until_pattern(&mut self, pattern: &[u8]) -> Option<Vec<u8>> {
-        if let Some(pos) = self.find_pattern(pattern) {
-            let result = self.data()[..pos].to_vec();
-            self.advance(pos + pattern.len())
-                .expect("advance(pos + pattern.len()) is in bounds: pos was just located by find_pattern()");
-            Some(result)
+        // Back up enough to catch a pattern straddling the previous watermark
+        let start = self
+            .scan_offset
+            .saturating_sub(
+                pattern
+                    .len()
+                    .saturating_sub(1),
+            );
+        let search_slice = &self.buffer[start..];
+        if let Some(rel_pos) = memchr::memmem::find(search_slice, pattern) {
+            let abs_pos = start + rel_pos;
+            self.scan_offset = abs_pos + pattern.len();
+            Some(abs_pos)
         } else {
-            None
-        }
-    }
-
-    /// Extract exact number of bytes
-    pub fn extract_bytes(&mut self, count: usize) -> Option<Vec<u8>> {
-        if self.len() >= count {
-            let result = self.data()[..count].to_vec();
-            self.advance(count)
-                .expect("advance(count) is in bounds: self.len() >= count just checked above");
-            Some(result)
-        } else {
-            None
-        }
-    }
-
-    /// Compact buffer by removing consumed data
-    pub fn compact(&mut self) {
-        if self.position > 0 {
-            let remaining_len = self.len();
-            if remaining_len > 0 {
-                // Move remaining data to front
-                self.buffer
-                    .copy_within(self.position.., 0);
-            }
-            self.buffer
-                .truncate(remaining_len);
-            self.position = 0;
-
-            // Reserve more space if needed
-            if self
+            self.scan_offset = self
                 .buffer
-                .capacity()
-                < BUF_CHUNK
-            {
-                self.buffer
-                    .reserve(BUF_CHUNK);
-            }
+                .len();
+            None
+        }
+    }
+
+    /// Extract data up to (but not including) the pattern, consuming through
+    /// the end of the pattern.
+    pub fn extract_until_pattern(&mut self, pattern: &[u8]) -> Option<Vec<u8>> {
+        let pos = self.find_pattern(pattern)?;
+        let result = self.buffer[..pos].to_vec();
+        self.buffer
+            .advance(pos + pattern.len());
+        self.scan_offset = 0;
+        Some(result)
+    }
+
+    /// Extract exact number of bytes from the front of the buffer.
+    pub fn extract_bytes(&mut self, count: usize) -> Option<Vec<u8>> {
+        if self
+            .buffer
+            .len()
+            < count
+        {
+            return None;
+        }
+        let result = self.buffer[..count].to_vec();
+        self.buffer
+            .advance(count);
+        self.scan_offset = self
+            .scan_offset
+            .saturating_sub(count);
+        Some(result)
+    }
+
+    /// Ensure minimum write capacity; BytesMut handles internal compaction.
+    pub fn compact(&mut self) {
+        if self
+            .buffer
+            .remaining_mut()
+            < BUF_CHUNK
+        {
+            self.buffer
+                .reserve(BUF_CHUNK);
         }
     }
 
@@ -262,5 +287,20 @@ mod tests {
             matches!(err, crate::EslError::BufferOverflow { .. }),
             "expected BufferOverflow, got: {err}"
         );
+    }
+
+    /// Pattern spanning the watermark boundary must still be found when
+    /// data arrives in two chunks split inside the pattern.
+    #[test]
+    fn test_find_pattern_straddling_watermark() {
+        let mut buffer = EslBuffer::new();
+        // First chunk ends mid-pattern: \r\n\r is the start but \n is missing
+        buffer.extend_from_slice(b"hello\r\n\r");
+        assert_eq!(buffer.find_pattern(b"\r\n\r\n"), None);
+
+        // Second chunk completes the pattern
+        buffer.extend_from_slice(b"\nworld");
+        // Must find the pattern at position 5, not miss it due to watermark skip
+        assert_eq!(buffer.find_pattern(b"\r\n\r\n"), Some(5));
     }
 }

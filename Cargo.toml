@@ -23,6 +23,7 @@ freeswitch-types = { path = "freeswitch-types", version = "1.2" }
 indexmap = "2"
 tokio = { version = "1.47", features = ["net", "io-util", "rt", "rt-multi-thread", "sync", "time", "macros"] }
 bytes = "1.11"
+memchr = "2.7"
 thiserror = "2.0"
 serde_json = "1.0"
 quick-xml = { version = "0.39", features = ["serialize"] }
