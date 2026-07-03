@@ -1639,4 +1639,14 @@ mod tests {
             "ARRAY:: entries should expand"
         );
     }
+
+    #[test]
+    fn test_filter_delete_all_variant_wire_format() {
+        let cmd = EslCommand::FilterDeleteAll;
+        assert_eq!(
+            cmd.to_wire_format()
+                .unwrap(),
+            "filter delete all\n\n"
+        );
+    }
 }

@@ -3,8 +3,9 @@
 mod mock_server;
 
 use freeswitch_esl_tokio::{
-    ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions, EslError, EslEvent,
-    EslEventStream, EslEventType, EventFormat, EventHeader, HeaderLookup, DEFAULT_ESL_PASSWORD,
+    ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions, EslError,
+    EslEvent, EslEventStream, EslEventType, EventFormat, EventHeader, HeaderLookup,
+    DEFAULT_ESL_PASSWORD,
 };
 use mock_server::{
     setup_connected_pair, setup_connected_pair_with_options, MockClient, MockEslServer,
@@ -1700,4 +1701,31 @@ async fn connect_refused_returns_connection_error() {
         err.is_connection_error(),
         "connection refused should be a connection error, got: {err}"
     );
+}
+
+#[tokio::test]
+async fn test_connection_mode_inbound() {
+    let (_, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    assert_eq!(client.connection_mode(), ConnectionMode::Inbound);
+}
+
+#[tokio::test]
+async fn test_connection_mode_outbound() {
+    use tokio::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let port = listener
+        .local_addr()
+        .unwrap()
+        .port();
+
+    let (accept_result, _mock_stream) = tokio::join!(
+        EslClient::accept_outbound(&listener),
+        TcpStream::connect(("127.0.0.1", port))
+    );
+
+    let (client, _events) = accept_result.unwrap();
+    assert_eq!(client.connection_mode(), ConnectionMode::Outbound);
 }
