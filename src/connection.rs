@@ -53,17 +53,6 @@ struct ReexecReader {
     result_tx: Option<oneshot::Sender<ReexecResult>>,
 }
 
-fn event_types_to_string<T: Borrow<EslEventType>>(events: impl IntoIterator<Item = T>) -> String {
-    events
-        .into_iter()
-        .map(|e| {
-            e.borrow()
-                .as_str()
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Connection status for ESL client
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1356,24 +1345,68 @@ impl EslClient {
         format: EventFormat,
         events: impl IntoIterator<Item = T>,
     ) -> EslResult<()> {
-        let events: Vec<EslEventType> = events
-            .into_iter()
-            .map(|e| *e.borrow())
-            .collect();
-        let events_str = if events.contains(&EslEventType::All) {
-            "ALL".to_string()
-        } else {
-            event_types_to_string(events)
-        };
-
-        let cmd = EslCommand::Events {
-            format: format.to_string(),
-            events: events_str,
-        };
-
-        self.send_command_ok(cmd)
+        let sub = freeswitch_types::EventSubscription::new(format).events(events);
+        self.send_subscription_events(&sub)
             .await?;
         info!("Subscribed to events with format {:?}", format);
+        Ok(())
+    }
+
+    /// Send the ESL `event` command for a subscription.
+    ///
+    /// Does nothing if the subscription has no events, raw events, or custom
+    /// subclasses. Delegates ALL-collapse to [`EventSubscription::to_event_string`].
+    async fn send_subscription_events(
+        &self,
+        sub: &freeswitch_types::EventSubscription,
+    ) -> EslResult<()> {
+        if let Some(events_str) = sub.to_event_string() {
+            let cmd = EslCommand::Events {
+                format: sub
+                    .format()
+                    .to_string(),
+                events: events_str,
+            };
+            self.send_command_ok(cmd)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Send ESL `filter` commands for each (header, value) pair.
+    async fn apply_filters(&self, filters: &[(String, String)]) -> EslResult<()> {
+        for (header, value) in filters {
+            self.filter_raw(header, value)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Send `nixevent` for strings present in `old` but absent from `new`.
+    ///
+    /// `prefix` is prepended to the joined event name list (use `"CUSTOM "` for
+    /// custom subclasses, `""` for plain event names).
+    async fn nixevent_str_diff<'a>(
+        &self,
+        old: &'a [String],
+        new: &'a [String],
+        prefix: &str,
+    ) -> EslResult<()> {
+        use std::collections::HashSet;
+        let new_set: HashSet<&str> = new
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let removed: Vec<&str> = old
+            .iter()
+            .map(|s| s.as_str())
+            .filter(|s| !new_set.contains(s))
+            .collect();
+        if !removed.is_empty() {
+            let nixevent_str = format!("{}{}", prefix, removed.join(" "));
+            self.nixevent_raw(&nixevent_str)
+                .await?;
+        }
         Ok(())
     }
 
@@ -1446,21 +1479,10 @@ impl EslClient {
         &self,
         sub: &freeswitch_types::EventSubscription,
     ) -> EslResult<()> {
-        for (header, value) in sub.filters() {
-            self.filter_raw(header, value)
-                .await?;
-        }
-        if let Some(events_str) = sub.to_event_string() {
-            let cmd = EslCommand::Events {
-                format: sub
-                    .format()
-                    .to_string(),
-                events: events_str,
-            };
-            self.send_command_ok(cmd)
-                .await?;
-        }
-        Ok(())
+        self.apply_filters(sub.filters())
+            .await?;
+        self.send_subscription_events(sub)
+            .await
     }
 
     /// Replace the current subscription with a new one.
@@ -1483,41 +1505,21 @@ impl EslClient {
     /// before old ones are removed, so no desired event type is ever
     /// unsubscribed.
     pub async fn resubscribe(&self, sub: &freeswitch_types::EventSubscription) -> EslResult<()> {
-        // Step 1: add new event types (additive, no gap)
-        if let Some(events_str) = sub.to_event_string() {
-            let cmd = EslCommand::Events {
-                format: sub
-                    .format()
-                    .to_string(),
-                events: events_str.clone(),
-            };
-            self.send_command_ok(cmd)
-                .await?;
-        }
+        // Step 1: add new event types (additive, no gap yet)
+        self.send_subscription_events(sub)
+            .await?;
 
         // Step 2: replace filters
         self.filter_delete_all()
             .await?;
-        for (header, value) in sub.filters() {
-            self.filter_raw(header, value)
-                .await?;
-        }
+        self.apply_filters(sub.filters())
+            .await?;
 
-        // Step 3: clear stale event types and re-apply clean
+        // Step 3: clear stale event types and re-apply (loss window: see doc)
         self.noevents()
             .await?;
-        if let Some(events_str) = sub.to_event_string() {
-            let cmd = EslCommand::Events {
-                format: sub
-                    .format()
-                    .to_string(),
-                events: events_str,
-            };
-            self.send_command_ok(cmd)
-                .await?;
-        }
-
-        Ok(())
+        self.send_subscription_events(sub)
+            .await
     }
 
     /// Replace the current subscription using a diff against the old one.
@@ -1557,26 +1559,16 @@ impl EslClient {
             .collect();
 
         // Step 1: subscribe to added event types + custom subclasses
-        if let Some(events_str) = new.to_event_string() {
-            let cmd = EslCommand::Events {
-                format: new
-                    .format()
-                    .to_string(),
-                events: events_str,
-            };
-            self.send_command_ok(cmd)
-                .await?;
-        }
+        self.send_subscription_events(new)
+            .await?;
 
         // Step 2: replace filters
         self.filter_delete_all()
             .await?;
-        for (header, value) in new.filters() {
-            self.filter_raw(header, value)
-                .await?;
-        }
+        self.apply_filters(new.filters())
+            .await?;
 
-        // Step 3: nixevent removed event types
+        // Step 3: nixevent removed typed event types
         let removed_types: Vec<EslEventType> = old_types
             .difference(&new_types)
             .copied()
@@ -1587,54 +1579,16 @@ impl EslClient {
         }
 
         // Step 4: nixevent removed raw-named events
-        let old_raw: HashSet<&str> = old
-            .event_types_raw()
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        let new_raw: HashSet<&str> = new
-            .event_types_raw()
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        let removed_raw: Vec<&&str> = old_raw
-            .difference(&new_raw)
-            .collect();
-        if !removed_raw.is_empty() {
-            let nixevent_str = removed_raw
-                .iter()
-                .map(|s| **s)
-                .collect::<Vec<_>>()
-                .join(" ");
-            self.nixevent_raw(&nixevent_str)
-                .await?;
-        }
+        self.nixevent_str_diff(old.event_types_raw(), new.event_types_raw(), "")
+            .await?;
 
         // Step 5: nixevent removed custom subclasses
-        let old_subclasses: HashSet<&str> = old
-            .custom_subclass_list()
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        let new_subclasses: HashSet<&str> = new
-            .custom_subclass_list()
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        let removed_subclasses: Vec<&&str> = old_subclasses
-            .difference(&new_subclasses)
-            .collect();
-        if !removed_subclasses.is_empty() {
-            let nixevent_str = removed_subclasses
-                .iter()
-                .map(|s| **s)
-                .collect::<Vec<_>>()
-                .join(" ");
-            self.nixevent_raw(&format!("CUSTOM {nixevent_str}"))
-                .await?;
-        }
-
-        Ok(())
+        self.nixevent_str_diff(
+            old.custom_subclass_list(),
+            new.custom_subclass_list(),
+            "CUSTOM ",
+        )
+        .await
     }
 
     /// Execute application on channel.
@@ -1766,7 +1720,15 @@ impl EslClient {
         &self,
         events: impl IntoIterator<Item = T>,
     ) -> EslResult<()> {
-        self.nixevent_raw(&event_types_to_string(events))
+        let s = events
+            .into_iter()
+            .map(|e| {
+                e.borrow()
+                    .as_str()
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.nixevent_raw(&s)
             .await
     }
 
