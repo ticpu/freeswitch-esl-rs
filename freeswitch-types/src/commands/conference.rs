@@ -227,4 +227,48 @@ mod tests {
         };
         assert_eq!(cmd.to_string(), "conference conf1 dtmf all 1234");
     }
+
+    #[test]
+    fn mute_action_from_str() {
+        assert_eq!(
+            "mute"
+                .parse::<MuteAction>()
+                .unwrap(),
+            MuteAction::Mute
+        );
+        assert_eq!(
+            "unmute"
+                .parse::<MuteAction>()
+                .unwrap(),
+            MuteAction::Unmute
+        );
+        assert!("Mute"
+            .parse::<MuteAction>()
+            .is_err());
+        assert!("MUTE"
+            .parse::<MuteAction>()
+            .is_err());
+    }
+
+    #[test]
+    fn hold_action_from_str() {
+        assert_eq!(
+            "hold"
+                .parse::<HoldAction>()
+                .unwrap(),
+            HoldAction::Hold
+        );
+        assert_eq!(
+            "unhold"
+                .parse::<HoldAction>()
+                .unwrap(),
+            HoldAction::Unhold
+        );
+        assert!("Hold"
+            .parse::<HoldAction>()
+            .is_err());
+        assert!("HOLD"
+            .parse::<HoldAction>()
+            .is_err());
+    }
 }
