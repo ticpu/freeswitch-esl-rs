@@ -1,0 +1,149 @@
+#[cfg(unix)]
+use std::sync::atomic::Ordering;
+#[cfg(unix)]
+use std::time::Duration;
+#[cfg(unix)]
+use tokio::sync::oneshot;
+#[cfg(unix)]
+use tokio::time::timeout;
+#[cfg(unix)]
+use tracing::info;
+
+#[cfg(unix)]
+use crate::error::{EslError, EslResult};
+
+#[cfg(unix)]
+use super::{ConnectionStatus, DisconnectReason, EslClient};
+
+/// Result type for the reexec drain operation (residual bytes or error).
+#[cfg(unix)]
+pub(crate) type ReexecResult = Result<Vec<u8>, EslError>;
+
+/// Caller-side half of the re-exec channel (stored in `SharedState`).
+///
+/// Taken by [`EslClient::teardown_for_reexec()`] to signal the reader and
+/// receive residual bytes.
+#[cfg(unix)]
+pub(super) struct ReexecCaller {
+    pub(super) stop_tx: oneshot::Sender<()>,
+    pub(super) result_rx: oneshot::Receiver<ReexecResult>,
+}
+
+/// Reader-side half of the re-exec channel.
+///
+/// Owned by the reader loop task. The stop receiver fires when teardown is
+/// requested; the result sender delivers residual bytes back to the caller.
+/// On non-unix platforms this is a zero-size struct (re-exec is unix-only).
+pub(crate) struct ReexecReader {
+    #[cfg(unix)]
+    pub(crate) stop_rx: oneshot::Receiver<()>,
+    #[cfg(unix)]
+    pub(crate) result_tx: Option<oneshot::Sender<ReexecResult>>,
+}
+
+#[cfg(unix)]
+impl EslClient {
+    /// Gracefully stop the reader loop and return the raw socket fd and any
+    /// unparsed bytes remaining in the parser buffer.
+    ///
+    /// Used for zero-downtime binary upgrades via `exec()`. The caller
+    /// serializes application state, clears `CLOEXEC` on the returned fd,
+    /// and calls `exec()`. The new process reconstructs the connection with
+    /// [`adopt_stream()`](Self::adopt_stream).
+    ///
+    /// # Preconditions
+    ///
+    /// - No ESL command may be in-flight (pending reply). Returns
+    ///   [`EslError::ReexecFailed`] if a command is pending.
+    /// - May only be called once. Returns an error on subsequent calls.
+    ///
+    /// # After this call
+    ///
+    /// - The connection status is set to
+    ///   [`DisconnectReason::ReexecTeardown`], so all clones see the
+    ///   connection as dead.
+    /// - The caller **must not drop** the `EslClient` before `exec()` (or
+    ///   must [`std::mem::forget`] it) to keep the fd open.
+    /// - The caller is responsible for clearing `CLOEXEC` on the fd.
+    pub async fn teardown_for_reexec(&self) -> EslResult<(std::os::unix::io::RawFd, Vec<u8>)> {
+        use crate::constants::REEXEC_DRAIN_TIMEOUT_MS;
+        use std::os::unix::io::AsRawFd;
+
+        // Reject if a command is in-flight
+        {
+            let pending = self
+                .shared
+                .pending_reply
+                .lock()
+                .await;
+            if pending
+                .waiting
+                .is_some()
+            {
+                return Err(EslError::ReexecFailed {
+                    reason: "command still in-flight".into(),
+                });
+            }
+        }
+
+        // Take the reexec channel (one-shot: fails on second call)
+        let reexec = {
+            let mut guard = self
+                .shared
+                .reexec
+                .lock()
+                .await;
+            guard
+                .take()
+                .ok_or_else(|| EslError::ReexecFailed {
+                    reason: "teardown already called".into(),
+                })?
+        };
+
+        // Disable liveness to prevent HeartbeatExpired race
+        self.shared
+            .liveness_timeout_ms
+            .store(0, Ordering::Relaxed);
+
+        let _ = reexec
+            .stop_tx
+            .send(());
+
+        // Wait for reader to drain and return residual bytes.
+        // Extra 1s margin so the reader's own drain timeout fires first
+        // with a descriptive error.
+        let outer_timeout = Duration::from_millis(REEXEC_DRAIN_TIMEOUT_MS) + Duration::from_secs(1);
+        let residual = timeout(outer_timeout, reexec.result_rx)
+            .await
+            .map_err(|e| EslError::ReexecFailed {
+                reason: format!("timed out waiting for reader to stop: {e}"),
+            })?
+            .map_err(|e| EslError::ReexecFailed {
+                reason: format!("reader task exited without sending result: {e}"),
+            })??;
+
+        // Get fd from writer
+        let writer = self
+            .writer
+            .lock()
+            .await;
+        let fd = writer
+            .as_ref()
+            .as_raw_fd();
+
+        // Mark connection as dead so other clones see it
+        let _ = self
+            .shared
+            .status_tx
+            .send(ConnectionStatus::Disconnected(
+                DisconnectReason::ReexecTeardown,
+            ));
+
+        info!(
+            "Re-exec teardown complete, fd={}, {} residual bytes",
+            fd,
+            residual.len()
+        );
+        Ok((fd, residual))
+    }
+}
