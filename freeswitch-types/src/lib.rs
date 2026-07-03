@@ -1,4 +1,7 @@
 //! FreeSWITCH protocol types: channel state, events, headers, commands, and variables.
+// The esl_event_types! macro uses TT-munching filter arms over ~90 variants,
+// requiring a higher recursion limit than the default 128.
+#![recursion_limit = "512"]
 //!
 //! This crate provides the domain types for FreeSWITCH's Event Socket Library (ESL)
 //! protocol without any async runtime dependency. Use it standalone for CDR parsing,
