@@ -137,8 +137,8 @@ impl EslHeaders {
     ///
     /// Returns [`UriInfoError`] if the value is malformed or if the `ARRAY::`
     /// structure is invalid. Structural `EslArrayError` cases (e.g.
-    /// `TooManyItems`) are surfaced via [`UriInfoError::MissingAngleBrackets`]
-    /// carrying the cause so operators see the actual reason in logs.
+    /// `TooManyItems`) are surfaced as [`UriInfoError::Malformed`] carrying
+    /// the cause.
     ///
     /// # Example
     ///
@@ -160,12 +160,7 @@ impl EslHeaders {
                     .map(String::as_str),
             ),
             Err(EslArrayError::MissingPrefix) => UriInfo::parse(value),
-            // Upstream UriInfoError lacks a generic "structural array
-            // failure" variant; carry the cause in MissingAngleBrackets so
-            // operators see the actual reason in logs.
-            Err(other) => Err(UriInfoError::MissingAngleBrackets(format!(
-                "ARRAY:: parse failed: {other}"
-            ))),
+            Err(other) => Err(UriInfoError::Malformed(other.to_string())),
         }
     }
 
@@ -177,8 +172,7 @@ impl EslHeaders {
     /// # Errors
     ///
     /// Structural `EslArrayError` cases (e.g. `TooManyItems`) are surfaced as
-    /// [`HistoryInfoError::Empty`] rather than silently falling back — upstream
-    /// lacks a richer variant for non-entry array failures.
+    /// [`HistoryInfoError::Malformed`] carrying the cause.
     pub fn parse_history_info(value: &str) -> Result<HistoryInfo, HistoryInfoError> {
         let value = strip_brackets(value);
         match EslArray::parse(value) {
@@ -189,7 +183,7 @@ impl EslHeaders {
                     .map(String::as_str),
             ),
             Err(EslArrayError::MissingPrefix) => HistoryInfo::parse(value),
-            Err(_) => Err(HistoryInfoError::Empty),
+            Err(other) => Err(HistoryInfoError::Malformed(other.to_string())),
         }
     }
 }
