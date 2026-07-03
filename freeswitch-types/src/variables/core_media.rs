@@ -47,17 +47,7 @@ impl fmt::Display for RtpStatUnit {
     }
 }
 
-/// Error returned when parsing an unrecognized core media variable name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseCoreMediaVariableError(pub String);
-
-impl std::fmt::Display for ParseCoreMediaVariableError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown core media variable: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseCoreMediaVariableError {}
+parse_error! { ParseCoreMediaVariableError("core media variable"); }
 
 sip_header::define_header_enum! {
     error_type: ParseCoreMediaVariableError,

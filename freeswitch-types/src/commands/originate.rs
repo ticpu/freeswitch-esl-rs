@@ -37,17 +37,7 @@ impl fmt::Display for DialplanType {
     }
 }
 
-/// Error returned when parsing an invalid dialplan type string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseDialplanTypeError(pub String);
-
-impl fmt::Display for ParseDialplanTypeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown dialplan type: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseDialplanTypeError {}
+parse_error! { ParseDialplanTypeError("dialplan type"); }
 
 impl FromStr for DialplanType {
     type Err = ParseDialplanTypeError;

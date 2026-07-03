@@ -64,17 +64,7 @@ impl FromStr for EventFormat {
     }
 }
 
-/// Error returned when parsing an invalid event format string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseEventFormatError(pub String);
-
-impl fmt::Display for ParseEventFormatError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown event format: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseEventFormatError {}
+parse_error! { ParseEventFormatError("event format"); }
 
 /// Generates `EslEventType` enum with `Display`, `FromStr`, `as_str`, `parse_event_type`,
 /// and the six predefined event-group constants.
@@ -436,17 +426,7 @@ esl_event_types! {
     StartRecording => "START_RECORDING" [media],
 }
 
-/// Error returned when parsing an unknown event type string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseEventTypeError(pub String);
-
-impl fmt::Display for ParseEventTypeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown event type: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseEventTypeError {}
+parse_error! { ParseEventTypeError("event type"); }
 
 /// Error returned when an [`EventSubscription`] builder method receives invalid input.
 ///

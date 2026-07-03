@@ -1,16 +1,6 @@
 //! Typed event header names for FreeSWITCH ESL events.
 
-/// Error returned when parsing an unrecognized event header name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseEventHeaderError(pub String);
-
-impl std::fmt::Display for ParseEventHeaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown event header: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseEventHeaderError {}
+parse_error! { ParseEventHeaderError("event header"); }
 
 sip_header::define_header_enum! {
     error_type: ParseEventHeaderError,

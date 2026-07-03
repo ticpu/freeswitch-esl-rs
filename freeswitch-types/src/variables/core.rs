@@ -1,16 +1,6 @@
 //! Typed channel variable names from FreeSWITCH core.
 
-/// Error returned when parsing an unrecognized channel variable name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseChannelVariableError(pub String);
-
-impl std::fmt::Display for ParseChannelVariableError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown channel variable: {}", self.0)
-    }
-}
-
-impl std::error::Error for ParseChannelVariableError {}
+parse_error! { ParseChannelVariableError("channel variable"); }
 
 sip_header::define_header_enum! {
     error_type: ParseChannelVariableError,

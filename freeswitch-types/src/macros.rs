@@ -4,6 +4,30 @@
 //! public API. They exist to reduce mechanical repetition in types that are
 //! "wire-string ↔ enum" mappings (see `channel.rs`, `sofia/`).
 
+/// Generate a single-field parse-error newtype.
+///
+/// Expands to `pub struct $Error(pub String)`, a `Display` impl emitting
+/// `"unknown <label>: <value>"`, and `impl std::error::Error`.
+///
+/// ```ignore
+/// parse_error! { ParseFooError("foo"); }
+/// ```
+macro_rules! parse_error {
+    ($Error:ident($label:literal);) => {
+        #[doc = concat!("Error returned when parsing an invalid ", $label, " string.")]
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $Error(pub String);
+
+        impl ::std::fmt::Display for $Error {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                write!(f, concat!("unknown ", $label, ": {}"), self.0)
+            }
+        }
+
+        impl ::std::error::Error for $Error {}
+    };
+}
+
 /// Generate an enum with canonical wire-string mappings and a matching
 /// `Parse<Name>Error` error type.
 ///
@@ -228,18 +252,6 @@ macro_rules! wire_enum {
             }
         }
 
-        #[doc = concat!("Error returned when parsing an invalid ", $label, " string.")]
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        pub struct $Error(pub String);
-
-        impl ::std::fmt::Display for $Error {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                write!(f, concat!("unknown ", $label, ": {}"), self.0)
-            }
-        }
-
-        impl ::std::error::Error for $Error {}
-
         impl ::std::str::FromStr for $Enum {
             type Err = $Error;
             fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -249,5 +261,7 @@ macro_rules! wire_enum {
                 }
             }
         }
+
+        parse_error! { $Error($label); }
     };
 }
