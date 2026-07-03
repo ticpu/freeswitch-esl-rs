@@ -101,6 +101,8 @@ pub enum DisconnectReason {
     ReexecTeardown,
     /// Protocol-level desync (e.g. unsolicited auth/request after login)
     ProtocolError(String),
+    /// Connection rejected by ACL (`text/rude-rejection`)
+    AccessDenied(String),
 }
 
 impl std::fmt::Display for DisconnectReason {
@@ -123,6 +125,7 @@ impl std::fmt::Display for DisconnectReason {
             #[cfg(unix)]
             DisconnectReason::ReexecTeardown => write!(f, "re-exec teardown"),
             DisconnectReason::ProtocolError(msg) => write!(f, "protocol error: {}", msg),
+            DisconnectReason::AccessDenied(msg) => write!(f, "access denied: {}", msg),
         }
     }
 }
@@ -656,9 +659,9 @@ async fn reader_loop_inner(
                         );
                         let _ = shared
                             .status_tx
-                            .send(ConnectionStatus::Disconnected(DisconnectReason::IoError(
-                                reason,
-                            )));
+                            .send(ConnectionStatus::Disconnected(
+                                DisconnectReason::AccessDenied(reason),
+                            ));
                         return;
                     }
                     MessageType::AuthRequest => {
@@ -690,9 +693,9 @@ async fn reader_loop_inner(
                 warn!("Parser error: {}", e);
                 let _ = shared
                     .status_tx
-                    .send(ConnectionStatus::Disconnected(DisconnectReason::IoError(
-                        e.to_string(),
-                    )));
+                    .send(ConnectionStatus::Disconnected(
+                        DisconnectReason::ProtocolError(e.to_string()),
+                    ));
                 return;
             }
         }
@@ -808,9 +811,9 @@ async fn reader_loop_inner(
                     warn!("Buffer error: {}", e);
                     let _ = shared
                         .status_tx
-                        .send(ConnectionStatus::Disconnected(DisconnectReason::IoError(
-                            e.to_string(),
-                        )));
+                        .send(ConnectionStatus::Disconnected(
+                            DisconnectReason::ProtocolError(e.to_string()),
+                        ));
                     return;
                 }
             }
