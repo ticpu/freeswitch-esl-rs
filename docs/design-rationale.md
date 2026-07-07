@@ -113,7 +113,11 @@ pointer, creating a data race with concurrent readers.
 
 The alternative we chose — return a connection error, let the caller
 reconnect and rebuild state from a known-good starting point — is more
-work for the caller but produces correct behavior. The `reconnecting_client`
+work for the caller but produces correct behavior. To keep the
+timed-out/died-mid-command distinction honest, every reader-loop exit
+fails the in-flight waiter: a command pending at disconnect returns
+`ConnectionClosed` (`is_connection_error() == true`) immediately instead
+of waiting out the command timeout the way fsock does. The `reconnecting_client`
 example shows the pattern. In practice though, production ESL workloads
 (call tracking, CDR generation, active call control) cannot tolerate an
 event gap at all — the only scenario where the ESL connection drops without
