@@ -85,6 +85,28 @@ pub(super) async fn reader_loop(
                 "reader task panicked".to_string(),
             )));
     }
+    fail_pending_reply(&shared).await;
+}
+
+/// A reader-loop exit means no further replies can arrive on this socket.
+///
+/// The writer lock is held through the whole send-and-wait cycle, so at most
+/// one waiter exists. Dropping its `oneshot::Sender` resolves the awaiting
+/// `send_command`'s `rx` to `Err`, which maps to `EslError::ConnectionClosed`
+/// — instead of the caller waiting out the full command timeout.
+async fn fail_pending_reply(shared: &SharedState) {
+    let mut pending = shared
+        .pending_reply
+        .lock()
+        .await;
+    if pending
+        .waiting
+        .take()
+        .is_some()
+    {
+        debug!("Failing in-flight command waiter: reader loop exited");
+    }
+    pending.stale_replies = 0;
 }
 
 async fn reader_loop_inner(
