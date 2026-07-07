@@ -186,6 +186,42 @@ async fn test_command_after_disconnect() {
 }
 
 #[tokio::test]
+async fn test_inflight_command_woken_on_disconnect() {
+    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+
+    client.set_command_timeout(Duration::from_secs(5));
+
+    let api_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("status")
+                .await
+        }
+    });
+
+    // Server reads the command, then closes the socket without replying.
+    let _cmd = mock
+        .read_command()
+        .await;
+    mock.drop_connection()
+        .await;
+
+    // The in-flight command must fail well under command_timeout_ms, with a
+    // connection-class error — not EslError::Timeout at the timeout boundary.
+    let err = tokio::time::timeout(Duration::from_secs(1), api_task)
+        .await
+        .expect("in-flight command still blocked after disconnect")
+        .expect("api task panicked")
+        .expect_err("command should fail on disconnect");
+    assert!(err.is_connection_error(), "got: {err}");
+    match err {
+        EslError::ConnectionClosed => {}
+        e => panic!("Expected ConnectionClosed, got: {}", e),
+    }
+}
+
+#[tokio::test]
 async fn test_subscribe_permission_denied_recoverable() {
     let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
 
