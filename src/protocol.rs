@@ -82,6 +82,9 @@ pub struct EslMessage {
     pub headers: IndexMap<String, String>,
     /// Message body (optional)
     pub body: Option<String>,
+    /// Exact wire bytes of a body that was not valid UTF-8; `body` then
+    /// holds the U+FFFD-substituted string. `None` in the normal case.
+    pub raw_body: Option<Vec<u8>>,
     /// Header keys whose percent-decoded value was not valid UTF-8 and was
     /// decoded lossily. Empty for framing-only envelopes; populated for
     /// serialized responses such as the outbound `connect` channel data.
@@ -99,6 +102,7 @@ impl EslMessage {
             message_type,
             headers,
             body,
+            raw_body: None,
             lossy_values: LossyValues::default(),
         }
     }
@@ -111,7 +115,9 @@ impl EslMessage {
 
     /// Convert to EslResponse
     pub fn into_response(self) -> EslResponse {
-        EslResponse::new(self.headers, self.body).with_lossy_values(self.lossy_values)
+        EslResponse::new(self.headers, self.body)
+            .with_lossy_values(self.lossy_values)
+            .with_raw_body(self.raw_body)
     }
 }
 

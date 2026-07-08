@@ -117,6 +117,9 @@ pub enum ReplyStatus {
 pub struct EslResponse {
     headers: IndexMap<String, String>,
     body: Option<String>,
+    /// Exact wire bytes of a body that was not valid UTF-8; `body` then
+    /// holds the U+FFFD-substituted string. `None` in the normal case.
+    raw_body: Option<Vec<u8>>,
     status: ReplyStatus,
     /// Lowercase alias map for case-insensitive lookup of dash-cased FS
     /// framing headers (`Reply-Text`, `Content-Type`, `Job-UUID`, ...).
@@ -153,10 +156,28 @@ impl EslResponse {
         Self {
             headers,
             body,
+            raw_body: None,
             status,
             case_index,
             lossy_values: LossyValues::default(),
         }
+    }
+
+    /// Attach the wire bytes of a non-UTF-8 body (used by
+    /// [`EslMessage::into_response`](crate::EslMessage)).
+    pub(crate) fn with_raw_body(mut self, raw_body: Option<Vec<u8>>) -> Self {
+        self.raw_body = raw_body;
+        self
+    }
+
+    /// Exact wire bytes of the response body when it was not valid UTF-8.
+    ///
+    /// `Some` is the lossy signal: [`body()`](Self::body) then holds the
+    /// U+FFFD-substituted string and these are the original payload bytes,
+    /// so the app can re-decode or audit them. `None` in the normal case.
+    pub fn raw_body(&self) -> Option<&[u8]> {
+        self.raw_body
+            .as_deref()
     }
 
     /// Attach the lossy-decode signal recorded while parsing the response

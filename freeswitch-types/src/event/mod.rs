@@ -48,6 +48,13 @@ pub struct EslEvent {
     #[cfg_attr(feature = "serde", serde(skip))]
     original_keys: IndexMap<String, String>,
     body: Option<String>,
+    /// Exact wire bytes of a body that was not valid UTF-8; `body` then
+    /// holds the U+FFFD-substituted string. `None` in the normal case.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    raw_body: Option<Vec<u8>>,
     #[cfg_attr(
         feature = "serde",
         serde(default, skip_serializing_if = "LossyValues::is_empty")
@@ -62,6 +69,7 @@ impl EslEvent {
             headers: IndexMap::new(),
             original_keys: IndexMap::new(),
             body: None,
+            raw_body: None,
             lossy_values: LossyValues::default(),
         }
     }
@@ -174,6 +182,27 @@ impl EslEvent {
     /// Set the event body.
     pub fn set_body(&mut self, body: impl Into<String>) {
         self.body = Some(body.into());
+    }
+
+    /// Exact wire bytes of the event body when it was not valid UTF-8.
+    ///
+    /// `Some` is the lossy signal: [`body()`](Self::body) then holds the
+    /// U+FFFD-substituted string and these are the original payload bytes
+    /// (e.g. a Latin-1 SMS body), so the app can re-decode or audit them.
+    /// Only populated for plain and log events — the JSON/XML formats
+    /// cannot map wire bytes back to the decoded body. `None` in the
+    /// normal case.
+    pub fn raw_body(&self) -> Option<&[u8]> {
+        self.raw_body
+            .as_deref()
+    }
+
+    /// Set the raw body bytes.
+    ///
+    /// Used internally by the ESL parser; consumers don't call this directly.
+    #[doc(hidden)]
+    pub fn set_raw_body(&mut self, bytes: Vec<u8>) {
+        self.raw_body = Some(bytes);
     }
 
     /// Headers whose percent-decoded value contained invalid UTF-8 and was
@@ -396,11 +425,14 @@ impl<'de> serde::Deserialize<'de> for EslEvent {
             headers: IndexMap<String, String>,
             body: Option<String>,
             #[serde(default)]
+            raw_body: Option<Vec<u8>>,
+            #[serde(default)]
             lossy_values: LossyValues,
         }
         let raw = Raw::deserialize(deserializer)?;
         let mut event = EslEvent::new();
         event.body = raw.body;
+        event.raw_body = raw.raw_body;
         event.lossy_values = raw.lossy_values;
         for (k, v) in raw.headers {
             event.set_header(k, v);
