@@ -311,9 +311,29 @@ impl EslParser {
                     .expect("body_length <= buffer.len(): verified above");
                 self.buffer
                     .compact();
-                let body_str = String::from_utf8(body_data)
-                    .map_err(|_| EslError::protocol_error("Invalid UTF-8 in body"))?;
-                Ok(Some(EslMessage::new(message_type, headers, Some(body_str))))
+                // Content-Length frames the body in bytes, so non-UTF-8 here
+                // is no desync: raw payloads (sendevent bodies, api output)
+                // arrive un-encoded. Decode lossily and keep the wire bytes
+                // as raw_body, unless strict mode restores the hard fail.
+                let mut raw_body = None;
+                let body_str = match String::from_utf8(body_data) {
+                    Ok(s) => s,
+                    Err(e) if self.strict_header_utf8 => {
+                        return Err(EslError::protocol_error(format!(
+                            "Invalid UTF-8 in body: {}",
+                            e.utf8_error()
+                        )));
+                    }
+                    Err(e) => {
+                        let bytes = e.into_bytes();
+                        let lossy = String::from_utf8_lossy(&bytes).into_owned();
+                        raw_body = Some(bytes);
+                        lossy
+                    }
+                };
+                let mut message = EslMessage::new(message_type, headers, Some(body_str));
+                message.raw_body = raw_body;
+                Ok(Some(message))
             }
         }
     }
@@ -415,6 +435,9 @@ impl EslParser {
         if let Some(body) = message.body {
             event.set_body(body);
         }
+        if let Some(raw) = message.raw_body {
+            event.set_raw_body(raw);
+        }
         // Synthesize Event-Name so downstream event_type() resolves to
         // EslEventType::Log; FreeSWITCH does not include this header on
         // log/data envelopes.
@@ -461,7 +484,7 @@ impl EslParser {
     ///
     /// If the event body itself contains a Content-Length, there's an inner
     /// body after the event headers.
-    fn parse_plain_event(&self, message: EslMessage) -> EslResult<EslEvent> {
+    fn parse_plain_event(&self, mut message: EslMessage) -> EslResult<EslEvent> {
         if message.message_type != MessageType::Event {
             return Err(EslError::protocol_error("Not an event message"));
         }
@@ -506,6 +529,22 @@ impl EslParser {
         if let Some(ib) = inner_body {
             if !ib.is_empty() {
                 event.set_body(ib.to_string());
+                if let Some(mut raw) = message
+                    .raw_body
+                    .take()
+                {
+                    // Event headers are percent-encoded ASCII and U+FFFD
+                    // substitution never touches newline bytes, so the first
+                    // \n\n falls at the same logical spot in bytes as in the
+                    // decoded string: the tail is exactly the inner body.
+                    if let Some(pos) = raw
+                        .windows(2)
+                        .position(|w| w == b"\n\n")
+                    {
+                        raw.drain(..pos + 2);
+                        event.set_raw_body(raw);
+                    }
+                }
             }
         }
 
