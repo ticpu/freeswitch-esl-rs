@@ -453,6 +453,19 @@ outbound `connect` response is itself a serialized event
 percent-encoded and can carry the same non-UTF-8 bytes as an inbound event body —
 decoding is required on both, and so is the lossy carve-out.
 
+The same argument covers the message *body*: Content-Length frames it in bytes,
+so non-UTF-8 there is no desync either — and unlike header values it is the
+common case for raw payloads, which FreeSWITCH appends un-encoded (a `sendevent
+NOTIFY` payload, a Latin-1 SMS body, an `api` response echoing them). The hard
+`Invalid UTF-8 in body` fail killed a live fs_cli connection over one such
+event. Bodies now decode lossily by default; the exact wire bytes ride back as
+`raw_body` beside the substituted string, and its presence *is* the lossy
+signal. Not `LossyValues`: that is a header-value type whose ASCII `raw_value`
+would force percent-encoding a potentially multi-MB body — an O(n) pass and ~3×
+blow-up — when `String::from_utf8`'s error already returns the original
+allocation for free. `strict_header_utf8` restores the hard fail here too —
+one strictness switch, not two.
+
 ## RFC 4575 conference-info XML namespace handling
 
 RFC 4575 documents use the XML namespace `urn:ietf:params:xml:ns:conference-info`,
