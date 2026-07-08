@@ -1289,6 +1289,95 @@ mod tests {
     }
 
     #[test]
+    fn test_message_body_non_utf8_lossy_default() {
+        // A raw event body is framed by Content-Length in bytes and is not
+        // percent-encoded; non-UTF-8 bytes there must not kill the connection.
+        let mut parser = EslParser::new();
+        let mut data = b"Content-Type: text/event-plain\nContent-Length: 4\n\n".to_vec();
+        data.extend_from_slice(b"caf\xE9");
+        parser
+            .add_data(&data)
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(message.message_type, MessageType::Event);
+        assert_eq!(
+            message
+                .body
+                .as_deref(),
+            Some("caf\u{FFFD}")
+        );
+        assert_eq!(
+            message
+                .raw_body
+                .as_deref(),
+            Some(&b"caf\xE9"[..])
+        );
+    }
+
+    #[test]
+    fn test_message_body_non_utf8_strict_error() {
+        let mut parser = EslParser::new().with_strict_header_utf8(true);
+        let mut data = b"Content-Type: text/event-plain\nContent-Length: 4\n\n".to_vec();
+        data.extend_from_slice(b"caf\xE9");
+        parser
+            .add_data(&data)
+            .unwrap();
+        assert!(matches!(
+            parser.parse_message(),
+            Err(EslError::ProtocolError { .. })
+        ));
+    }
+
+    #[test]
+    fn test_plain_event_non_utf8_inner_body_lossy() {
+        // sendevent payloads ride as a raw inner body after the
+        // percent-encoded event headers; the raw bytes must reach the event.
+        let mut parser = EslParser::new();
+        let event_body: &[u8] = b"Event-Name: NOTIFY_IN\nContent-Length: 4\n\ncaf\xE9";
+        let mut data = format!(
+            "Content-Type: text/event-plain\nContent-Length: {}\n\n",
+            event_body.len()
+        )
+        .into_bytes();
+        data.extend_from_slice(event_body);
+        parser
+            .add_data(&data)
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        let event = parser
+            .parse_event(message, EventFormat::Plain)
+            .unwrap();
+
+        assert_eq!(event.body(), Some("caf\u{FFFD}"));
+        assert_eq!(event.raw_body(), Some(&b"caf\xE9"[..]));
+    }
+
+    #[test]
+    fn test_api_response_non_utf8_body_raw_body() {
+        let mut parser = EslParser::new();
+        let mut data = b"Content-Type: api/response\nContent-Length: 4\n\n".to_vec();
+        data.extend_from_slice(b"caf\xE9");
+        parser
+            .add_data(&data)
+            .unwrap();
+        let response = parser
+            .parse_message()
+            .unwrap()
+            .unwrap()
+            .into_response();
+
+        assert_eq!(response.body(), Some("caf\u{FFFD}"));
+        assert_eq!(response.raw_body(), Some(&b"caf\xE9"[..]));
+    }
+
+    #[test]
     fn test_parse_json_event_body_key() {
         let parser = EslParser::new();
         let json = r#"{"Event-Name":"BACKGROUND_JOB","Job-UUID":"abc-123","_body":"+OK result"}"#;
