@@ -222,6 +222,168 @@ async fn test_inflight_command_woken_on_disconnect() {
 }
 
 #[tokio::test]
+async fn inflight_command_woken_on_disconnect_notice() {
+    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    client.set_command_timeout(Duration::from_secs(5));
+
+    let api_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("status")
+                .await
+        }
+    });
+    let _cmd = mock
+        .read_command()
+        .await;
+    mock.send_disconnect_notice("Disconnected, goodbye.\n")
+        .await;
+
+    let err = tokio::time::timeout(Duration::from_secs(1), api_task)
+        .await
+        .expect("in-flight command still blocked after disconnect notice")
+        .expect("api task panicked")
+        .expect_err("command should fail on disconnect notice");
+    assert!(err.is_connection_error(), "got: {err}");
+}
+
+#[tokio::test]
+async fn inflight_command_woken_on_rude_rejection() {
+    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    client.set_command_timeout(Duration::from_secs(5));
+
+    let api_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("status")
+                .await
+        }
+    });
+    let _cmd = mock
+        .read_command()
+        .await;
+    mock.send_raw("Content-Type: text/rude-rejection\n\n")
+        .await;
+
+    let err = tokio::time::timeout(Duration::from_secs(1), api_task)
+        .await
+        .expect("in-flight command still blocked after rude rejection")
+        .expect("api task panicked")
+        .expect_err("command should fail on rude rejection");
+    assert!(err.is_connection_error(), "got: {err}");
+}
+
+#[tokio::test]
+async fn inflight_command_woken_on_protocol_desync() {
+    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    client.set_command_timeout(Duration::from_secs(5));
+
+    let api_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("status")
+                .await
+        }
+    });
+    let _cmd = mock
+        .read_command()
+        .await;
+    // Unrecognized Content-Type is a fatal parser error: reader exits.
+    mock.send_raw("Content-Type: text/garbage\n\n")
+        .await;
+
+    let err = tokio::time::timeout(Duration::from_secs(1), api_task)
+        .await
+        .expect("in-flight command still blocked after protocol desync")
+        .expect("api task panicked")
+        .expect_err("command should fail on protocol desync");
+    assert!(err.is_connection_error(), "got: {err}");
+}
+
+#[tokio::test]
+async fn inflight_command_woken_on_heartbeat_expiry() {
+    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    // Liveness must trip while the command is still waiting: the reader
+    // checks expiry on its 2s read-timeout tick, so detection lands within
+    // ~3s — well under the 20s command timeout.
+    client.set_command_timeout(Duration::from_secs(20));
+    client.set_liveness_timeout(Duration::from_secs(1));
+
+    let api_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("status")
+                .await
+        }
+    });
+    let _cmd = mock
+        .read_command()
+        .await;
+    // No reply, no traffic: liveness expires.
+
+    let err = tokio::time::timeout(Duration::from_secs(8), api_task)
+        .await
+        .expect("in-flight command still blocked after liveness expiry")
+        .expect("api task panicked")
+        .expect_err("command should fail on liveness expiry");
+    assert!(err.is_connection_error(), "got: {err}");
+
+    match client.status() {
+        ConnectionStatus::Disconnected(DisconnectReason::HeartbeatExpired) => {}
+        other => panic!("Expected HeartbeatExpired, got: {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn malformed_event_bodies_surface_as_err_and_connection_survives() {
+    let (mut mock, client, mut events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+
+    let corpus: &[(&str, &str)] = &[
+        ("text/event-json", "{\"Event-Name\":\"HEART"),
+        ("text/event-json", "[1,2,3]"),
+        (
+            "text/event-xml",
+            "<event><headers><Event-Name>X</Event-Name></wrong></event>",
+        ),
+        (
+            "text/event-xml",
+            "<event><headers><Event-Name>&bogus;</Event-Name></headers></event>",
+        ),
+    ];
+
+    for (content_type, body) in corpus {
+        mock.send_raw(&format!(
+            "Content-Length: {}\nContent-Type: {}\n\n{}",
+            body.len(),
+            content_type,
+            body
+        ))
+        .await;
+        let item = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .expect("timeout")
+            .expect("stream must stay open after a malformed event body");
+        assert!(
+            item.is_err(),
+            "malformed body {body:?} must surface as Err, got: {item:?}"
+        );
+    }
+
+    // The reader loop survives every parse error: a valid event still flows.
+    let mut headers = HashMap::new();
+    headers.insert("Unique-ID".to_string(), "post-corpus-uuid".to_string());
+    mock.send_event_plain("HEARTBEAT", &headers)
+        .await;
+    let event = recv_event(&mut events).await;
+    assert_eq!(event.event_type(), Some(EslEventType::Heartbeat));
+    assert!(client.is_connected());
+}
+
+#[tokio::test]
 async fn race_command_install_after_reader_exit() {
     let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
 

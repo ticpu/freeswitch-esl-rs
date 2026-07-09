@@ -2028,4 +2028,154 @@ Channel-State: CS_INIT\n\
         assert!(!display.contains("%E9"));
         assert!(!display.contains("foo"));
     }
+
+    /// Feed `data` split at `split`, driving parse_message across the two
+    /// chunks, and parse the resulting frame as an event of `format`.
+    fn parse_wire_split(data: &[u8], split: usize, format: EventFormat) -> EslEvent {
+        let mut parser = EslParser::new();
+        parser
+            .add_data(&data[..split])
+            .unwrap();
+        let mut message = parser
+            .parse_message()
+            .unwrap();
+        assert!(
+            message.is_none(),
+            "frame must be incomplete at split {split}"
+        );
+        parser
+            .add_data(&data[split..])
+            .unwrap();
+        message = parser
+            .parse_message()
+            .unwrap();
+        let message =
+            message.unwrap_or_else(|| panic!("frame incomplete after both chunks (split {split})"));
+        parser
+            .parse_event(message, format)
+            .unwrap()
+    }
+
+    #[test]
+    fn plain_event_frame_split_all_points() {
+        // Inner body included so splits land mid-envelope-header, between the
+        // two terminator \n bytes, mid-event-header, and mid-inner-body.
+        let inner_body = "+OK result\n";
+        let body = format!(
+            "Event-Name: BACKGROUND_JOB\nJob-UUID: abc-123\nContent-Length: {}\n\n{}",
+            inner_body.len(),
+            inner_body
+        );
+        let data = format!(
+            "Content-Length: {}\nContent-Type: text/event-plain\n\n{}",
+            body.len(),
+            body
+        )
+        .into_bytes();
+
+        for split in 1..data.len() {
+            let event = parse_wire_split(&data, split, EventFormat::Plain);
+            assert_eq!(
+                event.event_type(),
+                Some(EslEventType::BackgroundJob),
+                "split {split}"
+            );
+            assert_eq!(
+                event.header(EventHeader::JobUuid),
+                Some("abc-123"),
+                "split {split}"
+            );
+            assert_eq!(event.body(), Some(inner_body), "split {split}");
+        }
+    }
+
+    #[test]
+    fn json_event_frame_split_all_points() {
+        let json_body =
+            r#"{"Event-Name":"BACKGROUND_JOB","Job-UUID":"abc-123","_body":"+OK result"}"#;
+        let data = format!(
+            "Content-Length: {}\nContent-Type: text/event-json\n\n{}",
+            json_body.len(),
+            json_body
+        )
+        .into_bytes();
+
+        for split in 1..data.len() {
+            let event = parse_wire_split(&data, split, EventFormat::Json);
+            assert_eq!(
+                event.event_type(),
+                Some(EslEventType::BackgroundJob),
+                "split {split}"
+            );
+            assert_eq!(event.body(), Some("+OK result"), "split {split}");
+        }
+    }
+
+    #[test]
+    fn xml_event_frame_split_all_points() {
+        let xml_body = "<event>\n  <headers>\n    <Event-Name>BACKGROUND_JOB</Event-Name>\n    <Job-UUID>abc-123</Job-UUID>\n  </headers>\n  <body>+OK result</body>\n</event>";
+        let data = format!(
+            "Content-Length: {}\nContent-Type: text/event-xml\n\n{}",
+            xml_body.len(),
+            xml_body
+        )
+        .into_bytes();
+
+        for split in 1..data.len() {
+            let event = parse_wire_split(&data, split, EventFormat::Xml);
+            assert_eq!(
+                event.event_type(),
+                Some(EslEventType::BackgroundJob),
+                "split {split}"
+            );
+            assert_eq!(event.body(), Some("+OK result"), "split {split}");
+        }
+    }
+
+    #[test]
+    fn multiple_event_frames_in_single_read() {
+        let mut parser = EslParser::new();
+
+        let bodies = [
+            "Event-Name: CHANNEL_CREATE\nUnique-ID: uuid-1\n\n",
+            "Event-Name: CHANNEL_ANSWER\nUnique-ID: uuid-2\n\n",
+            "Event-Name: CHANNEL_DESTROY\nUnique-ID: uuid-3\n\n",
+        ];
+        let mut data = Vec::new();
+        for body in &bodies {
+            data.extend_from_slice(
+                format!(
+                    "Content-Length: {}\nContent-Type: text/event-plain\n\n{}",
+                    body.len(),
+                    body
+                )
+                .as_bytes(),
+            );
+        }
+
+        parser
+            .add_data(&data)
+            .unwrap();
+
+        let expected = [
+            (EslEventType::ChannelCreate, "uuid-1"),
+            (EslEventType::ChannelAnswer, "uuid-2"),
+            (EslEventType::ChannelDestroy, "uuid-3"),
+        ];
+        for (event_type, uuid) in expected {
+            let message = parser
+                .parse_message()
+                .unwrap()
+                .expect("all frames arrived in one read");
+            let event = parser
+                .parse_event(message, EventFormat::Plain)
+                .unwrap();
+            assert_eq!(event.event_type(), Some(event_type));
+            assert_eq!(event.unique_id(), Some(uuid));
+        }
+        assert!(parser
+            .parse_message()
+            .unwrap()
+            .is_none());
+    }
 }
