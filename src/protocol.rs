@@ -560,25 +560,26 @@ impl EslParser {
         // Parse JSON body
         let json_value: serde_json::Value = serde_json::from_str(&body)?;
 
-        let mut event = EslEvent::new();
+        let serde_json::Value::Object(map) = json_value else {
+            return Err(EslError::protocol_error("JSON event body is not an object"));
+        };
 
-        if let serde_json::Value::Object(map) = json_value {
-            for (key, value) in map {
-                // FreeSWITCH puts the event body under a "_body" key in JSON events
-                if key == "_body" {
-                    let body_str = match value {
-                        serde_json::Value::String(s) => s,
-                        _ => value.to_string(),
-                    };
-                    event.set_body(body_str);
-                    continue;
-                }
-                let value_str = match value {
+        let mut event = EslEvent::new();
+        for (key, value) in map {
+            // FreeSWITCH puts the event body under a "_body" key in JSON events
+            if key == "_body" {
+                let body_str = match value {
                     serde_json::Value::String(s) => s,
                     _ => value.to_string(),
                 };
-                event.set_header(key, value_str);
+                event.set_body(body_str);
+                continue;
             }
+            let value_str = match value {
+                serde_json::Value::String(s) => s,
+                _ => value.to_string(),
+            };
+            event.set_header(key, value_str);
         }
 
         Self::carry_lossy_signal(&mut event, message.lossy_values, message.raw_body);
