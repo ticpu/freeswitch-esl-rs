@@ -568,6 +568,79 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn write_failure_clears_pending_waiting() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener
+            .local_addr()
+            .unwrap();
+        let (client_stream, accept_result) =
+            tokio::join!(TcpStream::connect(addr), listener.accept());
+        let (_server_stream, _) = accept_result.unwrap();
+
+        let (client, _events) = EslClient::split_and_spawn_with_options(
+            client_stream.unwrap(),
+            EslParser::new(),
+            EslConnectOptions::default(),
+            None,
+            ConnectionMode::Inbound,
+        );
+
+        // Shut down the write half directly: the status watch stays Connected
+        // and the reader stays alive, isolating send_command's write-error
+        // path (reachable via the public API only through a disconnect()
+        // race, since disconnect() flips the status before the shutdown).
+        client
+            .writer
+            .lock()
+            .await
+            .shutdown()
+            .await
+            .unwrap();
+        assert!(client.is_connected());
+
+        let err = client
+            .noop()
+            .await
+            .expect_err("write on a shut-down half must fail");
+        assert!(matches!(err, EslError::Io(_)), "got: {err}");
+
+        // The failed command must not leave its waiter installed, and no
+        // stale reply can be in flight for a command that never hit the wire.
+        {
+            let pending = client
+                .shared
+                .pending_reply
+                .lock()
+                .await;
+            assert!(
+                pending
+                    .waiting
+                    .is_none(),
+                "waiting slot must be cleared on write failure"
+            );
+            assert_eq!(pending.stale_replies, 0);
+        }
+
+        // User-visible symptom: teardown_for_reexec must not report a
+        // phantom "command still in-flight".
+        #[cfg(unix)]
+        {
+            let result = client
+                .teardown_for_reexec()
+                .await;
+            assert!(
+                result.is_ok(),
+                "teardown saw a phantom in-flight command: {:?}",
+                result.err()
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn test_connection_mode() {
         assert_eq!(ConnectionMode::Inbound, ConnectionMode::Inbound);
         assert_ne!(ConnectionMode::Inbound, ConnectionMode::Outbound);
