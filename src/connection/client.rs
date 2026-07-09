@@ -42,6 +42,13 @@ impl EslClient {
                 .pending_reply
                 .lock()
                 .await;
+            // Checked under the same lock fail_pending_reply takes: the entry
+            // is_connected() snapshot can go stale while awaiting the writer
+            // lock, and a waiter installed after the reader exited would never
+            // be woken.
+            if pending.reader_dead {
+                return Err(EslError::ConnectionClosed);
+            }
             pending.waiting = Some(tx);
         }
 

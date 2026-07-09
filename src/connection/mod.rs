@@ -148,6 +148,11 @@ struct PendingReply {
     waiting: Option<oneshot::Sender<EslMessage>>,
     /// Number of stale replies to discard before resuming normal dispatch.
     stale_replies: u32,
+    /// Set by the reader loop on exit. Checked under this same lock before
+    /// installing a waiter: either the flag is seen (fail fast) or the waiter
+    /// is installed before `fail_pending_reply` runs (woken by the take).
+    /// Closes the TOCTOU window between `is_connected()` and the install.
+    reader_dead: bool,
 }
 
 impl PendingReply {
@@ -155,6 +160,7 @@ impl PendingReply {
         Self {
             waiting: None,
             stale_replies: 0,
+            reader_dead: false,
         }
     }
 }
