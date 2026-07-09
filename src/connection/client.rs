@@ -53,10 +53,24 @@ impl EslClient {
         }
 
         // Write command
-        writer
+        if let Err(e) = writer
             .write_all(command_str.as_bytes())
             .await
-            .map_err(EslError::Io)?;
+        {
+            let mut pending = self
+                .shared
+                .pending_reply
+                .lock()
+                .await;
+            // Mirror of the timeout branch, minus the stale_replies
+            // increment: the command never hit the wire, so no reply can be
+            // in flight for it. Leaving the sender installed would make
+            // teardown_for_reexec see a phantom in-flight command.
+            pending.waiting = None;
+            drop(pending);
+            drop(writer);
+            return Err(EslError::Io(e));
+        }
 
         // Wait for reply from reader task with command timeout (writer still locked)
         let timeout_ms = self
