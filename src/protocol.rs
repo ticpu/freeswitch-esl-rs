@@ -1892,6 +1892,74 @@ Channel-State: CS_INIT\n\
     }
 
     #[test]
+    fn json_event_non_utf8_value_carries_lossy_signal() {
+        // FreeSWITCH serializes raw header values into event-json with no
+        // percent-encoding or UTF-8 validation (switch_event.c cJSON path),
+        // so a Latin-1 value reaches the wire raw. The envelope body decodes
+        // lossily; the JSON parses fine — but the lossy signal must ride on
+        // the event, not vanish.
+        let mut parser = EslParser::new();
+        let json_body: &[u8] =
+            b"{\"Event-Name\":\"CHANNEL_CREATE\",\"Caller-Caller-ID-Name\":\"Andr\xE9\"}";
+        let mut data = format!(
+            "Content-Length: {}\nContent-Type: text/event-json\n\n",
+            json_body.len()
+        )
+        .into_bytes();
+        data.extend_from_slice(json_body);
+
+        parser
+            .add_data(&data)
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        let event = parser
+            .parse_event(message, EventFormat::Json)
+            .unwrap();
+
+        assert_eq!(event.event_type(), Some(EslEventType::ChannelCreate));
+        assert_eq!(
+            event.header_str("Caller-Caller-ID-Name"),
+            Some("Andr\u{FFFD}")
+        );
+        // Whole-envelope wire bytes: JSON cannot map bytes back to the
+        // decoded body, but the signal and the source bytes must be carried.
+        assert_eq!(event.raw_body(), Some(json_body));
+    }
+
+    #[test]
+    fn xml_event_non_utf8_text_carries_lossy_signal() {
+        let mut parser = EslParser::new();
+        let xml_body: &[u8] = b"<event>\n  <headers>\n    <Event-Name>CHANNEL_CREATE</Event-Name>\n    <Caller-Caller-ID-Name>Andr\xE9</Caller-Caller-ID-Name>\n  </headers>\n</event>";
+        let mut data = format!(
+            "Content-Length: {}\nContent-Type: text/event-xml\n\n",
+            xml_body.len()
+        )
+        .into_bytes();
+        data.extend_from_slice(xml_body);
+
+        parser
+            .add_data(&data)
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        let event = parser
+            .parse_event(message, EventFormat::Xml)
+            .unwrap();
+
+        assert_eq!(event.event_type(), Some(EslEventType::ChannelCreate));
+        assert_eq!(
+            event.header_str("Caller-Caller-ID-Name"),
+            Some("Andr\u{FFFD}")
+        );
+        assert_eq!(event.raw_body(), Some(xml_body));
+    }
+
+    #[test]
     fn test_lossy_values_display_keys_only() {
         let parser = EslParser::new();
         let body = "Event-Name: HEARTBEAT\nkey1: %E9foo\nkey2: %FFbar\n\n";
