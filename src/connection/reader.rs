@@ -94,11 +94,16 @@ pub(super) async fn reader_loop(
 /// one waiter exists. Dropping its `oneshot::Sender` resolves the awaiting
 /// `send_command`'s `rx` to `Err`, which maps to `EslError::ConnectionClosed`
 /// — instead of the caller waiting out the full command timeout.
+///
+/// `reader_dead` is set under the same lock so a `send_command` that reaches
+/// its install block after this ran fails fast instead of installing a
+/// waiter no task will ever wake.
 async fn fail_pending_reply(shared: &SharedState) {
     let mut pending = shared
         .pending_reply
         .lock()
         .await;
+    pending.reader_dead = true;
     if pending
         .waiting
         .take()
