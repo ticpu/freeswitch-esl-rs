@@ -189,9 +189,11 @@ impl EslEvent {
     /// `Some` is the lossy signal: [`body()`](Self::body) then holds the
     /// U+FFFD-substituted string and these are the original payload bytes
     /// (e.g. a Latin-1 SMS body), so the app can re-decode or audit them.
-    /// Only populated for plain and log events — the JSON/XML formats
-    /// cannot map wire bytes back to the decoded body. `None` in the
-    /// normal case.
+    /// For plain and log events these are the inner body bytes. For JSON/XML
+    /// events, wire bytes cannot be mapped back to the decoded body, so this
+    /// carries the whole event envelope body (the serialized JSON/XML
+    /// document as sent on the wire) — the signal is still observable.
+    /// `None` in the normal case.
     pub fn raw_body(&self) -> Option<&[u8]> {
         self.raw_body
             .as_deref()

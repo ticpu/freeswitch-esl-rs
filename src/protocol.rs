@@ -581,7 +581,22 @@ impl EslParser {
             }
         }
 
+        Self::carry_lossy_signal(&mut event, message.lossy_values, message.raw_body);
         Ok(event)
+    }
+
+    /// Carry the envelope's lossy-decode signal onto the parsed event.
+    ///
+    /// JSON/XML cannot map wire bytes back to the decoded body, so `raw_body`
+    /// is the whole envelope body — the signal (and source bytes) must still
+    /// be observable per the warnings-ride-as-data policy.
+    fn carry_lossy_signal(event: &mut EslEvent, lossy: LossyValues, raw_body: Option<Vec<u8>>) {
+        if !lossy.is_empty() {
+            event.set_lossy_values(lossy);
+        }
+        if let Some(raw) = raw_body {
+            event.set_raw_body(raw);
+        }
     }
 
     /// Map a `quick_xml::Error` to `EslError::XmlError` without leaking
@@ -606,9 +621,13 @@ impl EslParser {
         use quick_xml::events::Event as XmlEvent;
         use quick_xml::Reader;
 
-        let body = message
-            .body
-            .ok_or_else(|| EslError::protocol_error("XML event missing body"))?;
+        let EslMessage {
+            body,
+            raw_body,
+            lossy_values,
+            ..
+        } = message;
+        let body = body.ok_or_else(|| EslError::protocol_error("XML event missing body"))?;
 
         let mut reader = Reader::from_str(&body);
         let mut event = EslEvent::new();
@@ -681,6 +700,7 @@ impl EslParser {
             }
         }
 
+        Self::carry_lossy_signal(&mut event, lossy_values, raw_body);
         Ok(event)
     }
 
