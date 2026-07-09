@@ -1950,6 +1950,30 @@ Channel-State: CS_INIT\n\
     }
 
     #[test]
+    fn json_event_non_object_body_is_error() {
+        // A framed event whose body is well-formed JSON of the wrong shape is
+        // a protocol violation: Err, not a silent empty event that is
+        // indistinguishable from a headerless one.
+        let parser = EslParser::new();
+        for body in ["[1,2,3]", "\"foo\"", "123", "null"] {
+            let msg = EslMessage::new(
+                MessageType::Event,
+                {
+                    let mut h = IndexMap::new();
+                    h.insert("Content-Type".to_string(), "text/event-json".to_string());
+                    h
+                },
+                Some(body.to_string()),
+            );
+            let result = parser.parse_event(msg, EventFormat::Json);
+            assert!(
+                matches!(result, Err(EslError::ProtocolError { .. })),
+                "body {body:?} must be a protocol error, got: {result:?}"
+            );
+        }
+    }
+
+    #[test]
     fn xml_event_non_utf8_text_carries_lossy_signal() {
         let mut parser = EslParser::new();
         let xml_body: &[u8] = b"<event>\n  <headers>\n    <Event-Name>CHANNEL_CREATE</Event-Name>\n    <Caller-Caller-ID-Name>Andr\xE9</Caller-Caller-ID-Name>\n  </headers>\n</event>";
