@@ -455,6 +455,10 @@ This is the format produced by `serde_yml`. JSON libraries represent the
 same data differently (`{"sofia_gateway": {"gateway": ...}}` instead of a
 YAML tag), but both deserialize into the same Rust types.
 
+See [docs/originate-loopback-yaml.md](docs/originate-loopback-yaml.md) for a
+complete YAML originate covering every field, how variables reach both
+loopback legs, and how to make a loopback pair bow out.
+
 ## Variable parsers
 
 ```rust

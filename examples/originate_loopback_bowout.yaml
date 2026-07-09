@@ -1,0 +1,27 @@
+---
+# A loopback pair that bows out: once both loopback legs are bridged to a
+# real endpoint and answered, mod_loopback uuid_bridges the two real legs
+# together and the loopback pair disappears.
+#
+# Wire form:
+#   originate {loopback_bowout=true}loopback/app=bridge:null/farend &bridge(null/nearend)
+#
+# Topology before bowout:      null/nearend = loopback-a : loopback-b = null/farend
+# Topology after bowout:       null/nearend = null/farend
+
+endpoint: !loopback
+  # `app=<application>[:<args>]` is a mod_loopback destination form: the B
+  # leg runs that application directly instead of a dialplan lookup. Here
+  # it bridges to the far real endpoint, which is the second of the two
+  # non-loopback bridges bowout requires.
+  extension: "app=bridge:null/farend"
+
+  # A bare mapping (no scope/vars wrapper) means `default` scope -> {}.
+  # Either loopback leg can veto by setting this to false.
+  variables:
+    loopback_bowout: "true"
+
+# Runs on the A leg once it answers, giving it its own non-loopback bridge.
+application:
+  name: bridge
+  args: "null/nearend"

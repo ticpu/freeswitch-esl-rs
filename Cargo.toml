@@ -67,6 +67,14 @@ name = "originate_examples"
 path = "examples/originate_examples.rs"
 
 [[example]]
+name = "originate_loopback_yaml"
+path = "examples/originate_loopback_yaml.rs"
+
+[[example]]
+name = "originate_loopback_bowout"
+path = "examples/originate_loopback_bowout.rs"
+
+[[example]]
 name = "reexec_demo"
 path = "examples/reexec_demo.rs"
 

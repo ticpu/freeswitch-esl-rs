@@ -1,0 +1,22 @@
+---
+# Per-leg variables. The originate's own block reaches the loopback pair; the
+# bridge dial string nested in the application arguments reaches only the leg
+# that bridge dials. Channel variables do not cross a bridge on their own.
+#
+# Wire form:
+#   originate {leg_a_only=outer}loopback/9199/test &bridge({leg_b_only=inner}null/far)
+#
+#   leg_a_only  -> loopback/9199-a and loopback/9199-b
+#   leg_b_only  -> null/far
+
+endpoint: !loopback
+  extension: "9199"
+  context: test
+  variables:
+    leg_a_only: "outer"
+
+application:
+  name: bridge
+  # A dial string of its own, with its own variable block. `null/` has no
+  # Endpoint variant, so the argument is written out verbatim.
+  args: "{leg_b_only=inner}null/far"

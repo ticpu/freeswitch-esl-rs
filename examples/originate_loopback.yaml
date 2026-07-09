@@ -1,0 +1,47 @@
+---
+# Deserialises into `freeswitch_types::commands::Originate`.
+# Field-by-field walkthrough: docs/originate-loopback-yaml.md
+#
+# Wire form:
+#   originate [origination_caller_id_name='Sales Desk',...]loopback/9199/test \
+#     &park() XML test 'Fallback CID' 5550199 30
+
+# `!loopback` is the Endpoint::Loopback variant tag. Endpoint is an
+# externally tagged enum, so YAML needs the `!variant` form here.
+endpoint: !loopback
+  # loopback/<extension>/<context>: the B leg is routed to this extension
+  # in this dialplan context. Omit `context` to let FreeSWITCH pick.
+  extension: "9199"
+  context: test
+
+  # `scope` picks the bracket pair FreeSWITCH sees: channel -> [], default
+  # -> {}, enterprise -> <>. Omit the scope/vars wrapper and write a bare
+  # mapping here to get `default` ({}).
+  variables:
+    scope: channel
+    vars:
+      # Caller ID the B leg's dialplan sees. Overrides the positional
+      # cid_name/cid_num below.
+      origination_caller_id_name: "Sales Desk"
+      origination_caller_id_number: "5550100"
+      ignore_early_media: "true"
+      # Application payload, carried on both loopback legs.
+      customer_id: "CUST-42"
+      tenant: "acme"
+      # Comma and space are escaped and quoted on the wire, then unescaped
+      # by FreeSWITCH: the channel variable holds `T-1001, urgent`.
+      sip_h_X-Ticket: "T-1001, urgent"
+
+# Exactly one target key: `extension`, `application`, or `inline_applications`.
+application:
+  name: park
+
+dialplan: xml
+context: test
+
+# Positional cid args. `origination_caller_id_*` above takes precedence, so
+# these are what the B leg would show had those variables been absent.
+cid_name: "Fallback CID"
+cid_num: "5550199"
+
+timeout_secs: 30
