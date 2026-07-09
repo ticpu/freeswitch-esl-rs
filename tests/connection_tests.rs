@@ -222,6 +222,66 @@ async fn test_inflight_command_woken_on_disconnect() {
 }
 
 #[tokio::test]
+async fn race_command_install_after_reader_exit() {
+    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+
+    client.set_command_timeout(Duration::from_secs(5));
+
+    // Command A holds the writer lock through its reply wait.
+    let task_a = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("status")
+                .await
+        }
+    });
+    let _cmd_a = mock
+        .read_command()
+        .await;
+
+    // Command B passes the entry is_connected() check while the connection is
+    // still up, then parks on the writer lock behind A.
+    let task_b = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("version")
+                .await
+        }
+    });
+    // Let B reach the writer-lock await before the connection drops.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Reader wakes A (ConnectionClosed) and exits. B then acquires the writer
+    // lock and installs its waiter AFTER fail_pending_reply already ran — the
+    // TOCTOU window: nothing ever wakes that waiter without a reader-dead
+    // check under the same lock.
+    mock.drop_connection()
+        .await;
+
+    let err_a = tokio::time::timeout(Duration::from_secs(1), task_a)
+        .await
+        .expect("command A still blocked after disconnect")
+        .expect("A panicked")
+        .expect_err("A should fail on disconnect");
+    assert!(err_a.is_connection_error(), "A got: {err_a}");
+
+    // B must fail well under command_timeout_ms with a connection-class
+    // error — not block until EslError::Timeout.
+    let err_b = tokio::time::timeout(Duration::from_secs(1), task_b)
+        .await
+        .expect("command B still blocked: waiter installed after reader exit was never woken")
+        .expect("B panicked")
+        .expect_err("B should fail after reader exit");
+    assert!(err_b.is_connection_error(), "B got: {err_b}");
+    match err_b {
+        EslError::ConnectionClosed => {}
+        e => panic!("Expected ConnectionClosed, got: {}", e),
+    }
+}
+
+#[tokio::test]
 async fn test_subscribe_permission_denied_recoverable() {
     let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
 
