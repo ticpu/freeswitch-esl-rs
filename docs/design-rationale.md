@@ -793,3 +793,17 @@ argument rather than a guess: no interface exposes the loaded implementations, a
 an entry naming an absent codec or an unavailable packetization is dropped without
 a log, so the caller supplies what it knows and is told what that removed.
 
+## Sofia's leniency, not the RFC's grammar
+
+The SDP this crate reads is an offer the switch has already accepted and
+negotiated, which settles what "malformed" may cost. Rejecting a field the switch
+parsed contradicts a decision that has already been made, and the punishment lands
+on codecs that are not at fault: a stray tab in one rtpmap discarded every codec in
+that media section, so the emitted codec string disagreed with the negotiation it
+was supposed to mirror. Attribute values are therefore tokenized the way sofia
+tokenizes them, whitespace decided once while consuming a field rather than trimmed
+back off at each one, because the per-field spelling is what let the encoding name
+go unhandled. The session layer stays a dependency; the attribute layer is ours
+precisely because that is where fidelity is owed to a specific parser rather than
+to the grammar.
+
