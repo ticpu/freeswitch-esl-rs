@@ -97,7 +97,7 @@ impl CodecStringEntry {
     ///   dropped. Set the module prefix first with [`with_module`](Self::with_module).
     /// - [`CodecStringError::WireInjection`] — `\n` or `\r` can inject ESL commands.
     pub fn with_fmtp(mut self, fmtp: impl Into<String>) -> Result<Self, CodecStringError> {
-        let fmtp = fmtp.into();
+        let fmtp = normalize_fmtp_trailing_space(fmtp.into());
         if fmtp.contains('\n') || fmtp.contains('\r') {
             return Err(CodecStringError::wire_injection("fmtp", &fmtp));
         }
@@ -250,7 +250,7 @@ impl CodecStringEntry {
     ///
     /// Returns the same errors as [`with_fmtp`](Self::with_fmtp).
     pub fn set_fmtp(&mut self, fmtp: impl Into<String>) -> Result<(), CodecStringError> {
-        let fmtp = fmtp.into();
+        let fmtp = normalize_fmtp_trailing_space(fmtp.into());
         if fmtp.contains('\n') || fmtp.contains('\r') {
             return Err(CodecStringError::wire_injection("fmtp", &fmtp));
         }
@@ -864,6 +864,22 @@ fn parse_codec_string_inner(
         entries.push(parse_entry(&token, warnings.as_deref_mut())?);
     }
     Ok(CodecString(entries))
+}
+
+/// Strip trailing spaces from an fmtp value at the point it's set.
+///
+/// `cleanup_separated_string` (`switch_utils.c:2702`) strips a trailing SP run
+/// from the codec-string token regardless of what this layer does — normalizing
+/// here means a directly-constructed entry and a round-tripped one compare equal
+/// in [`CodecString::dedup`]. Only SP is stripped, matching the C (which never
+/// special-cases HTAB).
+fn normalize_fmtp_trailing_space(fmtp: String) -> String {
+    let trimmed = fmtp.trim_end_matches(' ');
+    if trimmed.len() == fmtp.len() {
+        fmtp
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Escape `,` `\` `'` in an fmtp value for safe embedding in a codec string.
