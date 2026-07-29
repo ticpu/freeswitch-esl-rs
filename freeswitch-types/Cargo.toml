@@ -18,12 +18,14 @@ default = ["serde", "esl"]
 serde = ["dep:serde", "sip-header/serde", "indexmap?/serde"]
 esl = ["dep:indexmap"]
 conference-info = ["sip-header/conference-info"]
+sdp = ["dep:sdp-types"]
 
 [dependencies]
 sip-header = ">=0.3.3, <1"
 serde = { version = "1.0", features = ["derive"], optional = true }
 percent-encoding = "2"
 indexmap = { version = "2", optional = true }
+sdp-types = { version = "0.1", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0"

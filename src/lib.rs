@@ -145,6 +145,8 @@ pub(crate) mod constants;
 pub(crate) mod protocol;
 
 // Re-export sub-modules from freeswitch-types for path-based access
+#[cfg(feature = "sdp")]
+pub use freeswitch_types::sdp;
 pub use freeswitch_types::{channel, commands, event, headers, lookup, prelude, sofia, variables};
 
 // Re-export domain types from freeswitch-types

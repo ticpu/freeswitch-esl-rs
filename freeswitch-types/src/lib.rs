@@ -35,6 +35,8 @@ pub mod lookup;
 #[cfg(feature = "esl")]
 pub mod lossy_values;
 pub mod prelude;
+#[cfg(feature = "sdp")]
+pub mod sdp;
 pub mod sofia;
 pub mod variables;
 #[doc(hidden)]

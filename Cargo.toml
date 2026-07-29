@@ -17,6 +17,9 @@ readme = "README.md"
 rust-version = "1.75"
 exclude = ["CLAUDE.md", "hooks/", "tests/", "docs/"]
 
+[features]
+sdp = ["freeswitch-types/sdp"]
+
 [dependencies]
 # major-only caret: path build always uses the in-tree crate; published builds take any 1.x
 freeswitch-types = { path = "freeswitch-types", version = "1.4" }
@@ -89,3 +92,8 @@ path = "examples/codec_monitor.rs"
 [[example]]
 name = "bgapi_bench"
 path = "examples/bgapi_bench.rs"
+
+[[example]]
+name = "sdp_codec_string"
+path = "examples/sdp_codec_string.rs"
+required-features = ["sdp"]
