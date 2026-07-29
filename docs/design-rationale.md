@@ -757,3 +757,39 @@ and the `channel_tracker` example use `CS_INIT` and `CS_DESTROY` from
 `CHANNEL_STATE` as the start- and end-of-life triggers. Full ordering
 notes live in the README — they belong with usage docs, not here.
 
+## The codec-string grammar as a type
+
+No API models FreeSWITCH's codec string; the switch's own parser is internal and
+consumes the buffer it reads. Three properties of the grammar are worth
+centralising: qualifiers may appear in any order, a trailing letter is all that
+distinguishes a rate from a packetization, a bitrate or a channel count, and a
+format-parameter value can contain the character that separates entries. A type
+holds those rules for reading a string back, rewriting one, or validating deployed
+config, and makes round-tripping testable without a switch. Validation happens at
+construction, so formatting is infallible and no shortcut can emit a corrupt
+string.
+
+SDP conversion is the second direction. The switch already exposes the remote and
+local SDP as channel variables, so an ESL consumer holds the offer verbatim and can
+derive a codec list from it rather than guessing one. The mapping is a port of the
+switch's own conversion, not a reading of the specifications, because a
+reimplementation disagrees with the switch only in production; the deviations are
+named in rustdoc at each site. Format parameters are not emitted for audio by
+default: without a bridged partner they never reach a generated audio offer, so
+emitting them passes every test and changes nothing on a live call.
+
+## Composition over policy
+
+An early version intersected the peer's offer against a preference list and
+reported what it dropped. That reads as the obvious operation and is the wrong
+one: a regulated callback interface requires the offer to carry a fixed list,
+reorderable but never reducible, and the intersection narrowed it until a
+downstream leg shared no codec at all. The switch intersects too, but only when
+answering an offer, where the answer semantics demand it — generating one has no
+equivalent, so there was nothing to be faithful to. What ships instead is the
+grammar's own operations, and the caller's ordering carries the policy, because
+deduplication keeps whichever entry came first. What the switch can load stays an
+argument rather than a guess: no interface exposes the loaded implementations, and
+an entry naming an absent codec or an unavailable packetization is dropped without
+a log, so the caller supplies what it knows and is told what that removed.
+
