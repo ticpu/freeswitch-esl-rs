@@ -1228,6 +1228,63 @@ mod tests {
         );
     }
 
+    // --- trailing `@` must behave like `@@`: an empty qualifier segment is a hard error ---
+
+    #[test]
+    fn trailing_at_is_strict_error_like_double_at() {
+        let result: Result<CodecString, _> = "PCMU@".parse();
+        assert!(
+            result.is_err(),
+            "trailing @ produces an empty qualifier segment; strict mode must fail"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            CodecStringError::QualifierParseError { .. }
+        ));
+    }
+
+    #[test]
+    fn double_at_is_still_strict_error() {
+        // Guard against the fix changing `@@` behaviour instead of just `@`.
+        let result: Result<CodecString, _> = "PCMU@@8000h".parse();
+        assert!(result.is_err(), "@@ must remain a strict error");
+        assert!(matches!(
+            result.unwrap_err(),
+            CodecStringError::QualifierParseError { .. }
+        ));
+    }
+
+    #[test]
+    fn trailing_at_lenient_records_warning() {
+        let mut warnings = Vec::new();
+        let cs = CodecString::parse_lenient("PCMU@", &mut warnings).unwrap();
+        assert_eq!(cs.entries()[0].name(), "PCMU");
+        assert_eq!(cs.entries()[0].rate(), None);
+        assert_eq!(cs.entries()[0].ptime(), None);
+        assert!(
+            !warnings.is_empty(),
+            "lenient parse must record a warning for the empty qualifier from a trailing @"
+        );
+    }
+
+    #[test]
+    fn no_at_still_parses_clean() {
+        let cs: CodecString = "PCMU"
+            .parse()
+            .unwrap();
+        assert_eq!(cs.entries()[0].name(), "PCMU");
+        assert_eq!(cs.entries()[0].rate(), None);
+    }
+
+    #[test]
+    fn single_qualifier_still_parses_clean() {
+        let cs: CodecString = "PCMU@8000h"
+            .parse()
+            .unwrap();
+        assert_eq!(cs.entries()[0].name(), "PCMU");
+        assert_eq!(cs.entries()[0].rate(), Some(8000));
+    }
+
     // --- modname.name splitting ---
 
     #[test]
