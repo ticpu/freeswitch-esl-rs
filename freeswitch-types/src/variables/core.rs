@@ -178,6 +178,12 @@ sip_header::define_header_enum! {
         HoldAccumSeconds => "hold_accum_seconds",
         HoldAccumMs => "hold_accum_ms",
         HoldAccumUsec => "hold_accum_usec",
+        /// Remote SDP received from the far end (`SWITCH_R_SDP_VARIABLE`).
+        SwitchRSdp => "switch_r_sdp",
+        /// Local SDP offered to the far end (`SWITCH_L_SDP_VARIABLE`).
+        SwitchLSdp => "switch_l_sdp",
+        /// Overrides the fmtp for the chosen primary audio payload in the generated SDP offer.
+        RtpForceAudioFmtp => "rtp_force_audio_fmtp",
     }
 }
 
@@ -229,6 +235,48 @@ mod tests {
             err.unwrap_err()
                 .to_string(),
             "unknown channel variable: nonexistent_var"
+        );
+    }
+
+    #[test]
+    fn switch_r_sdp_round_trip() {
+        assert_eq!(ChannelVariable::SwitchRSdp.to_string(), "switch_r_sdp");
+        assert_eq!(
+            "switch_r_sdp".parse::<ChannelVariable>(),
+            Ok(ChannelVariable::SwitchRSdp)
+        );
+        assert_eq!(
+            "SWITCH_R_SDP".parse::<ChannelVariable>(),
+            Ok(ChannelVariable::SwitchRSdp)
+        );
+    }
+
+    #[test]
+    fn switch_l_sdp_round_trip() {
+        assert_eq!(ChannelVariable::SwitchLSdp.to_string(), "switch_l_sdp");
+        assert_eq!(
+            "switch_l_sdp".parse::<ChannelVariable>(),
+            Ok(ChannelVariable::SwitchLSdp)
+        );
+        assert_eq!(
+            "SWITCH_L_SDP".parse::<ChannelVariable>(),
+            Ok(ChannelVariable::SwitchLSdp)
+        );
+    }
+
+    #[test]
+    fn rtp_force_audio_fmtp_round_trip() {
+        assert_eq!(
+            ChannelVariable::RtpForceAudioFmtp.to_string(),
+            "rtp_force_audio_fmtp"
+        );
+        assert_eq!(
+            "rtp_force_audio_fmtp".parse::<ChannelVariable>(),
+            Ok(ChannelVariable::RtpForceAudioFmtp)
+        );
+        assert_eq!(
+            "RTP_FORCE_AUDIO_FMTP".parse::<ChannelVariable>(),
+            Ok(ChannelVariable::RtpForceAudioFmtp)
         );
     }
 }
