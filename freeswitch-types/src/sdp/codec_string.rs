@@ -1405,6 +1405,50 @@ mod tests {
         ));
     }
 
+    // --- fmtp trailing whitespace normalization ---
+
+    #[test]
+    fn with_fmtp_strips_trailing_space() {
+        let entry = CodecStringEntry::new("AMR")
+            .unwrap()
+            .with_fmtp("octet-align=1 ")
+            .unwrap();
+        assert_eq!(entry.fmtp(), Some("octet-align=1"));
+    }
+
+    #[test]
+    fn set_fmtp_strips_trailing_space() {
+        let mut entry = CodecStringEntry::new("AMR").unwrap();
+        entry
+            .set_fmtp("octet-align=1 ")
+            .unwrap();
+        assert_eq!(entry.fmtp(), Some("octet-align=1"));
+    }
+
+    #[test]
+    fn fmtp_trailing_space_round_trips_through_display_and_parse() {
+        let entry = CodecStringEntry::new("AMR")
+            .unwrap()
+            .with_fmtp("octet-align=1 ")
+            .unwrap();
+        let s = entry.to_string();
+        let reparsed: CodecString = s
+            .parse()
+            .unwrap();
+        assert_eq!(reparsed.entries()[0].fmtp(), Some("octet-align=1"));
+    }
+
+    #[test]
+    fn fmtp_interior_whitespace_is_preserved() {
+        // Only the trailing run is normalized away; interior whitespace has no
+        // grammar meaning of its own but remains opaque byte-string content.
+        let entry = CodecStringEntry::new("PCMU")
+            .unwrap()
+            .with_fmtp("a=1  b=2")
+            .unwrap();
+        assert_eq!(entry.fmtp(), Some("a=1  b=2"));
+    }
+
     // --- Display escaping ---
 
     #[test]
@@ -2310,6 +2354,27 @@ mod tests {
     fn dedup_fmtp_set_vs_unset_is_not_dup() {
         let cs = dedup("AMR~octet-align=1,AMR");
         assert_eq!(cs.len(), 2);
+    }
+
+    #[test]
+    fn dedup_amr_fmtp_trailing_space_is_dup() {
+        // Built directly (not round-tripped through Display/FromStr), so this
+        // exercises with_fmtp's own normalization, not split_codec_string's.
+        let mut cs = CodecString::new();
+        cs.push(
+            CodecStringEntry::new("AMR")
+                .unwrap()
+                .with_fmtp("octet-align=1")
+                .unwrap(),
+        );
+        cs.push(
+            CodecStringEntry::new("AMR")
+                .unwrap()
+                .with_fmtp("octet-align=1 ")
+                .unwrap(),
+        );
+        cs.dedup();
+        assert_eq!(cs.len(), 1);
     }
 
     #[test]
