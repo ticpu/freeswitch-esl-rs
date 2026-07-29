@@ -534,7 +534,7 @@ impl CodecString {
     /// `true` if any entry's name equals `name` (case-insensitive).
     ///
     /// FreeSWITCH's codec hash is case-insensitive (`switch_core_hash_init_nocase`,
-    /// `switch_loadable_module.c:2554`).
+    /// `switch_loadable_module.c:2120`).
     pub fn contains_name(&self, name: &str) -> bool {
         self.0
             .iter()
@@ -601,7 +601,7 @@ impl CodecString {
     }
 
     /// Count the token slots a raw codec string would consume in FreeSWITCH's
-    /// `separate_string_char_delim` (`switch_utils.c:2765-2771`).
+    /// `separate_string_char_delim` (`switch_utils.c:2768-2799`).
     ///
     /// Unlike `len()` on a parsed [`CodecString`], this counts empty slots from
     /// consecutive commas: `"PCMU,,PCMA"` → 3, not 2. Compare against

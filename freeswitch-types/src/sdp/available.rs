@@ -53,7 +53,7 @@ impl CodecImplementation {
     /// A [`SdpMediaType::Video`] implementation matches on name (and modname)
     /// alone — `switch_loadable_module_get_codecs_sorted` wraps every qualifier
     /// comparison in `if (imp->codec_type != SWITCH_CODEC_TYPE_VIDEO)`
-    /// (`switch_loadable_module.c:2855, 2889`).
+    /// (`switch_loadable_module.c:2855, 2886`).
     pub fn with_media_type(mut self, media_type: SdpMediaType) -> Self {
         self.media_type = Some(media_type);
         self
@@ -147,7 +147,7 @@ fn matches_implementation(entry: &CodecStringEntry, imp: &CodecImplementation) -
     }
 
     // Video implementations bypass every qualifier comparison
-    // (`switch_loadable_module.c:2855, 2889`); name/modname above is the whole check.
+    // (`switch_loadable_module.c:2855, 2886`); name/modname above is the whole check.
     if matches!(imp.media_type(), Some(SdpMediaType::Video)) {
         return true;
     }
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn amr_ptime_mismatch_is_removed() {
-        // mod_amr.c:690-712 registers both AMR implementations at 20000us (20ms) only.
+        // mod_amr.c:690-716 registers both AMR implementations at 20000us (20ms) only.
         // A peer offering ptime=40 must match nothing and be dropped.
         let mut cs = parse("AMR@8000h@40i");
         let impls = vec![CodecImplementation::new("AMR")
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn video_implementation_matches_regardless_of_rate() {
-        // switch_loadable_module.c:2855/:2889 wrap every qualifier comparison in
+        // switch_loadable_module.c:2855/:2886 wrap every qualifier comparison in
         // `if (imp->codec_type != SWITCH_CODEC_TYPE_VIDEO)`, so a video implementation
         // matches on name alone. Before this fix, a declared rate of 90000 would have
         // been compared against the entry's 8000 and dropped VP8@8000h.
