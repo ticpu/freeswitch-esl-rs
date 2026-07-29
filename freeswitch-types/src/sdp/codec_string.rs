@@ -551,12 +551,20 @@ impl CodecString {
             .map(|e| e.name())
     }
 
-    /// Iterator over entries that carry at least one explicit qualifier.
+    /// Iterator over entries that carry at least one explicit qualifier or fmtp.
     ///
-    /// FreeSWITCH silently drops entries whose qualifiers match no loaded
-    /// implementation — `mod_amr.c:690-712` registers AMR at 20 ms only, so
-    /// `AMR@8000h@40i` matches nothing and vanishes unlogged. Qualified entries
-    /// are the ones at risk of this silent drop.
+    /// Two unrelated reasons make these worth surfacing to the caller. A numeric
+    /// qualifier (rate/ptime/bitrate/channels) risks a silent, unlogged drop at
+    /// match time: FreeSWITCH's implementation matching compares these against
+    /// what's loaded, and neither of its two passes falls back to an unqualified
+    /// match — `mod_amr.c:690-716` registers AMR at 20 ms only, so `AMR@8000h@40i`
+    /// matches nothing and vanishes unlogged. An fmtp never affects that matching
+    /// (`switch_loadable_module.c:2876-2877` just copies it through once a match is
+    /// already found by name/qualifiers), so it can't cause this drop — but the
+    /// switch hands it to the codec implementation, where it changes negotiated
+    /// behaviour (AMR octet-aligned vs bandwidth-efficient is the case that
+    /// matters), and an SDP `a=fmtp` doesn't translate cleanly into a codec-string
+    /// `~fmtp` in general.
     pub fn qualified(&self) -> impl Iterator<Item = &CodecStringEntry> {
         self.0
             .iter()

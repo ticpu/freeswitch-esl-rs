@@ -265,9 +265,9 @@ async fn handle_answered_channel(
     // retain_available() is a caller-supplied check: no ESL API exposes the loaded
     // codec implementation table, so `inventory` is this deployment's own list.
     // An entry can still survive here (its name/modname matches) and yet be
-    // dropped later by the switch if none of its *qualifiers* match a loaded
-    // implementation -- codec_string.qualified() names the entries at risk of
-    // that second, unlogged failure.
+    // dropped later by the switch if none of its numeric *qualifiers* match a
+    // loaded implementation. codec_string.qualified() also yields fmtp-only
+    // entries, which can't be dropped this way but do change codec behaviour.
     let removed = codec_string.retain_available(inventory);
     for entry in &removed {
         warn!(
@@ -277,7 +277,7 @@ async fn handle_answered_channel(
     }
     for entry in codec_string.qualified() {
         info!(
-            "{}: {} carries a qualifier -- still at risk of a match-time drop",
+            "{}: {} carries a qualifier or fmtp worth double-checking",
             short, entry
         );
     }
