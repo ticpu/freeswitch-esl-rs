@@ -555,68 +555,168 @@ fn parse_media_section(
     Ok(section)
 }
 
+/// Cursor over an `a=rtpmap`/`a=fmtp` attribute value.
+///
+/// Whitespace is decided once, here, mirroring sofia's `parse_ul`
+/// (`sdp_parse.c:1834`) and `token` (`sdp_parse.c:1879`) — not re-trimmed at
+/// each field after a naive split, which is how a field with no trim call
+/// (the encoding name) used to slip through with leading whitespace attached.
+struct AttrCursor<'a> {
+    rest: &'a str,
+}
+
+impl<'a> AttrCursor<'a> {
+    fn new(value: &'a str) -> Self {
+        Self { rest: value }
+    }
+
+    /// Skip a run of SP/HTAB.
+    fn skip_ws(&mut self) {
+        self.rest = self
+            .rest
+            .trim_start_matches([' ', '\t']);
+    }
+
+    /// Skip whitespace, take the run of ASCII digits, parse it, skip trailing
+    /// whitespace — mirrors `parse_ul`'s `strspn` on both sides of the number.
+    fn number<T: std::str::FromStr>(&mut self) -> Option<T> {
+        self.skip_ws();
+        let end = self
+            .rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(
+                self.rest
+                    .len(),
+            );
+        if end == 0 {
+            return None;
+        }
+        let (digits, rest) = self
+            .rest
+            .split_at(end);
+        self.rest = rest;
+        self.skip_ws();
+        digits
+            .parse()
+            .ok()
+    }
+
+    /// Skip whitespace, then take the maximal run of chars that are neither
+    /// whitespace nor one of `stop`.
+    fn field(&mut self, stop: &[char]) -> &'a str {
+        self.skip_ws();
+        let end = self
+            .rest
+            .find(|c: char| c == ' ' || c == '\t' || stop.contains(&c))
+            .unwrap_or(
+                self.rest
+                    .len(),
+            );
+        let (field, rest) = self
+            .rest
+            .split_at(end);
+        self.rest = rest;
+        field
+    }
+
+    /// Consume an expected delimiter char if present.
+    fn eat(&mut self, ch: char) -> bool {
+        match self
+            .rest
+            .strip_prefix(ch)
+        {
+            Some(rest) => {
+                self.rest = rest;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The unconsumed remainder, verbatim (no whitespace stripped).
+    fn remaining(&self) -> &'a str {
+        self.rest
+    }
+}
+
 /// Parse an `a=rtpmap` attribute value into `(pt, name, clock_rate, channels)`.
 ///
-/// Returns `Err(MalformedRtpmap)` for any structural violation (missing space,
-/// non-numeric PT, non-numeric clock rate, non-numeric channel count).
+/// Grammar: number (pt) / field stopping at `/` (name) / required `/` / number
+/// (clock rate) / optionally `/` then number (channels). The name has no
+/// charset restriction beyond "not whitespace, not `/`" — sofia's stricter
+/// `TOKEN` charset is enforced later, in `audio_codec_string`, on a path that
+/// warns and drops one codec rather than the whole media section.
+///
+/// Returns `Err(MalformedRtpmap)` for any structural violation (missing
+/// separator, non-numeric PT, non-numeric clock rate, non-numeric channel count).
 fn parse_rtpmap(value: &str) -> Result<(u8, String, u32, Option<u8>), SdpCodecError> {
-    let (pt_str, rest) = value
-        .split_once(' ')
+    let mut cursor = AttrCursor::new(value);
+
+    let pt = cursor
+        .number()
         .ok_or_else(|| SdpCodecError::MalformedRtpmap(value.to_string()))?;
 
-    let pt = pt_str
-        .trim()
-        .parse::<u8>()
-        .map_err(|_| SdpCodecError::MalformedRtpmap(value.to_string()))?;
+    let name = cursor.field(&['/']);
+    if name.is_empty() {
+        return Err(SdpCodecError::MalformedRtpmap(value.to_string()));
+    }
+    let name = name.to_string();
 
-    let mut parts = rest.splitn(3, '/');
+    if !cursor.eat('/') {
+        return Err(SdpCodecError::MalformedRtpmap(value.to_string()));
+    }
 
-    let name = parts
-        .next()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| SdpCodecError::MalformedRtpmap(value.to_string()))?
-        .to_string();
-
-    let rate_str = parts
-        .next()
+    let clock_rate = cursor
+        .number()
         .ok_or_else(|| SdpCodecError::MalformedRtpmap(value.to_string()))?;
 
-    let clock_rate = rate_str
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| SdpCodecError::MalformedRtpmap(value.to_string()))?;
-
-    let channels = match parts.next() {
-        Some(s) => {
-            let s = s.trim();
-            if s.is_empty() {
-                None
-            } else {
-                Some(
-                    s.parse::<u8>()
-                        .map_err(|_| SdpCodecError::MalformedRtpmap(value.to_string()))?,
-                )
-            }
+    let channels = if cursor.eat('/') {
+        cursor.skip_ws();
+        if cursor
+            .remaining()
+            .is_empty()
+        {
+            None
+        } else {
+            Some(
+                cursor
+                    .number()
+                    .ok_or_else(|| SdpCodecError::MalformedRtpmap(value.to_string()))?,
+            )
         }
-        None => None,
+    } else {
+        None
     };
+
+    if !cursor
+        .remaining()
+        .is_empty()
+    {
+        return Err(SdpCodecError::MalformedRtpmap(value.to_string()));
+    }
 
     Ok((pt, name, clock_rate, channels))
 }
 
 /// Extract `(pt, params)` from an `a=fmtp` attribute value.
 ///
+/// Only the whitespace between the payload type and the params is a
+/// separator (consumed by `number`'s trailing skip); everything after that,
+/// including any trailing whitespace, is opaque `byte-string` content per
+/// RFC 8866 and is returned verbatim.
+///
 /// A non-numeric payload type is a hard error — same structural breakage as in `a=rtpmap`.
 fn parse_fmtp_pt(value: &str) -> Result<(u8, String), SdpCodecError> {
-    let (pt_str, params) = match value.split_once(' ') {
-        Some((p, rest)) => (p, rest.to_string()),
-        None => (value, String::new()),
-    };
-    let pt = pt_str
-        .trim()
-        .parse::<u8>()
-        .map_err(|_| SdpCodecError::MalformedFmtp(value.to_string()))?;
-    Ok((pt, params))
+    let mut cursor = AttrCursor::new(value);
+    let pt = cursor
+        .number()
+        .ok_or_else(|| SdpCodecError::MalformedFmtp(value.to_string()))?;
+    Ok((
+        pt,
+        cursor
+            .remaining()
+            .to_string(),
+    ))
 }
 
 /// Return ptime from the first matching attribute, recording a warning if unparseable.
