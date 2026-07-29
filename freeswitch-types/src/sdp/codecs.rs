@@ -1119,6 +1119,65 @@ mod tests {
         ));
     }
 
+    // --- rtpmap whitespace is a tokenizer concern, not a per-field trim ---
+
+    #[test]
+    fn rtpmap_double_space_before_name_is_parsed() {
+        // Two spaces between the payload type and the encoding name must not leak
+        // into the name (FreeSWITCH/sofia's parse_ul skips any run of SP/HTAB).
+        let sdp = format!(
+            "{}m=audio 5004 RTP/AVP 111\r\na=rtpmap:111  opus/48000/2\r\n",
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        let rtp = rtp_codec(codecs.entries());
+        let opus = codec_named(&rtp, "opus").expect("opus must be present, not \" opus\"");
+        assert_eq!(opus.clock_rate(), 48000);
+        assert_eq!(opus.channels(), Some(2));
+    }
+
+    #[test]
+    fn rtpmap_tab_separator_is_parsed() {
+        // A HTAB between payload type and encoding name is legal SDP whitespace;
+        // it must not be treated as "no separator" (which used to discard the
+        // whole m=audio section).
+        let sdp = format!(
+            "{}m=audio 5004 RTP/AVP 0\r\na=rtpmap:0\tPCMU/8000\r\n",
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        let rtp = rtp_codec(codecs.entries());
+        let pcmu = codec_named(&rtp, "PCMU").expect("PCMU must be present");
+        assert_eq!(pcmu.clock_rate(), 8000);
+        assert_eq!(
+            pcmu.channels(),
+            Some(1),
+            "no channel field normalizes to mono"
+        );
+    }
+
+    #[test]
+    fn rtpmap_interior_whitespace_in_name_is_malformed() {
+        // Whitespace inside what would be the encoding name is not a separator
+        // sofia recognises either — it still rejects this shape, via a failed
+        // clock-rate parse once the name is truncated at the first space.
+        let sdp = format!(
+            "{}m=audio 5004 RTP/AVP 0\r\na=rtpmap:0 foo bar/8000\r\n",
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert!(
+            codecs
+                .entries()
+                .is_empty(),
+            "malformed rtpmap must still drop the whole section"
+        );
+        assert!(matches!(
+            codecs.warnings()[0],
+            SdpWarning::MalformedMediaSection { .. }
+        ));
+    }
+
     // --- malformed fmtp skips only its own section ---
 
     #[test]
