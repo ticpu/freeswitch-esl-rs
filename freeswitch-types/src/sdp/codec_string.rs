@@ -1018,18 +1018,21 @@ fn parse_entry(
     mut warnings: Option<&mut Vec<SdpWarning>>,
 ) -> Result<CodecStringEntry, CodecStringError> {
     // Step 1: split on `@` — name segment is everything before the first `@`.
-    let (name_seg, qualifier_str) = match token.split_once('@') {
-        Some((n, q)) => (n, q),
-        None => (token, ""),
+    // `has_at` distinguishes "no @ at all" (zero qualifiers) from a trailing `@`,
+    // which yields the same empty qualifier_str but must still classify as one
+    // empty qualifier part below, same as the "@@" double-delimiter case.
+    let (name_seg, qualifier_str, has_at) = match token.split_once('@') {
+        Some((n, q)) => (n, q, true),
+        None => (token, "", false),
     };
 
     // Step 2: classify each `@`-delimited qualifier part.
-    let qualifiers: Vec<&str> = if qualifier_str.is_empty() {
-        Vec::new()
-    } else {
+    let qualifiers: Vec<&str> = if has_at {
         qualifier_str
             .split('@')
             .collect()
+    } else {
+        Vec::new()
     };
 
     // Steps 3+4: split name_seg on first `.` for modname, then first `~` for fmtp.
