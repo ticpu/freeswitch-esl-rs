@@ -493,6 +493,54 @@ let pidf = body.by_mime_type("application/pidf+xml");
 > [`variables/sip_passthrough.rs`](freeswitch-types/src/variables/sip_passthrough.rs), and
 > [`variables/sip_multipart.rs`](freeswitch-types/src/variables/sip_multipart.rs).
 
+## Codec strings and SDP (`sdp` feature)
+
+`CodecString` models the FreeSWITCH codec-string grammar in both directions, so a
+codec string can be read back, rewritten, or checked rather than assembled by
+concatenation. `SdpCodecs` turns a peer's SDP offer into a typed codec list. The
+crate supplies the grammar's own operations — append, deduplicate, filter — and
+leaves the policy to you: there is no merge, because intersecting an offer while
+*generating* one is not something FreeSWITCH does, and it silently narrows a list
+that some interfaces require to stay complete.
+
+```rust
+use freeswitch_esl_tokio::sdp::{
+    CodecImplementation, CodecString, CodecStringOptions, SdpCodecs,
+};
+use freeswitch_esl_tokio::ChannelVariable;
+
+// The peer's offer, e.g. from the switch_r_sdp channel variable.
+let offer = SdpCodecs::parse(remote_sdp)?;
+let mut codecs = offer.audio_codec_string(&CodecStringOptions::audio(), None)?;
+
+// Append what must always be offered. Nothing from the peer is removed or
+// reordered; these land at the tail as a floor.
+codecs.extend_from(&"PCMU,PCMA".parse::<CodecString>()?);
+
+// FreeSWITCH's own dedup key, so a bare PCMU and PCMU@8000h@20i collapse.
+// The first occurrence wins, which is why concatenation order is the policy.
+codecs.dedup();
+
+// What this switch has loaded. No ESL API exposes the real table, so this is
+// yours to supply; entries matching nothing come back rather than vanishing.
+let loaded = [CodecImplementation::new("PCMU"), CodecImplementation::new("PCMA")];
+for dropped in codecs.retain_available(&loaded) {
+    eprintln!("not offering {dropped}");
+}
+
+// Single-quote the value: uuid_setvar splits on spaces, and AMR format
+// parameters routinely contain "; ".
+client.api(&format!("uuid_setvar {uuid} {} '{codecs}'", ChannelVariable::AbsoluteCodecString)).await?;
+```
+
+Ordering is whatever you concatenate, since `dedup()` keeps the first occurrence:
+offer-then-backup preserves the peer's preference and its qualifiers, backup-then-offer
+preserves yours.
+
+See [docs/codec-string-format.md](docs/codec-string-format.md) for the grammar, the
+characters a format-parameter value cannot carry, the G.722 rate/packetization trap,
+and the two places FreeSWITCH drops a codec-string entry without logging it.
+
 ## Typed event accessors
 
 `EslEvent` provides typed accessors that parse header values into enums
