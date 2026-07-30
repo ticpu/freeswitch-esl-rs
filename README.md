@@ -102,6 +102,9 @@ tokio = { version = "1.0", features = ["full"] }
 - **Typed events** -- `ChannelState`, `CallDirection`, `EventHeader`,
   `ChannelVariable` enums. `HeaderLookup` trait gives typed accessors to any
   key-value store, not just `EslEvent`.
+- **Loopback bowout detection** -- `loopback_resignation()` tells a leg that
+  mod_loopback removed from a live call apart from a real teardown, keyed on
+  the marker's presence so neither of its two paths is missed.
 - **Command builders** -- `Originate`, `BridgeDialString`, `UuidKill`,
   `ConferenceDtmf`, dptools -- all `Display`/`FromStr`, no transport coupling.
 - **Serde** -- all builder types implement `Serialize`/`Deserialize`.

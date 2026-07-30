@@ -8,7 +8,7 @@ use freeswitch_esl_tokio::commands::{LoopbackEndpoint, UuidGetVar, UuidKill, Uui
 use freeswitch_esl_tokio::{
     parse_api_body, Application, ConnectionStatus, DialplanType, DisconnectReason, Endpoint,
     EslClient, EslConnectOptions, EslError, EslEvent, EslEventPriority, EslEventType, EventFormat,
-    EventHeader, HeaderLookup, Originate, ReplyStatus, DEFAULT_ESL_PASSWORD,
+    EventHeader, HeaderLookup, LoopbackHangupCause, Originate, ReplyStatus, DEFAULT_ESL_PASSWORD,
 };
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -1072,8 +1072,8 @@ async fn live_originate_loopback_nested_bridge_scopes_vars() {
 }
 
 /// Drive a loopback pair through a bowout and confirm mod_loopback removed
-/// itself: both loopback legs hang up with `loopback_hangup_cause=bridge`,
-/// and the two real channels end up bridged straight to each other.
+/// itself: both loopback legs resign, and the two real channels end up
+/// bridged straight to each other.
 #[tokio::test]
 #[ignore]
 async fn live_originate_loopback_bowout_from_yaml() {
@@ -1110,9 +1110,11 @@ async fn live_originate_loopback_bowout_from_yaml() {
                 Some(EslEventType::ChannelHangupComplete) => {
                     // mod_loopback stamps this on both legs right before it
                     // bridges the real channels together.
-                    if evt.variable_str("loopback_hangup_cause") == Some("bridge") {
+                    if let Some(r) = evt.loopback_resignation() {
+                        // This YAML drives the frame-count path specifically.
+                        assert_eq!(r.cause(), Ok(LoopbackHangupCause::Bridge));
                         assert!(
-                            evt.variable_str("loopback_bowout_other_uuid")
+                            r.other_uuid()
                                 .is_some(),
                             "a resigning loopback leg must name the real channel it hands over to"
                         );
@@ -1157,7 +1159,7 @@ async fn live_originate_loopback_bowout_from_yaml() {
     assert_eq!(
         resigned.len(),
         2,
-        "both loopback legs must resign with loopback_hangup_cause=bridge, saw {:?}",
+        "both loopback legs must resign, saw {:?}",
         resigned
     );
     let (near, far) = spliced.expect("the two real channels must end up bridged to each other");

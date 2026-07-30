@@ -75,18 +75,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         match evt.event_type() {
             Some(EslEventType::ChannelHangupComplete) => {
-                // Set by mod_loopback on both legs just before it bridges the
-                // real channels together. Any other cause means no bowout.
-                if evt.variable_str("loopback_hangup_cause") != Some("bridge") {
+                // Some means the leg resigned and its call lives on elsewhere;
+                // None is a real teardown. Never test the cause value to decide
+                // that -- mod_loopback writes a different token depending on
+                // which path resigned, so matching one silently misses the
+                // other. Presence is the signal.
+                let Some(resignation) = evt.loopback_resignation() else {
                     continue;
-                }
+                };
                 let name = evt
                     .header(EventHeader::ChannelName)
                     .unwrap_or("?");
                 println!(
                     "resigned {:<20} -> real channel {}",
                     name,
-                    evt.variable_str("loopback_bowout_other_uuid")
+                    resignation
+                        .other_uuid()
                         .unwrap_or("?")
                 );
                 resigned.push(name.to_string());

@@ -265,16 +265,34 @@ is a separate endpoint interface, so both count as non-loopback.
 ### Observing it
 
 Just before it bridges the survivors, mod_loopback stamps both loopback legs
-with `loopback_hangup_cause=bridge` and `loopback_bowout_other_uuid`, then lets
-them hang up. So the signal is two `CHANNEL_HANGUP_COMPLETE` events carrying
-that variable, followed by a `CHANNEL_BRIDGE` with a real channel on both
-sides:
+with `loopback_hangup_cause` and `loopback_bowout_other_uuid`, then lets them
+hang up. So the signal is two `CHANNEL_HANGUP_COMPLETE` events carrying those
+variables, followed by a `CHANNEL_BRIDGE` with a real channel on both sides:
 
 ```
 resigned loopback/bridge-a    -> real channel fe091dbc-...
 resigned loopback/bridge-b    -> real channel e6455adc-...
 bridged  null/nearend = null/farend
 ```
+
+`HeaderLookup::loopback_resignation()` reads both variables:
+
+```rust,ignore
+match evt.loopback_resignation() {
+    // The leg is gone but its call is not. Track other_uuid instead.
+    Some(r) => reanchor(r.other_uuid()),
+    None => teardown(),
+}
+```
+
+**Match on presence, never on the cause value.** mod_loopback writes a
+different token depending on which path resigned -- the two triggers below
+do not agree -- and both mean the leg is gone while the call continues.
+Testing for one of them reports every call that took the other path as a
+teardown: a live conversation torn down while the parties are still talking,
+or a dead one tracked until whatever timeout eventually reaps it. That is
+what the accessor exists to prevent; it returns `Some` for any token, and
+`r.cause()` answers which path separately, for logging.
 
 Do not key on the `loopback::direct` CUSTOM event. mod_loopback only fires it
 when `fire-bowout-on-bridge` is enabled in `loopback.conf.xml`, which is off by
