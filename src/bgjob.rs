@@ -2,8 +2,14 @@
 //!
 //! Every `bgapi` call returns a Job-UUID immediately; the actual result arrives
 //! later as a [`BackgroundJob`](crate::EslEventType::BackgroundJob) event.
-//! `BgJobTracker` eliminates the boilerplate of maintaining a pending-jobs
-//! `HashMap` and matching events by Job-UUID in the event loop.
+//!
+//! Matching those events by Job-UUID is a correctness requirement, not
+//! tidiness. `BACKGROUND_JOB` is fired on the global event bus, so every client
+//! receives every other client's job results; a loop that acts on whichever one
+//! arrives will act on results it never issued. Issuing one command at a time
+//! does not help — an operator's `fs_cli -x 'bgapi ...'` lands in your stream
+//! too. `BgJobTracker` eliminates the boilerplate of maintaining a pending-jobs
+//! `HashMap` and doing that matching in the event loop.
 //!
 //! # Without context
 //!
@@ -139,8 +145,13 @@ impl<C> BgJobTracker<C> {
     ///
     /// If the event is a [`BackgroundJob`](EslEventType::BackgroundJob) whose
     /// Job-UUID matches a tracked job, removes it from the tracker and returns
-    /// the caller's context alongside a [`BgJobResult`] wrapper. Returns `None`
-    /// for non-matching events.
+    /// the caller's context alongside a [`BgJobResult`] wrapper.
+    ///
+    /// `None` means "not one of yours" — another client's job result, or not a
+    /// `BACKGROUND_JOB` at all. It never means your job failed, so treat it as a
+    /// no-op and keep waiting; a job whose result never arrives (the connection
+    /// that issued it was replaced) is reclaimed by [`retain`](Self::retain), not
+    /// by an event.
     pub fn try_complete<'e>(&mut self, event: &'e EslEvent) -> Option<(C, BgJobResult<'e>)> {
         if !event.is_event_type(EslEventType::BackgroundJob) {
             return None;

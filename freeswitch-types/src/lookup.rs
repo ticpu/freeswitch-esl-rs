@@ -123,6 +123,10 @@ pub trait HeaderLookup: SipHeaderLookup {
     }
 
     /// `Job-UUID` header from `bgapi` `BACKGROUND_JOB` events.
+    ///
+    /// The only thing separating your job's result from another ESL client's:
+    /// `BACKGROUND_JOB` is fired globally, so seeing one you did not issue is
+    /// routine rather than exceptional.
     fn job_uuid(&self) -> Option<&str> {
         self.header(EventHeader::JobUuid)
     }

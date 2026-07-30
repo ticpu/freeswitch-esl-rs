@@ -158,6 +158,19 @@ impl EslClient {
     /// arrives later as a [`EslEventType::BackgroundJob`] event -- subscribe to it
     /// and correlate via [`HeaderLookup::job_uuid()`](crate::HeaderLookup::job_uuid) / [`EslResponse::job_uuid`]:
     ///
+    /// Correlating is a correctness requirement, not a way to find your result
+    /// faster. `BACKGROUND_JOB` is fired on the global event bus, so every ESL
+    /// client on the switch receives every other client's job results -- including
+    /// an operator's `fs_cli -x 'bgapi ...'`. An event loop that acts on any
+    /// `BACKGROUND_JOB` it sees will act on results it never asked for, and
+    /// "I only issue one at a time" does not make the ones you see yours.
+    /// [`BgJobTracker`](crate::BgJobTracker) owns the bookkeeping.
+    ///
+    /// A result is not guaranteed to arrive at all: it is delivered on the
+    /// connection that issued the command, so a reconnect strands every job in
+    /// flight. Pair correlation with a deadline of your own -- see
+    /// [`BgJobTracker::retain`](crate::BgJobTracker::retain).
+    ///
     /// ```rust,no_run
     /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), freeswitch_esl_tokio::EslError> {
     /// let resp = client.bgapi("originate user/1000 &park").await?;
