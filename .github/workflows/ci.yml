@@ -2,16 +2,20 @@ name: CI
 
 on:
   push:
-    branches: [master, v1]
   pull_request:
-    branches: [master, v1]
 
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    # push covers every in-repo branch and tag; pull_request only adds fork PRs
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v5
 
@@ -35,12 +39,13 @@ jobs:
           cargo check -p freeswitch-types --no-default-features --features esl --message-format=short
           cargo check -p freeswitch-types --no-default-features --features serde --message-format=short
           cargo check -p freeswitch-types --no-default-features --features conference-info --message-format=short
+          cargo check -p freeswitch-types --no-default-features --features sdp --message-format=short
 
       - name: Check
-        run: cargo check --workspace --all-targets
+        run: cargo check --workspace --all-targets --all-features
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Verify and count enums against C source
         run: |
@@ -79,7 +84,7 @@ jobs:
       - name: Test
         run: |
           set -o pipefail
-          CARGO_TERM_COLOR=never cargo test --workspace 2>&1 | tee test-output.txt
+          CARGO_TERM_COLOR=never cargo test --workspace --all-features 2>&1 | tee test-output.txt
           passed=$(grep '^test result:' test-output.txt | sed 's/.*ok\. \([0-9]*\) passed.*/\1/' | paste -sd+ | bc)
           echo "TEST_PASSED=$passed" >> "$GITHUB_ENV"
 
@@ -194,4 +199,4 @@ jobs:
           color: blue
 
       - name: Build
-        run: cargo build --workspace --release
+        run: cargo build --workspace --release --all-features --all-targets
