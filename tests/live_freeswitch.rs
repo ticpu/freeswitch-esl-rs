@@ -5,21 +5,48 @@
 
 use freeswitch_esl_tokio::commands::originate::{OriginateTarget, Variables, VariablesType};
 use freeswitch_esl_tokio::commands::{LoopbackEndpoint, UuidGetVar, UuidKill, UuidSetVar};
+use freeswitch_esl_tokio::variables::LoopbackVariable;
 use freeswitch_esl_tokio::{
     parse_api_body, Application, ConnectionStatus, DialplanType, DisconnectReason, Endpoint,
     EslClient, EslConnectOptions, EslError, EslEvent, EslEventPriority, EslEventType, EventFormat,
     EventHeader, HeaderLookup, LoopbackHangupCause, Originate, ReplyStatus, DEFAULT_ESL_PASSWORD,
 };
 use std::time::Duration;
-use tokio::sync::Semaphore;
+use tokio::sync::{OnceCell, Semaphore};
 use tokio::time::Instant;
 
 const ESL_HOST: &str = "127.0.0.1";
 const ESL_PORT: u16 = 8022;
 const ESL_PASSWORD: &str = DEFAULT_ESL_PASSWORD;
 const MAX_CONCURRENT_CONNECTIONS: usize = 5;
+const REQUIRED_SPS: u32 = 1000;
 
 static CONN_SEMAPHORE: Semaphore = Semaphore::const_new(MAX_CONCURRENT_CONNECTIONS);
+static SPS_RAISED: OnceCell<()> = OnceCell::const_new();
+
+/// Raise the switch's session admission rate for the whole suite.
+///
+/// Each loopback originate costs two sessions and the bowout pair costs four,
+/// so a parallel run bursts far past a stock `sessions-per-second`. Past it,
+/// `switch_core_session_request_uuid` returns NULL and the originate comes
+/// back `-ERR DESTINATION_OUT_OF_ORDER` -- surfacing as a random unrelated
+/// test failing, a different one each run.
+///
+/// Raised once and deliberately left raised: a parallel suite has no reliable
+/// last-test-finished hook to restore it from, and a half-restored throttle
+/// would reintroduce exactly the flakiness this removes.
+async fn raise_session_throttle(client: &EslClient) {
+    SPS_RAISED
+        .get_or_init(|| async {
+            let resp = client
+                .api(&format!("fsctl sps {}", REQUIRED_SPS))
+                .await
+                .expect("fsctl sps: transport error");
+            resp.api_result()
+                .expect("fsctl sps rejected -- the ESL user needs it in esl-allowed-api");
+        })
+        .await;
+}
 
 async fn connect() -> (
     EslClient,
@@ -35,6 +62,7 @@ async fn connect() -> (
         .await
         .expect("failed to connect to FreeSWITCH");
     client.set_command_timeout(Duration::from_secs(10));
+    raise_session_throttle(&client).await;
     (client, events, permit)
 }
 
@@ -473,13 +501,10 @@ async fn live_channel_timetable_on_create() {
         .api("originate null/test &park()")
         .await
         .unwrap();
-    let uuid = match resp.api_result() {
-        Ok(uuid) => uuid.to_string(),
-        Err(e) => {
-            eprintln!("originate failed ({}), skipping timetable test", e);
-            return;
-        }
-    };
+    let uuid = resp
+        .api_result()
+        .expect("originate failed")
+        .to_string();
 
     // Wait for CHANNEL_CREATE with our UUID
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -527,9 +552,7 @@ async fn live_channel_timetable_on_create() {
     }
 
     // Clean up: hang up the parked channel
-    let _ = client
-        .api(&format!("uuid_kill {}", uuid))
-        .await;
+    kill_channel(&client, &uuid).await;
 
     assert!(
         found_timetable,
@@ -749,9 +772,29 @@ async fn bgapi_originate_ok(
 /// Kill a channel by UUID, ignoring errors (channel may already be gone).
 async fn kill_channel(client: &EslClient, uuid: &str) {
     let cmd = UuidKill::new(uuid);
-    let _ = client
+    if let Err(e) = client
         .api(&cmd.to_string())
-        .await;
+        .await
+    {
+        eprintln!("cleanup: uuid_kill {} failed: {}", uuid, e);
+    }
+}
+
+/// Whether the switch still has this channel.
+///
+/// Cleanup swallows "already gone", so a test that needs to prove a channel
+/// died has to ask before reaping.
+async fn channel_exists(client: &EslClient, uuid: &str) -> bool {
+    let resp = client
+        .api(&format!("uuid_exists {}", uuid))
+        .await
+        .unwrap_or_else(|e| panic!("uuid_exists {}: transport error: {}", uuid, e));
+    match resp.api_result() {
+        Ok("true") => true,
+        Ok("false") => false,
+        Ok(other) => panic!("uuid_exists {}: unexpected reply {:?}", uuid, other),
+        Err(e) => panic!("uuid_exists {}: {}", uuid, e),
+    }
 }
 
 // --- L12: YAML-configured loopback originate (see docs/originate-loopback-yaml.md) ---
@@ -780,18 +823,20 @@ fn loopback_yaml_originate() -> Originate {
 /// Read a channel variable, mapping "not set" to `None`.
 ///
 /// `uuid_getvar` writes the literal `_undef_` when the variable is unset, so an
-/// absent variable arrives as a successful reply rather than an error. A dead
-/// channel answers `-ERR no such channel`, which `api_result()` reports as an
-/// error.
+/// absent variable arrives as a successful reply rather than an error. Only
+/// that is `None`: a dead channel answers `-ERR no such channel`, and folding
+/// that into `None` too would let an assertion expecting an unset variable pass
+/// against a channel that had already gone away.
 async fn getvar(client: &EslClient, uuid: &str, name: &str) -> Option<String> {
     let cmd = UuidGetVar::new(uuid, name);
     let resp = client
         .api(&cmd.to_string())
         .await
-        .ok()?;
+        .unwrap_or_else(|e| panic!("uuid_getvar {} {}: transport error: {}", uuid, name, e));
     match resp.api_result() {
-        Ok("_undef_") | Err(_) => None,
+        Ok("_undef_") => None,
         Ok(value) => Some(value.to_string()),
+        Err(e) => panic!("uuid_getvar {} {}: {}", uuid, name, e),
     }
 }
 
@@ -1097,33 +1142,65 @@ async fn live_originate_loopback_bowout_from_yaml() {
         .api(&cmd.to_string())
         .await
         .expect("originate transport error");
-    resp.api_result()
-        .expect("originate returned an error");
+    let a_leg = resp
+        .api_result()
+        .expect("originate returned an error")
+        .to_string();
 
-    let mut resigned = Vec::new();
-    let mut spliced: Option<(String, String)> = None;
+    let mut resigned: Vec<(String, String)> = Vec::new();
+    let mut legs: Vec<String> = Vec::new();
+    // uuid_bridge fires before mod_loopback stamps the legs, so the splice can
+    // arrive before the survivors are known. Keep every real-to-real bridge and
+    // pick ours out once the resignations name them.
+    let mut real_bridges: Vec<(String, String)> = Vec::new();
+
+    // Our splice is the real-to-real bridge whose two ends are exactly the
+    // channels our resignations handed over to. The bridge event can arrive on
+    // either side of the hangups, so both have to be in hand before deciding.
+    let spliced = |resigned: &[(String, String)], bridges: &[(String, String)]| {
+        let survivors: std::collections::HashSet<&str> = resigned
+            .iter()
+            .map(|(_, s)| s.as_str())
+            .collect();
+        survivors.len() == 2
+            && bridges
+                .iter()
+                .any(|(a, b)| survivors.contains(a.as_str()) && survivors.contains(b.as_str()))
+    };
 
     let deadline = Instant::now() + Duration::from_secs(15);
-    while (resigned.len() < 2 || spliced.is_none()) && Instant::now() < deadline {
+    while !spliced(&resigned, &real_bridges) && Instant::now() < deadline {
         match tokio::time::timeout_at(deadline, events.recv()).await {
             Ok(Some(Ok(evt))) => match evt.event_type() {
                 Some(EslEventType::ChannelHangupComplete) => {
+                    // Both legs carry the partner's uuid, so either one ties
+                    // back to the leg this test originated. Without that, a
+                    // foreign bowout on the shared switch lands here too.
+                    let ours = evt.unique_id() == Some(a_leg.as_str())
+                        || evt.variable(LoopbackVariable::OtherLoopbackLegUuid)
+                            == Some(a_leg.as_str());
+                    if !ours {
+                        continue;
+                    }
                     // mod_loopback stamps this on both legs right before it
                     // bridges the real channels together.
-                    if let Some(r) = evt.loopback_resignation() {
-                        // This YAML drives the frame-count path specifically.
-                        assert_eq!(r.cause(), Ok(LoopbackHangupCause::Bridge));
-                        assert!(
-                            r.other_uuid()
-                                .is_some(),
-                            "a resigning loopback leg must name the real channel it hands over to"
-                        );
-                        resigned.push(
-                            evt.header(EventHeader::ChannelName)
-                                .unwrap_or_default()
-                                .to_string(),
-                        );
+                    let Some(r) = evt.loopback_resignation() else {
+                        continue;
+                    };
+                    // This YAML drives the frame-count path specifically.
+                    assert_eq!(r.cause(), Ok(LoopbackHangupCause::Bridge));
+                    let survivor = r
+                        .other_uuid()
+                        .expect("a resigning leg must name the real channel it hands over to");
+                    if let Some(uuid) = evt.unique_id() {
+                        legs.push(uuid.to_string());
                     }
+                    resigned.push((
+                        evt.header(EventHeader::ChannelName)
+                            .unwrap_or_default()
+                            .to_string(),
+                        survivor.to_string(),
+                    ));
                 }
                 Some(EslEventType::ChannelBridge) => {
                     // Three bridges occur: loopback-a=null/nearend,
@@ -1141,7 +1218,7 @@ async fn live_originate_loopback_bowout_from_yaml() {
                     if let (Some(a), Some(b)) =
                         (evt.unique_id(), evt.header(EventHeader::OtherLegUniqueId))
                     {
-                        spliced = Some((a.to_string(), b.to_string()));
+                        real_bridges.push((a.to_string(), b.to_string()));
                     }
                 }
                 _ => {}
@@ -1152,18 +1229,141 @@ async fn live_originate_loopback_bowout_from_yaml() {
         }
     }
 
-    if let Some((ref near, _)) = spliced {
-        kill_channel(&client, near).await;
+    // A resigned leg hung itself up, so it must already be gone -- one that is
+    // still around means mod_loopback left the audio path without tearing the
+    // leg down, which would strand a channel per bowout on a live switch.
+    // Checked before the reap below, which would otherwise hide it.
+    let mut zombies = Vec::new();
+    for leg in &legs {
+        if channel_exists(&client, leg).await {
+            zombies.push(leg.clone());
+        }
     }
 
+    // Reap before asserting: a panic here would otherwise strand the pair and
+    // the two real channels for every later test on this switch. The survivors
+    // are a live call by design; only they need killing.
+    for (_, survivor) in &resigned {
+        kill_channel(&client, survivor).await;
+    }
+    kill_channel(&client, &a_leg).await;
+
+    assert!(
+        zombies.is_empty(),
+        "resigned loopback legs must be gone, still present: {:?}",
+        zombies
+    );
     assert_eq!(
         resigned.len(),
         2,
         "both loopback legs must resign, saw {:?}",
         resigned
     );
-    let (near, far) = spliced.expect("the two real channels must end up bridged to each other");
-    assert_ne!(near, far);
+    assert!(
+        spliced(&resigned, &real_bridges),
+        "the two real channels this test created must end up bridged to each other; \
+         resigned {:?}, real bridges seen {:?}",
+        resigned,
+        real_bridges
+    );
+}
+
+/// mod_loopback's other bowout trigger, which reports a different token.
+///
+/// `loopback_bowout_on_execute` resigns the leg as soon as it executes an
+/// application, masquerading its extension onto the real channel behind its
+/// partner, instead of waiting for audio to flow. `loopback_bowout=false`
+/// vetoes the frame-count path so only this one can fire.
+///
+/// This is the token a consumer bug matched against, so it earns live coverage
+/// rather than a synthesized header map: the two paths must stay
+/// indistinguishable to `loopback_resignation()` and distinguishable to
+/// `cause()`.
+#[tokio::test]
+#[ignore]
+async fn live_originate_loopback_bowout_on_execute() {
+    let (client, mut events, _permit) = connect().await;
+
+    client
+        .subscribe_events(EventFormat::Plain, &[EslEventType::ChannelHangupComplete])
+        .await
+        .unwrap();
+
+    let mut vars = Variables::new(VariablesType::Default);
+    vars.insert("loopback_bowout", "false");
+    vars.insert("loopback_bowout_on_execute", "true");
+    let cmd = Originate::application(
+        Endpoint::Loopback(LoopbackEndpoint::new("app=bridge:null/farend").with_variables(vars)),
+        Application::new("bridge", Some("null/nearend")),
+    );
+
+    let resp = client
+        .api(&cmd.to_string())
+        .await
+        .expect("originate transport error");
+    let a_leg = resp
+        .api_result()
+        .expect("originate returned an error")
+        .to_string();
+
+    let mut resignation: Option<(String, Option<String>)> = None;
+    // Collected from the event, not by asking the switch: the leg is already
+    // gone by the time we could getvar it.
+    let mut partner: Option<String> = None;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while resignation.is_none() && Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => {
+                if evt.event_type() != Some(EslEventType::ChannelHangupComplete) {
+                    continue;
+                }
+                let ours = evt.unique_id() == Some(a_leg.as_str())
+                    || evt.variable(LoopbackVariable::OtherLoopbackLegUuid) == Some(a_leg.as_str());
+                if !ours {
+                    continue;
+                }
+                if let Some(r) = evt.loopback_resignation() {
+                    partner = evt
+                        .variable(LoopbackVariable::OtherLoopbackLegUuid)
+                        .map(str::to_string);
+                    resignation = Some((
+                        r.cause_raw()
+                            .to_string(),
+                        r.other_uuid()
+                            .map(str::to_string),
+                    ));
+                }
+            }
+            Ok(Some(Err(e))) => panic!("event error: {}", e),
+            Ok(None) => panic!("event stream closed"),
+            Err(_) => break,
+        }
+    }
+
+    // Vetoing the frame-count path leaves the partner leg with nothing to make
+    // it resign, so this topology strands it and both real channels. Reap by
+    // uuid on every exit path -- stranded channels burn the session-per-second
+    // budget and surface later as an unrelated test failing to originate.
+    if let Some((_, Some(ref uuid))) = resignation {
+        kill_channel(&client, uuid).await;
+    }
+    if let Some(ref uuid) = partner {
+        kill_channel(&client, uuid).await;
+    }
+    kill_channel(&client, &a_leg).await;
+
+    let (cause_raw, other_uuid) =
+        resignation.expect("the execute path must report a resignation on the leg that bowed out");
+    assert_eq!(
+        cause_raw.parse::<LoopbackHangupCause>(),
+        Ok(LoopbackHangupCause::Bowout),
+        "the execute path writes its own token, got {:?}",
+        cause_raw
+    );
+    assert!(
+        other_uuid.is_some(),
+        "a resigning leg must name the real channel it hands over to"
+    );
 }
 
 #[tokio::test]
@@ -1857,7 +2057,11 @@ async fn live_header_normalization() {
     loop {
         match tokio::time::timeout_at(deadline, events.recv()).await {
             Ok(Some(Ok(evt))) => {
-                if evt.event_type() != Some(EslEventType::ChannelCreate) {
+                // Other tests originate against the same switch, so match our
+                // own channel rather than the first CHANNEL_CREATE to arrive.
+                if evt.event_type() != Some(EslEventType::ChannelCreate)
+                    || evt.unique_id() != Some(&uuid)
+                {
                     continue;
                 }
 
@@ -1935,7 +2139,9 @@ async fn live_codec_header_normalization() {
     loop {
         match tokio::time::timeout_at(deadline, events.recv()).await {
             Ok(Some(Ok(evt))) => {
-                if evt.event_type() != Some(EslEventType::Codec) {
+                // Other tests originate against the same switch, so match our
+                // own channel rather than the first CODEC event to arrive.
+                if evt.event_type() != Some(EslEventType::Codec) || evt.unique_id() != Some(&uuid) {
                     continue;
                 }
 
@@ -2052,7 +2258,14 @@ async fn live_connect_userauth_truncated_response() {
 async fn live_outbound_connect_response_preserves_underscored_case() {
     use tokio::net::TcpListener;
 
-    let (inbound, _events, permit) = connect().await;
+    let (inbound, mut events, permit) = connect().await;
+
+    // The originate's outcome is the only thing that explains a listener that
+    // never gets dialed, so watch for it rather than inferring from a timeout.
+    inbound
+        .subscribe_events(EventFormat::Plain, &[EslEventType::BackgroundJob])
+        .await
+        .expect("subscribe BACKGROUND_JOB");
 
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -2079,18 +2292,47 @@ async fn live_outbound_connect_response_preserves_underscored_case() {
 
     // bgapi returns immediately; the call proceeds asynchronously and
     // FS dials our listener.
-    inbound
+    let job = inbound
         .bgapi(&cmd.to_string())
         .await
-        .expect("bgapi originate");
+        .expect("bgapi originate")
+        .job_uuid()
+        .expect("bgapi must return a Job-UUID")
+        .to_string();
 
-    let (outbound, _outbound_events) = tokio::time::timeout(
+    // Race the accept against the job result. A failed originate means FS never
+    // dials, so without this the only symptom is an opaque accept timeout that
+    // says nothing about why.
+    let accept = tokio::time::timeout(
         Duration::from_secs(10),
         EslClient::accept_outbound(&listener),
-    )
-    .await
-    .expect("timed out waiting for outbound connection")
-    .expect("accept_outbound failed");
+    );
+    tokio::pin!(accept);
+
+    let (outbound, _outbound_events) = loop {
+        tokio::select! {
+            accepted = &mut accept => {
+                break accepted
+                    .expect("timed out waiting for outbound connection")
+                    .expect("accept_outbound failed");
+            }
+            event = events.recv() => match event {
+                Some(Ok(evt)) => {
+                    if evt.event_type() == Some(EslEventType::BackgroundJob)
+                        && evt.job_uuid() == Some(job.as_str())
+                    {
+                        if let Some(body) = evt.body() {
+                            if let Err(e) = parse_api_body(body) {
+                                panic!("originate failed, so FS never dialed us: {}", e);
+                            }
+                        }
+                    }
+                }
+                Some(Err(e)) => panic!("event error: {}", e),
+                None => panic!("event stream closed"),
+            },
+        }
+    };
 
     let resp = outbound
         .connect_session()
