@@ -14,6 +14,10 @@ use thiserror::Error;
 /// Result type alias for ESL operations
 pub type EslResult<T> = Result<T, EslError>;
 
+/// Every `mod_event_socket` denial (`api`, `bgapi`, `log`, `event`) replies
+/// with exactly this and nothing more.
+const PERMISSION_DENIED_REPLY: &str = "-ERR permission denied";
+
 /// Comprehensive error types for ESL operations
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -301,9 +305,16 @@ impl EslError {
     /// recoverable: the connection stays usable, only the command failed.
     /// Lets the caller distinguish "you may not do this" from a generic
     /// command failure without matching `reply_text` by hand.
+    ///
+    /// Matched as a prefix, not a substring: the denial is `mod_event_socket`'s
+    /// own whole reply, so a different failure that merely mentions the phrase
+    /// is not one.
     pub fn is_permission_denied(&self) -> bool {
         matches!(self, EslError::CommandFailed { reply_text }
-            if reply_text.to_ascii_lowercase().contains("permission denied"))
+            if reply_text
+                .trim_start()
+                .get(..PERMISSION_DENIED_REPLY.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(PERMISSION_DENIED_REPLY)))
     }
 }
 
