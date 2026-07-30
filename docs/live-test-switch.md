@@ -50,6 +50,24 @@ suite will raise it anyway.
 The ESL user therefore needs `fsctl` — an `esl-allowed-api` that omits it makes
 every live test fail at `connect()` with a clear message.
 
+## Heartbeat interval, and why the suite takes ~40s
+
+Two tests wait on FreeSWITCH's own `HEARTBEAT` event, which is the floor on
+the suite's wall time — not CPU, and not test concurrency. Raising
+`MAX_CONCURRENT_CONNECTIONS` buys nothing for that reason.
+
+`event-heartbeat-interval` defaults to 20 seconds and is read from
+`autoload_configs/switch.conf.xml` at startup only; there is no runtime API
+for it, so changing it needs a restart. The scheduler re-reads the value on
+every tick, so a lower value takes effect from the next heartbeat:
+
+```xml
+<param name="event-heartbeat-interval" value="5"/>
+```
+
+At 5 seconds the suite finishes in roughly a third of the time. Nothing
+depends on the default, so this is optional.
+
 ## Dialplan
 
 Context `test`, extension `9199`:
