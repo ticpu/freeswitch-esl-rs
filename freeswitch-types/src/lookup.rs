@@ -18,7 +18,7 @@ use crate::sofia::{
     ParseSipUserPingStatusError, ParseSofiaEventSubclassError, SipUserPingStatus,
     SofiaEventSubclass,
 };
-use crate::variables::VariableName;
+use crate::variables::{LoopbackResignation, LoopbackVariable, VariableName};
 use sip_header::SipHeaderLookup;
 use std::str::FromStr;
 
@@ -196,6 +196,27 @@ pub trait HeaderLookup: SipHeaderLookup {
     /// Returns `Ok(None)` if the header is absent, `Err` if present but unparseable.
     fn hangup_cause(&self) -> Result<Option<HangupCause>, ParseHangupCauseError> {
         parse_opt(self.header(EventHeader::HangupCause))
+    }
+
+    /// Detect a mod_loopback bowout on a `CHANNEL_HANGUP_COMPLETE`.
+    ///
+    /// `Some` means the loopback leg resigned and the call it carried is still
+    /// up on [`other_uuid()`](LoopbackResignation::other_uuid) -- re-anchor
+    /// tracking there rather than treating the hangup as a teardown. `None` is
+    /// a genuine teardown.
+    ///
+    /// Keyed on the presence of `loopback_hangup_cause`, never its value:
+    /// mod_loopback writes a different token depending on which internal path
+    /// resigned, and matching one of them silently mis-disposes every call
+    /// that took the other.
+    fn loopback_resignation(&self) -> Option<LoopbackResignation<'_>> {
+        self.variable(LoopbackVariable::LoopbackHangupCause)
+            .map(|cause| {
+                LoopbackResignation::new(
+                    cause,
+                    self.variable(LoopbackVariable::LoopbackBowoutOtherUuid),
+                )
+            })
     }
 
     /// `Event-Subclass` header for `CUSTOM` events (e.g. `sofia::register`).
