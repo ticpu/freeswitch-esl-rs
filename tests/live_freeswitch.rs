@@ -506,42 +506,20 @@ async fn live_channel_timetable_on_create() {
         .expect("originate failed")
         .to_string();
 
+    // `park` holds the channel open indefinitely, so nothing reaps it for us.
+    let mut reaper = Reaper::new(&client);
+    reaper.track(&uuid);
+
     // Wait for CHANNEL_CREATE with our UUID
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut found_timetable = false;
+    let mut created_event = None;
     while Instant::now() < deadline {
         match tokio::time::timeout_at(deadline, events.recv()).await {
             Ok(Some(Ok(evt))) => {
                 if evt.event_type() == Some(EslEventType::ChannelCreate)
                     && evt.unique_id() == Some(&uuid)
                 {
-                    let tt = evt
-                        .caller_timetable()
-                        .expect("timetable should parse without error")
-                        .expect("CHANNEL_CREATE should have Caller timetable");
-
-                    // created must be a positive epoch-microsecond timestamp
-                    let created = tt
-                        .created
-                        .expect("created should be present on CHANNEL_CREATE");
-                    assert!(
-                        created > 1_000_000_000_000_000,
-                        "created timestamp should be a recent epoch-us value: {}",
-                        created
-                    );
-                    let profile_created = tt
-                        .profile_created
-                        .expect("profile_created should be present on CHANNEL_CREATE");
-                    assert!(
-                        profile_created > 1_000_000_000_000_000,
-                        "profile_created should be a recent epoch-us value: {}",
-                        profile_created
-                    );
-                    // answered/hungup should be 0 at creation time
-                    assert_eq!(tt.answered, Some(0), "answered should be 0 at create");
-                    assert_eq!(tt.hungup, Some(0), "hungup should be 0 at create");
-
-                    found_timetable = true;
+                    created_event = Some(evt);
                     break;
                 }
             }
@@ -551,14 +529,37 @@ async fn live_channel_timetable_on_create() {
         }
     }
 
-    // Clean up: hang up the parked channel
-    kill_channel(&client, &uuid).await;
+    reaper
+        .reap()
+        .await;
 
+    let evt = created_event
+        .unwrap_or_else(|| panic!("did not receive CHANNEL_CREATE with timetable for {}", uuid));
+    let tt = evt
+        .caller_timetable()
+        .expect("timetable should parse without error")
+        .expect("CHANNEL_CREATE should have Caller timetable");
+
+    // created must be a positive epoch-microsecond timestamp
+    let created = tt
+        .created
+        .expect("created should be present on CHANNEL_CREATE");
     assert!(
-        found_timetable,
-        "did not receive CHANNEL_CREATE with timetable for {}",
-        uuid
+        created > 1_000_000_000_000_000,
+        "created timestamp should be a recent epoch-us value: {}",
+        created
     );
+    let profile_created = tt
+        .profile_created
+        .expect("profile_created should be present on CHANNEL_CREATE");
+    assert!(
+        profile_created > 1_000_000_000_000_000,
+        "profile_created should be a recent epoch-us value: {}",
+        profile_created
+    );
+    // answered/hungup should be 0 at creation time
+    assert_eq!(tt.answered, Some(0), "answered should be 0 at create");
+    assert_eq!(tt.hungup, Some(0), "hungup should be 0 at create");
 }
 
 // --- L11: Repeating SIP header round-trip tests ---
@@ -777,6 +778,49 @@ async fn kill_channel(client: &EslClient, uuid: &str) {
         .await
     {
         eprintln!("cleanup: uuid_kill {} failed: {}", uuid, e);
+    }
+}
+
+/// The channels a test created, so it can kill them before it asserts.
+///
+/// Cleanup has to run *before* the assertions. A panic between creating a
+/// channel and killing it strands that channel for the rest of the run, and
+/// stranded channels burn the switch's session budget until later originates
+/// start failing with `-ERR DESTINATION_OUT_OF_ORDER` -- which surfaces as some
+/// unrelated test failing, not this one.
+struct Reaper<'a> {
+    client: &'a EslClient,
+    uuids: Vec<String>,
+}
+
+impl<'a> Reaper<'a> {
+    fn new(client: &'a EslClient) -> Self {
+        Self {
+            client,
+            uuids: Vec::new(),
+        }
+    }
+
+    /// Register a channel to kill. Repeats are ignored, so a uuid learned from
+    /// several events is still killed once.
+    fn track(&mut self, uuid: impl Into<String>) {
+        let uuid = uuid.into();
+        if !self
+            .uuids
+            .contains(&uuid)
+        {
+            self.uuids
+                .push(uuid);
+        }
+    }
+
+    async fn reap(&mut self) {
+        for uuid in self
+            .uuids
+            .drain(..)
+        {
+            kill_channel(self.client, &uuid).await;
+        }
     }
 }
 
@@ -1240,13 +1284,15 @@ async fn live_originate_loopback_bowout_from_yaml() {
         }
     }
 
-    // Reap before asserting: a panic here would otherwise strand the pair and
-    // the two real channels for every later test on this switch. The survivors
-    // are a live call by design; only they need killing.
+    // The survivors are a live call by design, so nothing else will end them.
+    let mut reaper = Reaper::new(&client);
+    reaper.track(&a_leg);
     for (_, survivor) in &resigned {
-        kill_channel(&client, survivor).await;
+        reaper.track(survivor);
     }
-    kill_channel(&client, &a_leg).await;
+    reaper
+        .reap()
+        .await;
 
     assert!(
         zombies.is_empty(),
@@ -1341,16 +1387,18 @@ async fn live_originate_loopback_bowout_on_execute() {
     }
 
     // Vetoing the frame-count path leaves the partner leg with nothing to make
-    // it resign, so this topology strands it and both real channels. Reap by
-    // uuid on every exit path -- stranded channels burn the session-per-second
-    // budget and surface later as an unrelated test failing to originate.
+    // it resign, so this topology strands it and both real channels.
+    let mut reaper = Reaper::new(&client);
+    reaper.track(&a_leg);
     if let Some((_, Some(ref uuid))) = resignation {
-        kill_channel(&client, uuid).await;
+        reaper.track(uuid);
     }
     if let Some(ref uuid) = partner {
-        kill_channel(&client, uuid).await;
+        reaper.track(uuid);
     }
-    kill_channel(&client, &a_leg).await;
+    reaper
+        .reap()
+        .await;
 
     let (cause_raw, other_uuid) =
         resignation.expect("the execute path must report a resignation on the leg that bowed out");
@@ -2051,8 +2099,11 @@ async fn live_header_normalization() {
         .expect("originate returned error")
         .to_string();
 
+    let mut reaper = Reaper::new(&client);
+    reaper.track(&uuid);
+
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut saw_channel_create = false;
+    let mut created_event = None;
 
     loop {
         match tokio::time::timeout_at(deadline, events.recv()).await {
@@ -2064,36 +2115,7 @@ async fn live_header_normalization() {
                 {
                     continue;
                 }
-
-                // Known EventHeader lookups must work
-                assert!(evt
-                    .header(EventHeader::UniqueId)
-                    .is_some());
-                assert!(evt
-                    .header(EventHeader::ChannelState)
-                    .is_some());
-                assert!(evt
-                    .header(EventHeader::EventName)
-                    .is_some());
-
-                // No duplicate keys (normalization collapsed different casings)
-                let headers = evt.headers();
-                let unique_lower: std::collections::HashSet<String> = headers
-                    .keys()
-                    .map(|k| k.to_ascii_lowercase())
-                    .collect();
-                assert_eq!(
-                    headers.len(),
-                    unique_lower.len(),
-                    "duplicate keys with different casing found in headers"
-                );
-
-                // Channel variables preserve underscore keys
-                if let Some(dir) = evt.variable_str("direction") {
-                    assert!(!dir.is_empty());
-                }
-
-                saw_channel_create = true;
+                created_event = Some(evt);
                 break;
             }
             Ok(Some(Err(e))) => panic!("event error: {e}"),
@@ -2102,8 +2124,39 @@ async fn live_header_normalization() {
         }
     }
 
-    kill_channel(&client, &uuid).await;
-    assert!(saw_channel_create, "never received CHANNEL_CREATE event");
+    reaper
+        .reap()
+        .await;
+
+    let evt = created_event.expect("never received CHANNEL_CREATE event");
+
+    // Known EventHeader lookups must work
+    assert!(evt
+        .header(EventHeader::UniqueId)
+        .is_some());
+    assert!(evt
+        .header(EventHeader::ChannelState)
+        .is_some());
+    assert!(evt
+        .header(EventHeader::EventName)
+        .is_some());
+
+    // No duplicate keys (normalization collapsed different casings)
+    let headers = evt.headers();
+    let unique_lower: std::collections::HashSet<String> = headers
+        .keys()
+        .map(|k| k.to_ascii_lowercase())
+        .collect();
+    assert_eq!(
+        headers.len(),
+        unique_lower.len(),
+        "duplicate keys with different casing found in headers"
+    );
+
+    // Channel variables preserve underscore keys
+    if let Some(dir) = evt.variable_str("direction") {
+        assert!(!dir.is_empty());
+    }
 }
 
 /// Verify that CODEC events have normalized codec headers.
@@ -2133,8 +2186,11 @@ async fn live_codec_header_normalization() {
         .expect("originate returned error")
         .to_string();
 
+    let mut reaper = Reaper::new(&client);
+    reaper.track(&uuid);
+
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut saw_codec = false;
+    let mut codec_event = None;
 
     loop {
         match tokio::time::timeout_at(deadline, events.recv()).await {
@@ -2144,33 +2200,7 @@ async fn live_codec_header_normalization() {
                 if evt.event_type() != Some(EslEventType::Codec) || evt.unique_id() != Some(&uuid) {
                     continue;
                 }
-
-                // Codec headers accessible via typed API
-                if let Some(codec) = evt.header(EventHeader::ChannelReadCodecName) {
-                    assert!(!codec.is_empty());
-                }
-
-                // No duplicate keys after normalization
-                let headers = evt.headers();
-                let unique_lower: std::collections::HashSet<String> = headers
-                    .keys()
-                    .map(|k| k.to_ascii_lowercase())
-                    .collect();
-                assert_eq!(
-                    headers.len(),
-                    unique_lower.len(),
-                    "CODEC event has duplicate keys with different casing: {:?}",
-                    headers
-                        .keys()
-                        .filter(|k| {
-                            headers
-                                .keys()
-                                .any(|other| other != *k && other.eq_ignore_ascii_case(k))
-                        })
-                        .collect::<Vec<_>>()
-                );
-
-                saw_codec = true;
+                codec_event = Some(evt);
                 break;
             }
             Ok(Some(Err(e))) => panic!("event error: {e}"),
@@ -2179,8 +2209,36 @@ async fn live_codec_header_normalization() {
         }
     }
 
-    kill_channel(&client, &uuid).await;
-    assert!(saw_codec, "never received CODEC event");
+    reaper
+        .reap()
+        .await;
+
+    let evt = codec_event.expect("never received CODEC event");
+
+    // Codec headers accessible via typed API
+    if let Some(codec) = evt.header(EventHeader::ChannelReadCodecName) {
+        assert!(!codec.is_empty());
+    }
+
+    // No duplicate keys after normalization
+    let headers = evt.headers();
+    let unique_lower: std::collections::HashSet<String> = headers
+        .keys()
+        .map(|k| k.to_ascii_lowercase())
+        .collect();
+    assert_eq!(
+        headers.len(),
+        unique_lower.len(),
+        "CODEC event has duplicate keys with different casing: {:?}",
+        headers
+            .keys()
+            .filter(|k| {
+                headers
+                    .keys()
+                    .any(|other| other != *k && other.eq_ignore_ascii_case(k))
+            })
+            .collect::<Vec<_>>()
+    );
 }
 
 /// Verify that userauth with a long Allowed-Events list survives
