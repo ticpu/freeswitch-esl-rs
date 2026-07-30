@@ -364,6 +364,30 @@ mod tests {
         assert!(!err.is_permission_denied());
     }
 
+    // The ESL denial is its own reply, not a phrase inside someone else's
+    // output. An api body that merely mentions it must not be classified as
+    // a permanent configuration fault.
+    #[test]
+    fn phrase_inside_another_failure_is_not_permission_denied() {
+        for reply in [
+            "-ERR error/permission denied while opening /var/lib/freeswitch/x.wav",
+            "-USAGE: sched_api [+@]<time> <group_name> <command string> (permission denied)",
+        ] {
+            let err = EslError::CommandFailed {
+                reply_text: reply.into(),
+            };
+            assert!(!err.is_permission_denied(), "should not detect: {reply}");
+        }
+    }
+
+    #[test]
+    fn permission_denied_tolerates_trailing_wire_whitespace() {
+        let err = EslError::CommandFailed {
+            reply_text: "-ERR permission denied\n".into(),
+        };
+        assert!(err.is_permission_denied());
+    }
+
     #[test]
     fn non_command_failure_not_permission_denied() {
         assert!(!EslError::QueueFull.is_permission_denied());

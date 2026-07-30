@@ -375,7 +375,7 @@ impl HeaderLookup for std::collections::HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::variables::ChannelVariable;
+    use crate::variables::{ChannelVariable, LoopbackHangupCause};
     use std::collections::HashMap;
 
     struct TestStore(HashMap<String, String>);
@@ -701,6 +701,70 @@ mod tests {
             .caller_timetable()
             .unwrap_err();
         assert_eq!(err.header, "Caller-Channel-Created-Time");
+    }
+
+    // --- loopback resignation ---
+
+    #[test]
+    fn loopback_resignation_absent_on_a_real_teardown() {
+        let s = store_with(&[("variable_hangup_cause", "NORMAL_CLEARING")]);
+        assert!(s
+            .loopback_resignation()
+            .is_none());
+    }
+
+    #[test]
+    fn loopback_resignation_on_execute_masquerade_path() {
+        let s = store_with(&[
+            ("variable_loopback_hangup_cause", "bowout"),
+            ("variable_loopback_bowout_other_uuid", "survivor-uuid"),
+        ]);
+        let r = s
+            .loopback_resignation()
+            .expect("marker present");
+        assert_eq!(r.cause(), Ok(LoopbackHangupCause::Bowout));
+        assert_eq!(r.cause_raw(), "bowout");
+        assert_eq!(r.other_uuid(), Some("survivor-uuid"));
+    }
+
+    #[test]
+    fn loopback_resignation_on_frame_count_path() {
+        let s = store_with(&[
+            ("variable_loopback_hangup_cause", "bridge"),
+            ("variable_loopback_bowout_other_uuid", "survivor-uuid"),
+        ]);
+        let r = s
+            .loopback_resignation()
+            .expect("marker present");
+        assert_eq!(r.cause(), Ok(LoopbackHangupCause::Bridge));
+        assert_eq!(r.other_uuid(), Some("survivor-uuid"));
+    }
+
+    // The whole point of the shape: a path mod_loopback grows later still
+    // reports a resignation, so the surviving leg is never mis-disposed.
+    #[test]
+    fn loopback_resignation_survives_an_unknown_token() {
+        let s = store_with(&[
+            ("variable_loopback_hangup_cause", "some_future_path"),
+            ("variable_loopback_bowout_other_uuid", "survivor-uuid"),
+        ]);
+        let r = s
+            .loopback_resignation()
+            .expect("presence is the signal, not the value");
+        assert_eq!(r.other_uuid(), Some("survivor-uuid"));
+        assert_eq!(r.cause_raw(), "some_future_path");
+        assert!(r
+            .cause()
+            .is_err());
+    }
+
+    #[test]
+    fn loopback_resignation_without_a_surviving_uuid() {
+        let s = store_with(&[("variable_loopback_hangup_cause", "bridge")]);
+        let r = s
+            .loopback_resignation()
+            .expect("marker present");
+        assert_eq!(r.other_uuid(), None);
     }
 
     #[test]
