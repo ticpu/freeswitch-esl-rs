@@ -740,6 +740,12 @@ Live integration tests require FreeSWITCH ESL on `127.0.0.1:8022`
 cargo test --test live_freeswitch -- --ignored
 ```
 
+They run in parallel against that one switch and raise its
+`sessions-per-second` to make that safe.
+[docs/live-test-switch.md](docs/live-test-switch.md) documents the dialplan,
+modules, and directory users they expect, and the two rules for writing a new
+one.
+
 ## Requirements
 
 - Rust 1.75+

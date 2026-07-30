@@ -137,6 +137,11 @@ cargo test --workspace --lib
 When FreeSWITCH ESL is available on `127.0.0.1:8022`, also run live tests:
 `ss -tlnp sport = :8022` to check, then `cargo test --test live_freeswitch -- --ignored`.
 
+Live tests run in parallel against one shared switch, so a new one must
+correlate every event to its own channel UUID and reap the channels it created
+*before* asserting. See [docs/live-test-switch.md](docs/live-test-switch.md)
+for that and for what the switch must provide (dialplan, modules, users).
+
 ## Documentation Style
 
 All public items must have doc comments — the pre-commit hook enforces
