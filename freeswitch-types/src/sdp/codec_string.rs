@@ -1566,6 +1566,7 @@ mod tests {
     // --- round-trip table ---
 
     #[test]
+    #[allow(clippy::type_complexity)]
     fn round_trip_table() {
         let cases: &[(&str, &dyn Fn(&CodecStringEntry))] = &[
             ("PCMU", &|e| {
