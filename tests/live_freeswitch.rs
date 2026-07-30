@@ -4,12 +4,15 @@
 //! Run with: cargo test --test live_freeswitch -- --ignored
 
 use freeswitch_esl_tokio::commands::originate::{OriginateTarget, Variables, VariablesType};
-use freeswitch_esl_tokio::commands::{LoopbackEndpoint, UuidGetVar, UuidKill, UuidSetVar};
+use freeswitch_esl_tokio::commands::{
+    LoopbackEndpoint, UuidGetVar, UuidKill, UuidSetVar, UuidTransfer,
+};
 use freeswitch_esl_tokio::variables::LoopbackVariable;
 use freeswitch_esl_tokio::{
-    parse_api_body, Application, ConnectionStatus, DialplanType, DisconnectReason, Endpoint,
-    EslClient, EslConnectOptions, EslError, EslEvent, EslEventPriority, EslEventType, EventFormat,
-    EventHeader, HeaderLookup, LoopbackHangupCause, Originate, ReplyStatus, DEFAULT_ESL_PASSWORD,
+    parse_api_body, Application, ChannelState, ConnectionStatus, DialplanType, DisconnectReason,
+    Endpoint, EslClient, EslConnectOptions, EslError, EslEvent, EslEventPriority, EslEventType,
+    EventFormat, EventHeader, HeaderLookup, LoopbackHangupCause, Originate, ReplyStatus,
+    DEFAULT_ESL_PASSWORD,
 };
 use std::time::Duration;
 use tokio::sync::{OnceCell, Semaphore};
@@ -1318,29 +1321,44 @@ async fn live_originate_loopback_bowout_from_yaml() {
 ///
 /// `loopback_bowout_on_execute` resigns the leg as soon as it executes an
 /// application, masquerading its extension onto the real channel behind its
-/// partner, instead of waiting for audio to flow. `loopback_bowout=false`
+/// partner instead of waiting for audio to flow. `loopback_bowout=false`
 /// vetoes the frame-count path so only this one can fire.
 ///
 /// This is the token a consumer bug matched against, so it earns live coverage
 /// rather than a synthesized header map: the two paths must stay
 /// indistinguishable to `loopback_resignation()` and distinguishable to
 /// `cause()`.
+///
+/// Setting the trigger in the originate would be a race, not a test.
+/// mod_loopback bows out only if the partner leg already carries a signal bond
+/// to a non-loopback channel when this leg executes, and does nothing at all
+/// when it does not — `switch_ivr_multi_threaded_bridge` writes that bond
+/// *after* it fires `CHANNEL_BRIDGE`, while `originate` returns as soon as the
+/// leg answers. So park the leg, wait for the far channel to reach
+/// `CS_EXCHANGE_MEDIA` (which the switch sets only after writing the bond),
+/// then arm the trigger and transfer. Every step is ordered by the switch.
 #[tokio::test]
 #[ignore]
 async fn live_originate_loopback_bowout_on_execute() {
     let (client, mut events, _permit) = connect().await;
 
     client
-        .subscribe_events(EventFormat::Plain, &[EslEventType::ChannelHangupComplete])
+        .subscribe_events(
+            EventFormat::Plain,
+            &[
+                EslEventType::ChannelState,
+                EslEventType::ChannelHangupComplete,
+            ],
+        )
         .await
         .unwrap();
 
+    // No trigger yet: parking means this leg's first execute pass cannot race.
     let mut vars = Variables::new(VariablesType::Default);
     vars.insert("loopback_bowout", "false");
-    vars.insert("loopback_bowout_on_execute", "true");
     let cmd = Originate::application(
         Endpoint::Loopback(LoopbackEndpoint::new("app=bridge:null/farend").with_variables(vars)),
-        Application::new("bridge", Some("null/nearend")),
+        Application::park(),
     );
 
     let resp = client
@@ -1352,12 +1370,67 @@ async fn live_originate_loopback_bowout_on_execute() {
         .expect("originate returned an error")
         .to_string();
 
-    let mut resignation: Option<(String, Option<String>)> = None;
-    // Collected from the event, not by asking the switch: the leg is already
-    // gone by the time we could getvar it.
-    let mut partner: Option<String> = None;
+    let mut reaper = Reaper::new(&client);
+    reaper.track(&a_leg);
+
+    // The leg is parked and alive, so this is safe to ask for.
+    let b_leg = getvar(&client, &a_leg, "other_loopback_leg_uuid")
+        .await
+        .expect("a loopback leg must name its partner");
+    reaper.track(&b_leg);
+
+    // The far channel bonded to the partner is the one whose CS_EXCHANGE_MEDIA
+    // proves the bond exists; keying on the bond value keeps a concurrent
+    // test's identical topology out of it.
     let deadline = Instant::now() + Duration::from_secs(15);
-    while resignation.is_none() && Instant::now() < deadline {
+    let mut bonded = false;
+    while !bonded && Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => {
+                if evt.event_type() != Some(EslEventType::ChannelState) {
+                    continue;
+                }
+                // CHANNEL_STATE carries no channel variables, so the bond
+                // itself is not observable here -- but the far channel names
+                // the partner leg it was originated by, and the switch only
+                // moves it to CS_EXCHANGE_MEDIA after writing that bond.
+                if evt.header(EventHeader::OtherLegUniqueId) != Some(b_leg.as_str()) {
+                    continue;
+                }
+                if evt.channel_state() == Ok(Some(ChannelState::CsExchangeMedia)) {
+                    bonded = true;
+                }
+            }
+            Ok(Some(Err(e))) => panic!("event error: {}", e),
+            Ok(None) => panic!("event stream closed"),
+            Err(_) => break,
+        }
+    }
+
+    if bonded {
+        client
+            .api(&UuidSetVar::new(&a_leg, "loopback_bowout_on_execute", "true").to_string())
+            .await
+            .expect("uuid_setvar transport error")
+            .api_result()
+            .expect("uuid_setvar rejected");
+
+        // Re-entering CS_EXECUTE runs channel_on_execute again, this time with
+        // the trigger armed and the partner's bond already in place.
+        client
+            .api(
+                &UuidTransfer::new(&a_leg, "bridge:null/nearend")
+                    .with_dialplan(DialplanType::Inline)
+                    .to_string(),
+            )
+            .await
+            .expect("uuid_transfer transport error")
+            .api_result()
+            .expect("uuid_transfer rejected");
+    }
+
+    let mut resignation: Option<(String, Option<String>)> = None;
+    while bonded && resignation.is_none() && Instant::now() < deadline {
         match tokio::time::timeout_at(deadline, events.recv()).await {
             Ok(Some(Ok(evt))) => {
                 if evt.event_type() != Some(EslEventType::ChannelHangupComplete) {
@@ -1369,9 +1442,6 @@ async fn live_originate_loopback_bowout_on_execute() {
                     continue;
                 }
                 if let Some(r) = evt.loopback_resignation() {
-                    partner = evt
-                        .variable(LoopbackVariable::OtherLoopbackLegUuid)
-                        .map(str::to_string);
                     resignation = Some((
                         r.cause_raw()
                             .to_string(),
@@ -1386,20 +1456,18 @@ async fn live_originate_loopback_bowout_on_execute() {
         }
     }
 
-    // Vetoing the frame-count path leaves the partner leg with nothing to make
-    // it resign, so this topology strands it and both real channels.
-    let mut reaper = Reaper::new(&client);
-    reaper.track(&a_leg);
-    if let Some((_, Some(ref uuid))) = resignation {
-        reaper.track(uuid);
-    }
-    if let Some(ref uuid) = partner {
-        reaper.track(uuid);
+    if let Some((_, Some(ref survivor))) = resignation {
+        reaper.track(survivor);
     }
     reaper
         .reap()
         .await;
 
+    assert!(
+        bonded,
+        "the partner leg never bonded to a real channel, so the execute path \
+         could not be reached"
+    );
     let (cause_raw, other_uuid) =
         resignation.expect("the execute path must report a resignation on the leg that bowed out");
     assert_eq!(
