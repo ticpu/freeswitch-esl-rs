@@ -12,6 +12,9 @@
 //!   # Multiple events
 //!   cargo run --example event_filter -- -e CHANNEL_CREATE -e CHANNEL_ANSWER -f Call-Direction -v inbound
 //!
+//!   # Exit after the first 5 matching events
+//!   cargo run --example event_filter -- -e CHANNEL_CREATE -c 5
+//!
 //!   # With userauth (user@domain format required)
 //!   cargo run --example event_filter -- -u admin@default -p secret -e ALL
 
@@ -37,6 +40,7 @@ Filter Options:
                            Examples: CHANNEL_CREATE, CHANNEL_ANSWER, ALL
   -f, --filter <HEADER>    Header name to filter on
   -v, --value <VALUE>      Value to match (use /regex/ for regex matching)
+  -c, --max-count <N>      Exit after N matching events (default: run forever)
 
 Output Options:
   -j, --json               Output events as JSON
@@ -52,6 +56,9 @@ Examples:
 
   # Multiple events with JSON output
   event_filter -e CHANNEL_CREATE -e CHANNEL_ANSWER -f Caller-Context -v public -j
+
+  # Print the next 3 matching events then exit
+  event_filter -e CHANNEL_CREATE -f Call-Direction -v inbound -c 3
 
   # With userauth (user@domain format)
   event_filter -u admin@default -p secret -e ALL
@@ -78,6 +85,7 @@ struct Args {
     events: Vec<String>,
     filter_header: Option<String>,
     filter_value: Option<String>,
+    max_count: Option<usize>,
     json_output: bool,
     raw_output: bool,
     quiet: bool,
@@ -100,6 +108,7 @@ impl Default for Args {
             events: vec!["CHANNEL_CREATE".to_string()],
             filter_header: None,
             filter_value: None,
+            max_count: None,
             json_output: false,
             raw_output: false,
             quiet: false,
@@ -182,6 +191,18 @@ fn parse_args() -> Result<Args, String> {
                         .ok_or("Missing filter value")?
                         .clone(),
                 );
+            }
+            "-c" | "--max-count" => {
+                i += 1;
+                let count: usize = args
+                    .get(i)
+                    .ok_or("Missing max-count value")?
+                    .parse()
+                    .map_err(|_| "Invalid max-count: expected a positive integer")?;
+                if count == 0 {
+                    return Err("--max-count must be at least 1".to_string());
+                }
+                result.max_count = Some(count);
             }
             "-j" | "--json" => {
                 result.json_output = true;
@@ -352,7 +373,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .apply_subscription(&sub)
         .await?;
 
-    eprintln!("Listening for events... (Ctrl+C to exit)\n");
+    match args.max_count {
+        Some(n) => eprintln!("Listening for {} event(s)... (Ctrl+C to exit early)\n", n),
+        None => eprintln!("Listening for events... (Ctrl+C to exit)\n"),
+    }
+
+    let mut matched = 0usize;
+    let mut reached_max = false;
 
     while let Some(result) = events
         .recv()
@@ -375,9 +402,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format_event_full(&event)
         };
         println!("{}", output);
+
+        matched += 1;
+        if args
+            .max_count
+            .is_some_and(|max| matched >= max)
+        {
+            reached_max = true;
+            break;
+        }
     }
 
-    eprintln!("Connection closed by server");
+    if reached_max {
+        eprintln!("Reached max count of {} event(s)", matched);
+    } else {
+        eprintln!("Connection closed by server");
+    }
     client
         .disconnect()
         .await?;
