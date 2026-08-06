@@ -1,6 +1,7 @@
 //! Channel variable types: format parsers (`ARRAY::`, SIP multipart) and typed
 //! variable name enums.
 
+mod conference;
 mod core;
 mod core_media;
 mod esl_array;
@@ -12,6 +13,7 @@ mod sip_passthrough;
 mod sofia;
 
 pub use self::core::{ChannelVariable, ParseChannelVariableError};
+pub use conference::{ConferenceVariable, ParseConferenceVariableError};
 pub use core_media::{CoreMediaVariable, ParseCoreMediaVariableError, RtpStatUnit};
 pub use esl_array::{EslArray, EslArrayError, MAX_ARRAY_ITEMS};
 #[cfg(feature = "esl")]
@@ -58,5 +60,11 @@ impl VariableName for CoreMediaVariable {
 impl VariableName for LoopbackVariable {
     fn as_str(&self) -> &str {
         LoopbackVariable::as_str(self)
+    }
+}
+
+impl VariableName for ConferenceVariable {
+    fn as_str(&self) -> &str {
+        ConferenceVariable::as_str(self)
     }
 }
