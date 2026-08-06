@@ -11,7 +11,8 @@ Usage:
   hooks/check-enums.py [OPTIONS] [CHECK...]
 
   CHECK is one or more check names: event-types, hangup-causes, channel-states,
-  call-states, core-media-vars, sip-header-prefixes, event-headers.
+  call-states, core-media-vars, conference-vars, sip-header-prefixes,
+  event-headers.
   Default: run all checks.
 
 Options:
@@ -341,6 +342,64 @@ def check_core_media_vars(repo: Path, src: SourceResolver) -> CheckResult:
     )
 
 
+CONFERENCE_SOURCES = [
+    "mod_conference.c",
+    "conference_al.c",
+    "conference_api.c",
+    "conference_cdr.c",
+    "conference_event.c",
+    "conference_file.c",
+    "conference_loop.c",
+    "conference_member.c",
+    "conference_record.c",
+    "conference_utils.c",
+    "conference_video.c",
+]
+
+# mod_conference-owned variables whose name carries no "conference" substring.
+CONFERENCE_UNPREFIXED = {"supplied_pin", "video_banner_text"}
+
+# conference_utils_combine_flag_var() reads a variable the same way, merging
+# its index-addressed writes -- its argument is a variable name too.
+CONFERENCE_VAR_RE = re.compile(
+    r'(?:switch_channel_(?:set|get)_variable[a-z_]*'
+    r'|conference_utils_combine_flag_var)\s*\([^,]+,\s*'
+    r'(?:"([A-Za-z_][A-Za-z0-9_]*)"|([A-Z_][A-Z0-9_]*))'
+)
+
+
+def check_conference_vars(repo: Path, src: SourceResolver) -> CheckResult:
+    rust_file = repo / "freeswitch-types" / "src" / "variables" / "conference.rs"
+    rust = rust_define_header_enum_names(rust_file)
+
+    base = "src/mod/applications/mod_conference/"
+    defines = dict(
+        re.findall(
+            r'#define\s+([A-Z_][A-Z0-9_]*_VARIABLE)\s+"([^"]+)"',
+            src.read(base + "mod_conference.h"),
+        )
+    )
+
+    c_names: set[str] = set()
+    for name in CONFERENCE_SOURCES:
+        text = src.read(base + name)
+        code = "\n".join(
+            l for l in text.splitlines() if not l.lstrip().startswith("//")
+        )
+        for literal, macro in CONFERENCE_VAR_RE.findall(code):
+            var = literal or defines.get(macro)
+            if var and ("conference" in var or var in CONFERENCE_UNPREFIXED):
+                c_names.add(var)
+
+    return CheckResult(
+        name="ConferenceVariable",
+        rust_count=len(rust),
+        c_count=len(c_names),
+        missing=sorted(c_names - rust),
+        extra=sorted(rust - c_names),
+    )
+
+
 SIP_HEADER_GITHUB = "https://raw.githubusercontent.com/ticpu/sip-header/master/src/header.rs"
 
 
@@ -619,6 +678,7 @@ ALL_CHECKS = {
     "channel-states": check_channel_states,
     "call-states": check_call_states,
     "core-media-vars": check_core_media_vars,
+    "conference-vars": check_conference_vars,
     "sip-header-prefixes": check_sip_header_prefixes,
     "event-headers": check_event_headers,
 }
