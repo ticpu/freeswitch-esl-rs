@@ -184,6 +184,17 @@ sip_header::define_header_enum! {
         SwitchLSdp => "switch_l_sdp",
         /// Overrides the fmtp for the chosen primary audio payload in the generated SDP offer.
         RtpForceAudioFmtp => "rtp_force_audio_fmtp",
+
+        // --- RFC 7989 Session-ID ---
+        /// `local-uuid` half of the received `Session-ID` header.
+        SessionUuid => "session_uuid",
+        /// `remote=` half of the received `Session-ID` header.
+        RemoteSessionUuid => "remote_session_uuid",
+        /// UUID an application stamps on the session, sent as the local half of
+        /// `Session-ID`. mod_conference writes the conference UUID here.
+        AppSessionUuid => "app_session_uuid",
+        /// Generic parameters carried alongside the `Session-ID` UUIDs.
+        GenericParamSessionUuid => "generic_param_session_uuid",
     }
 }
 
