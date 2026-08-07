@@ -156,6 +156,15 @@ whole story, a brief one-liner suffices.
 markdown files or comments — these go stale when variants are added. Use dynamic
 badges (CI-generated) in README or just omit the count.
 
+**FreeSWITCH line references are pinned and indexed.** Prefer the symbol name
+alone (`cleanup_separated_string` in `switch_utils.c`) — it survives edits and a
+line number does not. Where a line number is genuinely needed (a branch, an
+`else`-less block, a comparison inside a long function), the file that carries
+it must name the pinned commit in its own header or module docs, every
+reference must name its file, and the target must be indexed in
+`hooks/source-refs.yaml`. Regenerate with `hooks/check-source-refs.py --update`
+after bumping the pin, then re-verify each reference the diff names.
+
 **design-rationale is rationale, not changelog.** Version bumps, MSRV changes,
 dep updates, and plain feature adds belong in the release tag's ChangeLog.
 Only genuine design decisions (new layering, reversed trade-off, new invariant)
