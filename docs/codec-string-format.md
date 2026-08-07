@@ -80,7 +80,7 @@ Codec name lookup is **case-insensitive**: the codec hash is built with
 
 For each entry, `get_codecs_sorted` walks the codec's implementations twice.
 
-The first pass (`:2851-2882`) requires the ptime to equal either the requested
+The first pass (`switch_loadable_module.c:2851-2882`) requires the ptime to equal either the requested
 interval or the codec's default, and compares a requested rate against
 `imp->actual_samples_per_second`.
 
@@ -101,7 +101,7 @@ as complete.
 ### The other silent drop: the interface lookup
 
 Before either pass runs, `switch_loadable_module_get_codec_interface(name, modname)`
-must return non-NULL (`:2849`). It too has no else branch and no log. It returns
+must return non-NULL (`switch_loadable_module.c:2849`). It too has no else branch and no log. It returns
 NULL when the name is absent from the codec hash — an unloaded module, a typo, or
 the interface *display* name (`G.711 ulaw`) used where the iananame (`PCMU`)
 belongs — or when a `modname.` prefix matches no module. Note `:2555-2561`
@@ -122,7 +122,8 @@ sharper than "the tail is truncated":
   `",,PCMU"` uses three of the fifty.
 - **Entries 1-49 are safe; entry 50 depends on its shape.** The 50th token holds
   the entire unsplit remainder. `switch_parse_codec_buf` runs its `@` loop over the
-  whole buffer *before* the `.` and `~` splits (`:2754-2777`), so a *qualified*
+  whole buffer *before* the `.` and `~` splits
+  (`switch_loadable_module.c:2754-2777`), so a *qualified*
   entry 50 still parses correctly out of that remainder, an *unqualified* one takes
   the remainder as its name and fails the hash lookup, and one carrying `~fmtp`
   folds the remainder into its fmtp.
@@ -131,14 +132,15 @@ sharper than "the tail is truncated":
 ### Per-entry length cap
 
 Each preference is copied into a 256-byte stack buffer before parsing
-(`:2805`). A longer entry is truncated mid-value and then parsed as if complete.
+(`switch_loadable_module.c:2805`). A longer entry is truncated mid-value and then parsed as if complete.
 A long format-parameter string is the realistic way to hit this.
 
 ### Duplicate suppression
 
 Entries are de-duplicated against earlier entries on name, interval, rate,
 channels and fmtp, all case-insensitively, with unspecified interval and rate
-resolved to their defaults first (`:2811-2847`). Note this key includes fmtp, so
+resolved to their defaults first (`switch_loadable_module.c:2811-2847`). Note
+this key includes fmtp, so
 two entries differing only in format parameters both survive.
 
 Two omissions from that key are worth stating outright, because they are the
@@ -216,7 +218,8 @@ between entries. Emit `\'`.
 The `@` split precedes the `~` split, so an `@` inside fmtp is read as a
 qualifier. There is no escape: cleanup has already consumed backslashes by then.
 The tail is not merely truncated — it is scanned for `i`/`k`/`h`/`b`/`c` and
-`atoi`'d into a qualifier, usually with **no log** (`:2759-2776`).
+`atoi`'d into a qualifier, usually with **no log**
+(`switch_loadable_module.c:2759-2776`).
 
 ### `.` — unrepresentable without a modname
 
@@ -270,14 +273,15 @@ This is a sequential overwrite, not a first-match-wins chain
 1. `codec_ms` = the resolved `a=ptime` (media level, else session level)
 2. if unset, the per-codec default from `switch_default_ptime`
    (`switch_core.c:2022`) — 30 for `ilbc`/`isac`/`G723`, else 20
-3. `G723` with no `a=ptime` ⇒ 30 (`:13499`)
+3. `G723` with no `a=ptime` ⇒ 30 (`switch_core_media.c:13499`)
 4. bitrate = `switch_known_bitrate(pt)` (`switch_utils.h:478-492`) — static
    payload types only
 5. **no fmtp** and `ilbc` ⇒ ptime 30, bitrate 13330; `isac` ⇒ ptime 30, bitrate
-   32000 (`:13503-13510`) — these override an explicit `a=ptime`
+   32000 (`switch_core_media.c:13503-13510`) — these override an explicit
+   `a=ptime`
 6. **fmtp present** ⇒ `switch_core_codec_parse_fmtp`
    (`switch_core_codec.c:607`); anything it yields overrides the above
-   (`:13512-13518`)
+   (`switch_core_media.c:13512-13518`)
 
 So `a=ptime:20` plus opus `fmtp …;ptime=40` produces `@40i`, not `@20i`.
 
@@ -295,7 +299,8 @@ mod_silk registers a parser but its bitrate assignment is commented out
 ### Bitrate and channels collide
 
 `add_audio_codec` formats bitrate and channels into the **same buffer**, so
-`@<n>c` overwrites `@<n>b` when channels > 1 (`:13530-13536`). Upstream
+`@<n>c` overwrites `@<n>b` when channels > 1
+(`switch_core_media.c:13530-13536`). Upstream
 therefore never emits both. The consuming grammar accepts both fine.
 
 ### Static payload types
@@ -307,13 +312,15 @@ relies on that, so a converter needs the RFC 3551 table (PT 0–34) to name them
 ### telephone-event and CN are not codecs
 
 DTMF and comfort noise are negotiated outside the codec string, through
-`smh->mparams->te` and `cng_pt` (`:9924-9960` in `generate_m()` at `:9730`).
+`smh->mparams->te` and `cng_pt` (`switch_core_media.c:9924-9960` in
+`generate_m()` at `:9730`).
 No loadable codec is named `telephone-event` or `CN`, so neither belongs in a
 codec string. They are excluded from it and retained as data instead.
 
 Reading an offer, the switch keeps only a payload type and a clock rate for each,
 picking the entry whose rate matches the negotiated codec's advertised rate
-(`:5805`, `:5816`) and forcing the retained rate to 8000 Hz when it does not
+(`switch_core_media.c:5805`, `:5816`) and forcing the retained rate to 8000 Hz
+when it does not
 match (`:5829-5834`). It never reads their `a=fmtp`: both leave the rtpmap walk
 at `:5447`/`:5456`, ahead of `switch_core_codec_parse_fmtp` at `:5493`, and a
 generated offer synthesizes the DTMF digit range from `NDLB_line_flash_16`
