@@ -7,36 +7,23 @@ Optional override: $ARGUMENTS (format: vX.Y.Z). If provided, use that version.
 This is a two-crate workspace. `freeswitch-esl-tokio` depends on
 `freeswitch-types`, so **types must be published first**.
 
-### Pre-release checks
+`scripts/pre-release.sh` is the gate: fmt, feature matrix, clippy, workspace and
+live tests, Windows cross-check, semver-checks, and a publish dry-run.
 
-```sh
-cargo fmt --all && \
-cargo clippy --workspace --release -- -D warnings && \
-cargo test --workspace --release && \
-cargo test --test live_freeswitch -- --ignored && \
-cargo build --workspace --release && \
-cargo build --examples && \
-cargo check --workspace --target x86_64-pc-windows-msvc && \
-cargo semver-checks check-release -p freeswitch-types && \
-cargo semver-checks check-release -p freeswitch-esl-tokio && \
-cargo publish --dry-run -p freeswitch-types
-```
+**Never `cargo publish` without completing these steps first:**
 
-### Publish order
+1. `scripts/pre-release.sh` passes
+2. Create signed annotated tags (`git tag -as`) with a brief changelog
+   in the tag message (use `git log --oneline <previous-tag>..HEAD` to
+   generate it)
+3. Push the tags (`git push --tags`)
+4. Wait for CI to pass on the tagged commit
+5. Only then publish, types first:
 
 ```sh
 cargo publish -p freeswitch-types
 cargo publish -p freeswitch-esl-tokio
 ```
-
-**Never `cargo publish` without completing these steps first:**
-
-1. Create signed annotated tags (`git tag -as`) with a brief changelog
-   in the tag message (use `git log --oneline <previous-tag>..HEAD` to
-   generate it)
-2. Push the tags (`git push --tags`)
-3. Wait for CI to pass on the tagged commit
-4. Only then `cargo publish` (types first, then ESL)
 
 ## Version determination
 
@@ -61,24 +48,21 @@ cargo publish -p freeswitch-esl-tokio
 1. Identify the last release tag and which crates changed since then.
 
 2. Bump `version` in the appropriate `Cargo.toml` files (`freeswitch-types/Cargo.toml`
-   and/or the root `Cargo.toml` for `freeswitch-esl-tokio`).
+   and/or the root `Cargo.toml` for `freeswitch-esl-tokio`). The root's exact
+   `freeswitch-types` pin moves with it.
 
-3. Run the full release validation sequence — stop and report on any failure:
+3. Commit the bump — the gate ends in `cargo publish --dry-run`, which refuses a
+   dirty working tree:
 
 ```sh
-cargo fmt --all && \
-cargo clippy --workspace --release -- -D warnings && \
-cargo test --workspace --release && \
-cargo test --test live_freeswitch -- --ignored && \
-cargo build --workspace --release && \
-cargo build --examples && \
-cargo check --workspace --target x86_64-pc-windows-msvc && \
-cargo semver-checks check-release -p freeswitch-types && \
-cargo semver-checks check-release -p freeswitch-esl-tokio && \
-cargo publish --dry-run -p freeswitch-types
+git add freeswitch-types/Cargo.toml Cargo.toml
+git commit -m "release: vX.Y.Z"
 ```
 
-4. Draft a changelog from `git log --oneline <last-tag>..HEAD`.
+4. Run `scripts/pre-release.sh` — stop and report on any failure. Nothing is
+   published or tagged yet, so amend the release commit and re-run.
+
+5. Draft a changelog from `git log --oneline <last-tag>..HEAD`.
 
    **Rules:**
    - Group entries under section headings: `New features:`, `Bug fixes:`,
@@ -103,11 +87,9 @@ cargo publish --dry-run -p freeswitch-types
    - what changed
    ```
 
-5. Stage, commit, tag, and push in sequence:
+6. Tag and push:
 
 ```sh
-git add freeswitch-types/Cargo.toml Cargo.toml
-git commit -m "release: vX.Y.Z"
 git tag -as vX.Y.Z -m "$(cat <<'EOF'
 vX.Y.Z
 
@@ -117,14 +99,14 @@ EOF
 git push && git push --tags
 ```
 
-6. Wait for CI to pass on the tagged commit, then publish:
+7. Wait for CI to pass on the tagged commit, then publish:
 
 ```sh
 cargo publish -p freeswitch-types
 cargo publish -p freeswitch-esl-tokio
 ```
 
-7. Report the tag and the changelog.
+8. Report the tag and the changelog.
 
 ## Important
 

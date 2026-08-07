@@ -39,59 +39,16 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Check feature combinations
-        run: |
-          cargo check -p freeswitch-types --no-default-features --message-format=short
-          cargo check -p freeswitch-types --no-default-features --features esl --message-format=short
-          cargo check -p freeswitch-types --no-default-features --features serde --message-format=short
-          cargo check -p freeswitch-types --no-default-features --features conference-info --message-format=short
-          cargo check -p freeswitch-types --no-default-features --features sdp --message-format=short
+        run: scripts/check-feature-matrix.sh
 
-      - name: Check
-        run: cargo check --workspace --all-targets --all-features
+      - name: Check and lint
+        run: scripts/ci-check.sh
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: Verify and count enums against C source
-        run: |
-          if ! json=$(python3 hooks/check-enums.py --json); then
-            echo "::warning::C source enum check failed"
-            echo "C_SOURCE_AVAILABLE=false" >> "$GITHUB_ENV"
-            exit 0
-          fi
-          echo "C_SOURCE_AVAILABLE=true" >> "$GITHUB_ENV"
-
-          # Export badge message and color for each check
-          python3 -c "
-          import json, sys
-          data = json.loads('''$json''')
-          env_map = {
-              'EslEventType': 'EVENT_TYPE',
-              'HangupCause': 'HANGUP_CAUSE',
-              'ChannelState': 'CHANNEL_STATE',
-              'CallState': 'CALL_STATE',
-              'CoreMediaVariable': 'CORE_MEDIA_VAR',
-              'EventHeader': 'EVENT_HEADER',
-          }
-          for key, prefix in env_map.items():
-              d = data[key]
-              print(f'{prefix}_COUNT={d[\"badge_message\"]}')
-              print(f'{prefix}_COLOR={d[\"badge_color\"]}')
-          " >> "$GITHUB_ENV"
-
-      - name: Count typed enum variants
-        run: |
-          echo "CHANNEL_VAR_COUNT=$(grep -c '=> "' freeswitch-types/src/variables/core.rs)" >> "$GITHUB_ENV"
-          echo "HEADER_LOOKUP_COUNT=$(sed -n '/^pub trait HeaderLookup/,/^}/p' freeswitch-types/src/lookup.rs | grep -c '^ *fn ')" >> "$GITHUB_ENV"
-          echo "SIP_HEADER_PREFIX_COUNT=$(grep -c '=> "' freeswitch-types/src/variables/sip_passthrough.rs)" >> "$GITHUB_ENV"
-          echo "SOFIA_VARIABLE_COUNT=$(grep -c '=> "' freeswitch-types/src/variables/sofia.rs)" >> "$GITHUB_ENV"
+      - name: Collect badge metrics
+        run: scripts/ci-metrics.sh
 
       - name: Test
-        run: |
-          set -o pipefail
-          CARGO_TERM_COLOR=never cargo test --workspace --all-features 2>&1 | tee test-output.txt
-          passed=$(grep '^test result:' test-output.txt | sed 's/.*ok\. \([0-9]*\) passed.*/\1/' | paste -sd+ | bc)
-          echo "TEST_PASSED=$passed" >> "$GITHUB_ENV"
+        run: scripts/ci-test.sh
 
       - name: Update test count badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
@@ -204,4 +161,4 @@ jobs:
           color: blue
 
       - name: Build
-        run: cargo build --workspace --release --all-features --all-targets
+        run: scripts/ci-build.sh
