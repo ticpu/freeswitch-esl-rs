@@ -1,0 +1,13 @@
+version: 2
+updates:
+# Actions are pinned to commit SHAs, which advisory-driven security updates
+# alone never move; this is what keeps the pins current. Grouped so a week's
+# bumps arrive as one pull request.
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: weekly
+  groups:
+    actions:
+      patterns:
+      - "*"
