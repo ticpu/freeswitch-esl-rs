@@ -87,10 +87,11 @@ class FsTree:
             self._lines[path] = self._git("show", f"{self.commit}:{path}").split("\n")
         return self._lines[path]
 
-    def digest(self, path: str, start: int, end: int) -> str:
+    def digest(self, path: str, start: int, end: int) -> str | None:
+        """None when the range runs past EOF -- the file shrank under the pin."""
         lines = self.lines(path)
         if end > len(lines):
-            fail(f"{path}:{start}-{end} runs past EOF ({len(lines)} lines)")
+            return None
         body = "\n".join(lines[start - 1 : end])
         return hashlib.sha256(body.encode()).hexdigest()[:HASH_LEN]
 
@@ -232,13 +233,27 @@ def main() -> int:
         return 0
 
     digests = {ref: tree.digest(*_split(ref)) for ref in seen}
+    truncated = sorted(ref for ref, d in digests.items() if d is None)
 
     if args.update:
+        if truncated:
+            for ref in truncated:
+                print(f"  {ref} runs past EOF at {commit[:10]}", file=sys.stderr)
+            print(
+                "❌ Re-verify those references against the new pin before indexing.",
+                file=sys.stderr,
+            )
+            return 1
         write_index(repo, commit, tag, digests)
         print(f"SourceRefs {len(digests)} refs written to {INDEX} @ {commit[:10]}")
         return 0
 
     problems: list[str] = []
+    for ref in truncated:
+        problems.append(
+            f"{ref} runs past EOF at {commit[:10]} "
+            f"(cited by {', '.join(sorted(seen[ref]))})"
+        )
     for other in sorted(commits - {commit}):
         problems.append(f"pin {other[:10]} disagrees with the index ({commit[:10]})")
     for ref in sorted(set(indexed) - set(digests)):
