@@ -23,7 +23,7 @@ sdp = ["freeswitch-types/sdp"]
 [dependencies]
 # major-only caret: path build always uses the in-tree crate; published builds take any 1.x
 # exact pin while on a beta: cargo pre-release matching is strict, a caret req never resolves a -beta
-freeswitch-types = { path = "freeswitch-types", version = "=1.5.0-beta.4" }
+freeswitch-types = { path = "freeswitch-types", version = "=1.5.0-beta.5" }
 indexmap = "2"
 tokio = { version = "1.47", features = ["net", "io-util", "rt", "rt-multi-thread", "sync", "time", "macros"] }
 bytes = "1.11"
