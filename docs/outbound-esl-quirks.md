@@ -1,6 +1,8 @@
 # Outbound ESL Mode Quirks
 
-Findings from testing against FreeSWITCH 1.10.13-dev (git 8bb2a39).
+Findings from testing against FreeSWITCH 1.10.13-dev (git 8bb2a39). Line
+numbers index FreeSWITCH `v1.11.1`
+(commit `c2c59645f6911a76589e5008c4d73349ded44b65`).
 
 ## `connect` is mandatory
 
@@ -13,7 +15,7 @@ data (all channel variables as response headers).
 
 ## `async full` mode required for full command set
 
-mod_event_socket.c (line ~2299) has a guard:
+`parse_command()` (`mod_event_socket.c:2225`) has a guard:
 
 ```c
 if (switch_test_flag(listener, LFLAG_OUTBOUND) && !switch_test_flag(listener, LFLAG_FULL)) {

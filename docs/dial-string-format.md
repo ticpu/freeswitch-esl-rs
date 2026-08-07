@@ -3,7 +3,8 @@
 Reference for endpoint strings, variable scoping, and bridge semantics as they
 appear on the ESL wire and in FreeSWITCH configuration. Based on FreeSWITCH
 1.10.x source code (`switch_ivr_originate.c`, `mod_sofia.c`, `mod_loopback.c`,
-`mod_dptools.c`).
+`mod_dptools.c`). Line numbers index FreeSWITCH `v1.11.1`
+(commit `c2c59645f6911a76589e5008c4d73349ded44b65`).
 
 ## Endpoint types
 
@@ -281,7 +282,7 @@ ${sofia_contact(*/user@domain)}
 The `*` searches all profiles. An optional `~user_agent` suffix filters by
 User-Agent header.
 
-Source: `mod_sofia.c` lines 4400-4531.
+Source: `sofia_contact_function` (`mod_sofia.c:4105-4236`).
 
 ### `group_call`
 
