@@ -778,7 +778,7 @@ named in rustdoc at each site. Format parameters are not emitted for audio by
 default: without a bridged partner they never reach a generated audio offer, so
 emitting them passes every test and changes nothing on a live call.
 
-Excluding a payload from the codec string is not licence to reduce it. The type is both
+Excluding something from the codec string is not licence to reduce it. The type is both
 the string's source and the typed view of what the offer said, so payloads the switch
 negotiates outside the string are retained whole — payload type, clock rate, format
 parameters — rather than projected onto whatever the generator needed. The switch keeps
@@ -786,6 +786,15 @@ one of each per session, picked against the codec it negotiated, and discards th
 format parameters unread; that selection has no input at this layer, so what is retained
 is the offer's fidelity rather than the switch's, and a caller holding the negotiated
 rate applies the switch's rule itself.
+
+The same holds a level up: every `m=` line yields a section, whatever its port or media
+type, carrying what the peer wrote there. A declined or held stream is where a reader
+most needs the offer — a no-audio complaint is routinely a re-INVITE to port 0 — and
+dropping it leaves a payload type with no name to render. Sections excluded from the
+codec string are therefore the inventory, and the accessors that feed the string stay a
+view over the subset the switch negotiates, so retaining more never widens what a codec
+string or a format-parameter lookup can see. Excluded sections are parsed rather than
+skipped, so they contribute parse warnings the switch never had occasion to produce.
 
 ## Composition over policy
 
@@ -815,4 +824,12 @@ back off at each one, because the per-field spelling is what let the encoding na
 go unhandled. The session layer stays a dependency; the attribute layer is ours
 precisely because that is where fidelity is owed to a specific parser rather than
 to the grammar.
+
+Which sections carry payload types at all is sofia's call too. It fills a section's
+rtpmap list, and reads `a=rtpmap` and `a=fmtp` into it, only for the transports it
+recognises as RTP — an exact set of proto strings, not a pattern, so a name merely
+containing `RTP` is not one of them. The switch's own extraction never looks at the
+proto and does not have to, because a section it should ignore arrives empty. Reading
+the format list for any other transport would manufacture a parse failure out of a
+section written correctly, so the same set gates it here, for every media type alike.
 
