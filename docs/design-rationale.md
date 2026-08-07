@@ -778,6 +778,15 @@ named in rustdoc at each site. Format parameters are not emitted for audio by
 default: without a bridged partner they never reach a generated audio offer, so
 emitting them passes every test and changes nothing on a live call.
 
+Excluding a payload from the codec string is not licence to reduce it. The type is both
+the string's source and the typed view of what the offer said, so payloads the switch
+negotiates outside the string are retained whole — payload type, clock rate, format
+parameters — rather than projected onto whatever the generator needed. The switch keeps
+one of each per session, picked against the codec it negotiated, and discards their
+format parameters unread; that selection has no input at this layer, so what is retained
+is the offer's fidelity rather than the switch's, and a caller holding the negotiated
+rate applies the switch's rule itself.
+
 ## Composition over policy
 
 An early version intersected the peer's offer against a preference list and
