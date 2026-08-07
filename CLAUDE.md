@@ -34,8 +34,11 @@ would break destructuring (`let ParseFooError(msg) = err`) for zero practical
 semver benefit.
 
 Because `#[non_exhaustive]` prevents struct literal construction from external
-crates (including `examples/`), every `#[non_exhaustive]` struct must have a
-constructor (`new()` or named constructors). Optional fields use builder
+crates (including `examples/`), such a struct needs a constructor (`new()` or
+named constructors) **only when something outside the crate has to build one** —
+a test fixture, an example, or a downstream app with a legitimate reason to
+construct the value. Types that only ever come out of a parser or a wire decode
+need none; add one when a caller actually asks. Optional fields use builder
 methods (`with_foo()`). **Always run `cargo build --examples`** after adding
 or modifying public structs to verify external construction still works.
 
