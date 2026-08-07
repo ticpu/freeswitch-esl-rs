@@ -249,9 +249,101 @@ impl SdpCodec {
     }
 }
 
+/// A payload type FreeSWITCH negotiates outside the codec string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum NonCodecKind {
+    /// RFC 2833 / RFC 4733 DTMF, carried as `smh->mparams->te`.
+    TelephoneEvent,
+    /// Comfort noise, carried as `smh->mparams->cng_pt`.
+    ComfortNoise,
+}
+
+impl fmt::Display for NonCodecKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TelephoneEvent => f.write_str("telephone-event"),
+            Self::ComfortNoise => f.write_str("CN"),
+        }
+    }
+}
+
+/// A payload offered in an `m=` section that is negotiated outside the codec string.
+///
+/// This is the offer's inventory in `m=` order, undeduplicated — not a negotiation
+/// outcome. FreeSWITCH keeps only one of each per session, picking the entry whose
+/// clock rate matches the negotiated codec's advertised rate
+/// (`switch_core_media.c:5805`, `:5816`) and forcing the retained rate to 8000 Hz
+/// when it does not match (`:5829-5834`). That comparison needs a negotiated codec,
+/// which does not exist at this layer, so a caller holding one applies the rule itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct NonCodecPayload {
+    /// Which payload this is, resolved from the canonical encoding name.
+    pub kind: NonCodecKind,
+    /// Session-local payload type from the `m=` format list.
+    pub payload_type: u8,
+    /// The media type of the section where this payload appeared.
+    pub media_type: SdpMediaType,
+    /// Clock rate in Hz, from `a=rtpmap` or the RFC 3551 static table.
+    pub clock_rate: u32,
+    /// Format parameters from `a=fmtp`, verbatim.
+    ///
+    /// FreeSWITCH never reads this from a received offer: both kinds leave the rtpmap
+    /// walk (`switch_core_media.c:5447`, `:5456`) before `switch_core_codec_parse_fmtp`
+    /// at `:5493`, and the DTMF digit range in a generated offer is synthesized from
+    /// `NDLB_line_flash_16` instead (`:10653-10659`). A disagreement between two offers
+    /// is therefore real but is not something the switch acted on.
+    pub fmtp: Option<String>,
+    /// `false` when the payload type was resolved from the RFC 3551 static table
+    /// rather than declared by the peer with an `a=rtpmap` line.
+    pub has_rtpmap: bool,
+}
+
+impl fmt::Display for NonCodecPayload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}/{}", self.payload_type, self.kind, self.clock_rate)?;
+        if let Some(fmtp) = &self.fmtp {
+            write!(f, " {fmtp}")?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- NonCodecPayload ---
+
+    #[test]
+    fn non_codec_payload_display_reproduces_its_rtpmap() {
+        let te = NonCodecPayload {
+            kind: NonCodecKind::TelephoneEvent,
+            payload_type: 101,
+            media_type: SdpMediaType::Audio,
+            clock_rate: 8000,
+            fmtp: Some("0-16".to_string()),
+            has_rtpmap: true,
+        };
+        assert_eq!(te.to_string(), "101 telephone-event/8000 0-16");
+
+        let cn = NonCodecPayload {
+            kind: NonCodecKind::ComfortNoise,
+            payload_type: 13,
+            media_type: SdpMediaType::Audio,
+            clock_rate: 8000,
+            fmtp: None,
+            has_rtpmap: false,
+        };
+        assert_eq!(cn.to_string(), "13 CN/8000");
+    }
+
+    #[test]
+    fn non_codec_kind_display_is_the_canonical_encoding_name() {
+        assert_eq!(NonCodecKind::TelephoneEvent.to_string(), "telephone-event");
+        assert_eq!(NonCodecKind::ComfortNoise.to_string(), "CN");
+    }
 
     // --- SdpMediaType ---
 

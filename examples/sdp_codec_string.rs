@@ -198,23 +198,12 @@ async fn handle_answered_channel(
         }
     }
 
-    // telephone-event and CN are negotiated through FreeSWITCH's smh->mparams->te
-    // and cng_pt paths, never through the codec string. They are surfaced here to
-    // make clear they are not codecs and never appear in entries() or the codec
-    // string built below.
-    if !parsed
-        .telephone_event_rates()
-        .is_empty()
-    {
-        let rates: Vec<String> = parsed
-            .telephone_event_rates()
-            .iter()
-            .map(|r| r.to_string())
-            .collect();
-        println!("{}: telephone-event at {} Hz", short, rates.join(", "));
-    }
-    if parsed.has_comfort_noise() {
-        println!("{}: CN (comfort noise) offered", short);
+    // Negotiated through FreeSWITCH's smh->mparams->te and cng_pt paths, never through
+    // the codec string, so these never reach entries() or the string built below. This
+    // is what the offer said, not what the switch picked: it keeps one of each per
+    // session and never reads their fmtp. Display renders the a=rtpmap they came from.
+    for payload in parsed.non_codec_payloads() {
+        println!("{}: {}", short, payload);
     }
 
     // unmapped(): payload types in the m= format list with no a=rtpmap and no

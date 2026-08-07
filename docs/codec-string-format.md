@@ -309,7 +309,15 @@ relies on that, so a converter needs the RFC 3551 table (PT 0–34) to name them
 DTMF and comfort noise are negotiated outside the codec string, through
 `smh->mparams->te` and `cng_pt` (`:9924-9960` in `generate_m()` at `:9730`).
 No loadable codec is named `telephone-event` or `CN`, so neither belongs in a
-codec string.
+codec string. They are excluded from it and retained as data instead.
+
+Reading an offer, the switch keeps only a payload type and a clock rate for each,
+picking the entry whose rate matches the negotiated codec's advertised rate
+(`:5805`, `:5816`) and forcing the retained rate to 8000 Hz when it does not
+match (`:5829-5834`). It never reads their `a=fmtp`: both leave the rtpmap walk
+at `:5447`/`:5456`, ahead of `switch_core_codec_parse_fmtp` at `:5493`, and a
+generated offer synthesizes the DTMF digit range from `NDLB_line_flash_16`
+instead (`:10653-10659`).
 
 ## What the codec string cannot do
 

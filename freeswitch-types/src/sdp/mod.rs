@@ -20,7 +20,9 @@ pub mod options;
 pub(crate) mod static_payload;
 
 pub use available::CodecImplementation;
-pub use codec::{ParseSdpDirectionError, SdpCodec, SdpDirection, SdpMediaType};
+pub use codec::{
+    NonCodecKind, NonCodecPayload, ParseSdpDirectionError, SdpCodec, SdpDirection, SdpMediaType,
+};
 pub use codec_string::{CodecString, CodecStringEntry};
 pub use codecs::{SdpCodecEntry, SdpCodecs};
 pub use error::{CodecStringError, SdpCodecError, SdpWarning, UnmappedPayload};

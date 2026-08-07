@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::sdp::{
-    codec::{SdpCodec, SdpDirection, SdpMediaType},
+    codec::{NonCodecKind, NonCodecPayload, SdpCodec, SdpDirection, SdpMediaType},
     codec_string::{CodecString, CodecStringEntry},
     error::{CodecStringError, SdpCodecError, SdpWarning, UnmappedPayload},
     options::CodecStringOptions,
@@ -12,9 +12,8 @@ use crate::sdp::{
 
 /// A single entry in a parsed SDP offer.
 ///
-/// Telephone-event (DTMF) and CN (comfort noise) are excluded from entries;
-/// they are available separately via [`SdpCodecs::telephone_event_rates`] and
-/// [`SdpCodecs::has_comfort_noise`].
+/// Payloads negotiated outside the codec string are excluded from entries and
+/// retained whole by [`SdpCodecs::non_codec_payloads`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SdpCodecEntry {
@@ -37,8 +36,7 @@ pub struct SdpCodecs {
     entries: Vec<SdpCodecEntry>,
     unmapped: Vec<UnmappedPayload>,
     warnings: Vec<SdpWarning>,
-    telephone_event_rates: Vec<u32>,
-    has_comfort_noise: bool,
+    non_codec: Vec<NonCodecPayload>,
 }
 
 impl SdpCodecs {
@@ -59,8 +57,7 @@ impl SdpCodecs {
             entries: Vec::new(),
             unmapped: Vec::new(),
             warnings: Vec::new(),
-            telephone_event_rates: Vec::new(),
-            has_comfort_noise: false,
+            non_codec: Vec::new(),
         };
 
         // Session-level defaults; media-level attributes override these per section.
@@ -121,17 +118,9 @@ impl SdpCodecs {
                     result
                         .warnings
                         .extend(section.warnings);
-                    for rate in section.telephone_event_rates {
-                        if !result
-                            .telephone_event_rates
-                            .contains(&rate)
-                        {
-                            result
-                                .telephone_event_rates
-                                .push(rate);
-                        }
-                    }
-                    result.has_comfort_noise |= section.has_comfort_noise;
+                    result
+                        .non_codec
+                        .extend(section.non_codec);
                 }
                 Err(e) => {
                     result
@@ -163,13 +152,14 @@ impl SdpCodecs {
         self.entries
     }
 
-    /// Number of codec entries (telephone-event and CN are not counted).
+    /// Number of codec entries; payloads from [`non_codec_payloads`](Self::non_codec_payloads)
+    /// are not counted.
     pub fn len(&self) -> usize {
         self.entries
             .len()
     }
 
-    /// `true` when the offer contained no codecs (after filtering telephone-event/CN).
+    /// `true` when the offer contained no codecs, ignoring any non-codec payloads.
     pub fn is_empty(&self) -> bool {
         self.entries
             .is_empty()
@@ -214,20 +204,14 @@ impl SdpCodecs {
         &self.warnings
     }
 
-    /// Clock rates (Hz) at which `telephone-event` was offered.
+    /// Payloads the switch negotiates outside the codec string, in `m=` order.
     ///
-    /// DTMF is negotiated outside the codec string; these rates are never included
-    /// in [`entries`](Self::entries) or [`unmapped`](Self::unmapped).
-    pub fn telephone_event_rates(&self) -> &[u32] {
-        &self.telephone_event_rates
-    }
-
-    /// `true` when `CN` (comfort noise) was offered in any media section.
-    ///
-    /// CN is negotiated outside the codec string and never appears in
-    /// [`entries`](Self::entries) or [`unmapped`](Self::unmapped).
-    pub fn has_comfort_noise(&self) -> bool {
-        self.has_comfort_noise
+    /// Never included in [`entries`](Self::entries) or [`unmapped`](Self::unmapped).
+    /// Not deduplicated: two sections offering the same kind at one clock rate under
+    /// different payload types yield two entries. See [`NonCodecPayload`] for what the
+    /// switch itself retains from these.
+    pub fn non_codec_payloads(&self) -> &[NonCodecPayload] {
+        &self.non_codec
     }
 
     /// Build a FreeSWITCH codec string from this offer's audio codecs.
@@ -372,8 +356,22 @@ struct MediaSection {
     entries: Vec<SdpCodecEntry>,
     unmapped: Vec<UnmappedPayload>,
     warnings: Vec<SdpWarning>,
-    telephone_event_rates: Vec<u32>,
-    has_comfort_noise: bool,
+    non_codec: Vec<NonCodecPayload>,
+}
+
+/// Classify an encoding name the switch negotiates outside the codec string.
+///
+/// Matched on the canonical name the same way FreeSWITCH matches it, by
+/// case-insensitive comparison against `rm_encoding` (`switch_core_media.c:5805`,
+/// `:5816`). No loadable codec carries either name.
+fn non_codec_kind(canonical_name: &str) -> Option<NonCodecKind> {
+    if canonical_name.eq_ignore_ascii_case("telephone-event") {
+        Some(NonCodecKind::TelephoneEvent)
+    } else if canonical_name.eq_ignore_ascii_case("CN") {
+        Some(NonCodecKind::ComfortNoise)
+    } else {
+        None
+    }
 }
 
 /// Parse one audio/video `m=` section into its codec entries.
@@ -451,20 +449,23 @@ fn parse_media_section(
 
         let canonical = static_payload::canonical_iananame(name);
 
-        if canonical.eq_ignore_ascii_case("telephone-event") {
-            if !section
-                .telephone_event_rates
-                .contains(&clock_rate)
-            {
-                section
-                    .telephone_event_rates
-                    .push(clock_rate);
-            }
-            continue;
-        }
+        let fmtp = fmtp_map
+            .get(&pt)
+            .cloned();
 
-        if canonical.eq_ignore_ascii_case("CN") {
-            section.has_comfort_noise = true;
+        // Leaves the walk here, where FreeSWITCH does (switch_core_media.c:5447/:5456),
+        // ahead of the per-codec ptime and bitrate resolution below.
+        if let Some(kind) = non_codec_kind(canonical) {
+            section
+                .non_codec
+                .push(NonCodecPayload {
+                    kind,
+                    payload_type: pt,
+                    media_type: media_type.clone(),
+                    clock_rate,
+                    fmtp,
+                    has_rtpmap,
+                });
             continue;
         }
 
@@ -473,10 +474,6 @@ fn parse_media_section(
             (SdpMediaType::Audio, None) => Some(1),
             _ => rtpmap_channels,
         };
-
-        let fmtp = fmtp_map
-            .get(&pt)
-            .cloned();
 
         // ptime/bitrate resolution — sequential overwrite; later steps beat earlier.
 
