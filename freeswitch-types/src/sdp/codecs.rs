@@ -805,9 +805,9 @@ mod tests {
         "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=-\r\nt=0 0\r\n".to_string()
     }
 
-    fn rtp_codec(entries: &[SdpCodecEntry]) -> Vec<&SdpCodec> {
+    fn rtp_codec<'a>(entries: impl IntoIterator<Item = &'a SdpCodecEntry>) -> Vec<&'a SdpCodec> {
         entries
-            .iter()
+            .into_iter()
             .filter_map(|e| {
                 if let SdpCodecEntry::Rtp(c) = e {
                     Some(c)
@@ -1033,19 +1033,262 @@ mod tests {
         assert_eq!(pcmu.ptime(), Some(20));
     }
 
-    // --- port 0 skip ---
+    // --- retained sections ---
 
     #[test]
-    fn port_zero_m_line_is_skipped() {
-        let sdp = format!("{}m=audio 0 RTP/AVP 0\r\n", sdp_header());
-        let codecs = SdpCodecs::parse(&sdp).unwrap();
-        assert!(
-            codecs.is_empty(),
-            "m-line with port 0 must be skipped entirely"
+    fn port_zero_section_contributes_nothing_but_is_retained_whole() {
+        // A held or declined stream: the offer still names its codecs, and that is
+        // what an operator reads when the complaint is "no audio".
+        let sdp = format!(
+            concat!(
+                "{}",
+                "m=audio 0 RTP/AVP 104 96\r\n",
+                "a=rtpmap:104 AMR-WB/16000\r\n",
+                "a=fmtp:104 mode-set=1; max-red=0\r\n",
+                "a=rtpmap:96 telephone-event/16000\r\n",
+                "a=fmtp:96 0-15\r\n"
+            ),
+            sdp_header()
         );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+
+        assert!(codecs.is_empty(), "port 0 contributes no codec entries");
         assert!(codecs
-            .unmapped()
+            .audio_codec_string(&CodecStringOptions::audio(), None)
+            .unwrap()
             .is_empty());
+
+        let sections = codecs.sections();
+        assert_eq!(
+            sections.len(),
+            1,
+            "every m= line yields exactly one section"
+        );
+        let held = &sections[0];
+        assert_eq!(held.port(), 0);
+        assert!(!held.is_negotiable());
+        assert_eq!(held.media_type(), &SdpMediaType::Audio);
+
+        let rtp = rtp_codec(held.entries());
+        let amr = codec_named(&rtp, "AMR-WB").expect("the held codec must survive by name");
+        assert_eq!(amr.clock_rate(), 16000);
+        assert_eq!(amr.fmtp(), Some("mode-set=1; max-red=0"));
+
+        let te = held.non_codec_payloads();
+        assert_eq!(te.len(), 1);
+        assert_eq!(
+            te[0]
+                .fmtp
+                .as_deref(),
+            Some("0-15")
+        );
+    }
+
+    #[test]
+    fn a_retained_sections_payloads_stay_out_of_the_top_level_views() {
+        // sections() is the inventory; the top-level accessors stay the switch's view.
+        let sdp = format!(
+            concat!(
+                "{}",
+                "m=audio 0 RTP/AVP 0 99 101\r\n",
+                "a=rtpmap:101 telephone-event/8000\r\n"
+            ),
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert_eq!(
+            codecs
+                .non_codec_payloads()
+                .count(),
+            0
+        );
+        assert_eq!(
+            codecs
+                .unmapped()
+                .count(),
+            0
+        );
+
+        let held = &codecs.sections()[0];
+        assert_eq!(
+            held.non_codec_payloads()
+                .len(),
+            1
+        );
+        assert_eq!(
+            held.unmapped()
+                .len(),
+            1,
+            "PT 99 has no rtpmap and no static entry, on the section it appeared in"
+        );
+    }
+
+    #[test]
+    fn fmtp_for_ignores_a_held_sections_parameters() {
+        // fmtp_for drives rtp_force_audio_fmtp. Answering from a stream that is not
+        // being negotiated pins the wrong parameters on the live call.
+        let sdp = format!(
+            concat!(
+                "{}",
+                "m=audio 0 RTP/AVP 104\r\n",
+                "a=rtpmap:104 AMR-WB/16000\r\n",
+                "a=fmtp:104 octet-align=1\r\n",
+                "m=audio 5004 RTP/AVP 105\r\n",
+                "a=rtpmap:105 AMR-WB/16000\r\n"
+            ),
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert_eq!(codecs.fmtp_for("AMR-WB", 16000), None);
+    }
+
+    #[test]
+    fn port_zero_image_section_yields_no_t38_entry() {
+        let sdp = format!("{}m=image 0 udptl t38\r\n", sdp_header());
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert!(codecs.is_empty());
+        assert!(codecs
+            .audio_codec_string(&CodecStringOptions::audio(), None)
+            .unwrap()
+            .is_empty());
+
+        let declined = &codecs.sections()[0];
+        assert!(!declined.is_negotiable());
+        assert!(matches!(declined.entries()[0], SdpCodecEntry::T38));
+    }
+
+    #[test]
+    fn non_rtp_proto_reads_no_payload_types_and_raises_no_warning() {
+        // sofia fills a section's rtpmap list only for the transports it maps to an
+        // RTP proto, so a datachannel format token is not a malformed payload type.
+        let sdp = format!(
+            "{}m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n",
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert!(codecs
+            .warnings()
+            .is_empty());
+
+        let section = &codecs.sections()[0];
+        assert!(section
+            .entries()
+            .is_empty());
+        assert_eq!(section.proto(), "UDP/DTLS/SCTP");
+        assert_eq!(section.formats(), "webrtc-datachannel");
+    }
+
+    #[test]
+    fn non_rtp_proto_on_audio_gets_the_same_treatment() {
+        // The gate is sofia's, not the media type's: an m=audio under udptl carries
+        // no rtpmaps for the switch either.
+        let sdp = format!("{}m=audio 5004 udptl t38\r\n", sdp_header());
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert!(codecs
+            .warnings()
+            .is_empty());
+        assert!(codecs.is_empty());
+        assert_eq!(codecs.sections()[0].formats(), "t38");
+    }
+
+    #[test]
+    fn a_proto_merely_containing_rtp_is_not_an_rtp_transport() {
+        // sofia matches the proto against an exact set; TCP/RTP/AVP is not in it.
+        let sdp = format!("{}m=audio 5004 TCP/RTP/AVP 0\r\n", sdp_header());
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert!(codecs.is_empty());
+        assert!(codecs.sections()[0]
+            .entries()
+            .is_empty());
+    }
+
+    #[test]
+    fn text_section_codecs_are_retained_but_never_negotiable() {
+        let sdp = format!(
+            "{}m=text 5000 RTP/AVP 98\r\na=rtpmap:98 t140/1000\r\n",
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert!(codecs.is_empty());
+        assert_eq!(
+            codecs
+                .audio()
+                .count(),
+            0
+        );
+        assert_eq!(
+            codecs
+                .video()
+                .count(),
+            0
+        );
+
+        let section = &codecs.sections()[0];
+        assert!(!section.is_negotiable());
+        let rtp = rtp_codec(section.entries());
+        assert_eq!(
+            codec_named(&rtp, "t140")
+                .expect("the text codec must survive")
+                .clock_rate(),
+            1000
+        );
+    }
+
+    #[test]
+    fn sections_keep_m_line_order_across_negotiable_and_not() {
+        let sdp = format!(
+            concat!(
+                "{}",
+                "m=audio 5004 RTP/AVP 0\r\n",
+                "m=video 0 RTP/AVP 99\r\n",
+                "a=rtpmap:99 H264/90000\r\n"
+            ),
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        let sections = codecs.sections();
+        assert_eq!(sections[0].media_type(), &SdpMediaType::Audio);
+        assert!(sections[0].is_negotiable());
+        assert_eq!(sections[1].media_type(), &SdpMediaType::Video);
+        assert!(!sections[1].is_negotiable());
+
+        let rtp = rtp_codec(codecs.entries());
+        assert_eq!(rtp.len(), 1, "the declined video must not reach entries()");
+        assert!(codec_named(&rtp, "PCMU").is_some());
+    }
+
+    #[test]
+    fn a_malformed_section_is_retained_beside_its_warning() {
+        let sdp = format!(
+            "{}m=audio 5004 RTP/AVP 0\r\na=rtpmap:x PCMU/8000\r\n",
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert_eq!(
+            codecs
+                .warnings()
+                .len(),
+            1
+        );
+        let section = &codecs.sections()[0];
+        assert!(section
+            .entries()
+            .is_empty());
+        assert_eq!(section.port(), 5004);
+    }
+
+    #[test]
+    fn a_non_negotiable_section_still_reports_its_parse_warnings() {
+        // These sections are parsed rather than skipped, so they warn where the
+        // switch, which never looks at them, has no occasion to.
+        let sdp = format!("{}m=audio 0 RTP/AVP 0\r\na=ptime:abc\r\n", sdp_header());
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert_eq!(
+            codecs
+                .warnings()
+                .len(),
+            1
+        );
     }
 
     // --- IPv6 connection ---
@@ -1067,7 +1310,12 @@ mod tests {
         let sdp = format!("{}m=image 5008 udptl t38\r\n", sdp_header());
         let codecs = SdpCodecs::parse(&sdp).unwrap();
         assert_eq!(codecs.len(), 1);
-        assert!(matches!(codecs.entries()[0], SdpCodecEntry::T38));
+        assert!(matches!(
+            codecs
+                .entries()
+                .next(),
+            Some(SdpCodecEntry::T38)
+        ));
     }
 
     #[test]
@@ -1079,7 +1327,12 @@ mod tests {
         );
         let codecs = SdpCodecs::parse(&sdp).unwrap();
         assert_eq!(codecs.len(), 1);
-        assert!(matches!(codecs.entries()[0], SdpCodecEntry::T38));
+        assert!(matches!(
+            codecs
+                .entries()
+                .next(),
+            Some(SdpCodecEntry::T38)
+        ));
     }
 
     #[test]
@@ -1133,7 +1386,9 @@ mod tests {
             sdp_header()
         );
         let codecs = SdpCodecs::parse(&sdp).unwrap();
-        let te = codecs.non_codec_payloads();
+        let te: Vec<_> = codecs
+            .non_codec_payloads()
+            .collect();
         assert_eq!(
             te.len(),
             2,
@@ -1162,16 +1417,21 @@ mod tests {
         // Still excluded from entries() and distinguishable from an unresolvable payload.
         let rtp = rtp_codec(codecs.entries());
         assert!(codec_named(&rtp, "telephone-event").is_none());
-        assert!(codecs
-            .unmapped()
-            .is_empty());
+        assert_eq!(
+            codecs
+                .unmapped()
+                .count(),
+            0
+        );
     }
 
     #[test]
     fn comfort_noise_from_static_table_has_no_rtpmap() {
         let sdp = format!("{}m=audio 5004 RTP/AVP 0 13\r\n", sdp_header());
         let codecs = SdpCodecs::parse(&sdp).unwrap();
-        let cn = codecs.non_codec_payloads();
+        let cn: Vec<_> = codecs
+            .non_codec_payloads()
+            .collect();
         assert_eq!(cn.len(), 1);
         assert_eq!(cn[0].kind, NonCodecKind::ComfortNoise);
         assert_eq!(cn[0].payload_type, 13);
@@ -1186,9 +1446,12 @@ mod tests {
 
         let rtp = rtp_codec(codecs.entries());
         assert!(codec_named(&rtp, "CN").is_none());
-        assert!(codecs
-            .unmapped()
-            .is_empty());
+        assert_eq!(
+            codecs
+                .unmapped()
+                .count(),
+            0
+        );
     }
 
     #[test]
@@ -1202,7 +1465,9 @@ mod tests {
             sdp_header()
         );
         let codecs = SdpCodecs::parse(&sdp).unwrap();
-        let cn = codecs.non_codec_payloads();
+        let cn: Vec<_> = codecs
+            .non_codec_payloads()
+            .collect();
         assert_eq!(cn.len(), 1);
         assert!(cn[0].has_rtpmap);
     }
@@ -1222,7 +1487,9 @@ mod tests {
             sdp_header()
         );
         let codecs = SdpCodecs::parse(&sdp).unwrap();
-        let te = codecs.non_codec_payloads();
+        let te: Vec<_> = codecs
+            .non_codec_payloads()
+            .collect();
         assert_eq!(te.len(), 2);
         assert_eq!(te[0].payload_type, 101);
         assert_eq!(te[1].payload_type, 96);
@@ -1242,7 +1509,7 @@ mod tests {
         assert_eq!(
             codecs
                 .non_codec_payloads()
-                .len(),
+                .count(),
             2
         );
         let cs = codecs
@@ -1260,13 +1527,11 @@ mod tests {
     fn dynamic_pt_without_rtpmap_is_unmapped_not_error() {
         let sdp = format!("{}m=audio 5004 RTP/AVP 0 99\r\n", sdp_header());
         let codecs = SdpCodecs::parse(&sdp).unwrap();
-        assert_eq!(
-            codecs
-                .unmapped()
-                .len(),
-            1
-        );
-        assert_eq!(codecs.unmapped()[0].payload_type, 99);
+        let unmapped: Vec<_> = codecs
+            .unmapped()
+            .collect();
+        assert_eq!(unmapped.len(), 1);
+        assert_eq!(unmapped[0].payload_type, 99);
         // PT 0 (PCMU) is still there; PT 99 is unmapped, not silently dropped
         let rtp = rtp_codec(codecs.entries());
         assert_eq!(rtp.len(), 1);
@@ -1285,10 +1550,11 @@ mod tests {
             sdp_header()
         );
         let codecs = SdpCodecs::parse(&sdp).unwrap();
-        assert!(
+        assert_eq!(
             codecs
                 .entries()
-                .is_empty(),
+                .count(),
+            0,
             "the whole malformed section must be skipped, not just the bad attribute"
         );
         assert_eq!(
@@ -1350,10 +1616,11 @@ mod tests {
             sdp_header()
         );
         let codecs = SdpCodecs::parse(&sdp).unwrap();
-        assert!(
+        assert_eq!(
             codecs
                 .entries()
-                .is_empty(),
+                .count(),
+            0,
             "malformed rtpmap must still drop the whole section"
         );
         assert!(matches!(
@@ -1371,9 +1638,12 @@ mod tests {
             sdp_header()
         );
         let codecs = SdpCodecs::parse(&sdp).unwrap();
-        assert!(codecs
-            .entries()
-            .is_empty());
+        assert_eq!(
+            codecs
+                .entries()
+                .count(),
+            0
+        );
         assert_eq!(
             codecs
                 .warnings()
