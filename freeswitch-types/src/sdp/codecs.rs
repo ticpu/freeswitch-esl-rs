@@ -1124,50 +1124,137 @@ mod tests {
     // --- telephone-event and CN ---
 
     #[test]
-    fn telephone_event_in_rates_not_in_entries() {
-        // telephone-event at two clock rates; neither appears as an entry or unmapped.
+    fn telephone_event_retains_payload_type_rate_and_fmtp() {
         let sdp = format!(
             concat!(
                 "{}",
                 "m=audio 5004 RTP/AVP 0 101 102\r\n",
                 "a=rtpmap:101 telephone-event/8000\r\n",
+                "a=fmtp:101 0-16\r\n",
                 "a=rtpmap:102 telephone-event/16000\r\n"
             ),
             sdp_header()
         );
         let codecs = SdpCodecs::parse(&sdp).unwrap();
-        let rates = codecs.telephone_event_rates();
-        assert!(
-            rates.contains(&8000),
-            "8000 Hz DTMF must be in telephone_event_rates"
+        let te = codecs.non_codec_payloads();
+        assert_eq!(
+            te.len(),
+            2,
+            "both telephone-event payloads must be retained"
         );
-        assert!(
-            rates.contains(&16000),
-            "16000 Hz DTMF must be in telephone_event_rates"
+
+        assert_eq!(te[0].kind, NonCodecKind::TelephoneEvent);
+        assert_eq!(te[0].payload_type, 101);
+        assert_eq!(te[0].clock_rate, 8000);
+        assert_eq!(
+            te[0]
+                .fmtp
+                .as_deref(),
+            Some("0-16"),
+            "the offered digit range is what an operator reads on a DTMF fault"
         );
-        // Must not appear as codec entries
+        assert!(te[0].has_rtpmap);
+        assert_eq!(te[0].media_type, SdpMediaType::Audio);
+
+        assert_eq!(te[1].payload_type, 102);
+        assert_eq!(te[1].clock_rate, 16000);
+        assert!(te[1]
+            .fmtp
+            .is_none());
+
+        // Still excluded from entries() and distinguishable from an unresolvable payload.
         let rtp = rtp_codec(codecs.entries());
         assert!(codec_named(&rtp, "telephone-event").is_none());
-        // Must not be in unmapped
         assert!(codecs
             .unmapped()
             .is_empty());
     }
 
     #[test]
-    fn cn_sets_has_comfort_noise() {
+    fn comfort_noise_from_static_table_has_no_rtpmap() {
         let sdp = format!("{}m=audio 5004 RTP/AVP 0 13\r\n", sdp_header());
         let codecs = SdpCodecs::parse(&sdp).unwrap();
+        let cn = codecs.non_codec_payloads();
+        assert_eq!(cn.len(), 1);
+        assert_eq!(cn[0].kind, NonCodecKind::ComfortNoise);
+        assert_eq!(cn[0].payload_type, 13);
+        assert_eq!(cn[0].clock_rate, 8000);
+        assert!(cn[0]
+            .fmtp
+            .is_none());
         assert!(
-            codecs.has_comfort_noise(),
-            "static PT 13 (CN) must set has_comfort_noise"
+            !cn[0].has_rtpmap,
+            "PT 13 resolved from the RFC 3551 table, not declared by the peer"
         );
-        // CN must not appear as a codec entry
+
         let rtp = rtp_codec(codecs.entries());
         assert!(codec_named(&rtp, "CN").is_none());
         assert!(codecs
             .unmapped()
             .is_empty());
+    }
+
+    #[test]
+    fn comfort_noise_with_explicit_rtpmap_is_distinguishable() {
+        let sdp = format!(
+            concat!(
+                "{}",
+                "m=audio 5004 RTP/AVP 0 13\r\n",
+                "a=rtpmap:13 CN/8000\r\n"
+            ),
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        let cn = codecs.non_codec_payloads();
+        assert_eq!(cn.len(), 1);
+        assert!(cn[0].has_rtpmap);
+    }
+
+    #[test]
+    fn non_codec_payloads_are_an_inventory_not_a_set() {
+        // Two sections offering DTMF at one rate under different payload types: both
+        // survive, in offer order. Collapsing them would lose which side offered what.
+        let sdp = format!(
+            concat!(
+                "{}",
+                "m=audio 5004 RTP/AVP 0 101\r\n",
+                "a=rtpmap:101 telephone-event/8000\r\n",
+                "m=audio 5006 RTP/AVP 8 96\r\n",
+                "a=rtpmap:96 telephone-event/8000\r\n"
+            ),
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        let te = codecs.non_codec_payloads();
+        assert_eq!(te.len(), 2);
+        assert_eq!(te[0].payload_type, 101);
+        assert_eq!(te[1].payload_type, 96);
+    }
+
+    #[test]
+    fn non_codec_payloads_never_reach_the_codec_string() {
+        let sdp = format!(
+            concat!(
+                "{}",
+                "m=audio 5004 RTP/AVP 0 13 101\r\n",
+                "a=rtpmap:101 telephone-event/8000\r\n"
+            ),
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert_eq!(
+            codecs
+                .non_codec_payloads()
+                .len(),
+            2
+        );
+        let cs = codecs
+            .audio_codec_string(&CodecStringOptions::default(), None)
+            .unwrap();
+        assert_eq!(cs.len(), 1, "only PCMU may reach the codec string");
+        let rendered = cs.to_string();
+        assert!(!rendered.contains("telephone-event"));
+        assert!(!rendered.contains("CN"));
     }
 
     // --- unmapped payload types ---
