@@ -20,20 +20,21 @@ jobs:
     # push covers every in-repo branch and tag; pull_request only adds fork PRs
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
 
+      # target/ is deliberately not cached: compressing it costs more than the
+      # rebuild it saves.
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check feature combinations
@@ -93,7 +94,7 @@ jobs:
 
       - name: Update test count badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
@@ -104,7 +105,7 @@ jobs:
 
       - name: Update EslEventType badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push' && env.C_SOURCE_AVAILABLE == 'true'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
@@ -115,7 +116,7 @@ jobs:
 
       - name: Update HangupCause badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push' && env.C_SOURCE_AVAILABLE == 'true'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
@@ -126,7 +127,7 @@ jobs:
 
       - name: Update ChannelState badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push' && env.C_SOURCE_AVAILABLE == 'true'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
@@ -137,7 +138,7 @@ jobs:
 
       - name: Update CallState badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push' && env.C_SOURCE_AVAILABLE == 'true'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
@@ -148,7 +149,7 @@ jobs:
 
       - name: Update EventHeader badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push' && env.C_SOURCE_AVAILABLE == 'true'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
@@ -159,7 +160,7 @@ jobs:
 
       - name: Update CoreMediaVariable badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push' && env.C_SOURCE_AVAILABLE == 'true'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
@@ -170,7 +171,7 @@ jobs:
 
       - name: Update ChannelVariable count badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
@@ -181,7 +182,7 @@ jobs:
 
       - name: Update HeaderLookup count badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
@@ -192,7 +193,7 @@ jobs:
 
       - name: Update SofiaVariable count badge
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
-        uses: schneegans/dynamic-badges-action@v1.7.0
+        uses: schneegans/dynamic-badges-action@28b0fa8bdeb46170ac397105ece0c1fe58f68910 # v1.9.0
         with:
           auth: ${{ secrets.GIST_SECRET }}
           gistID: def178758b6a88effff310aca87b6b50
