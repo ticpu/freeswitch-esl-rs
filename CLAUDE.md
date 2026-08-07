@@ -165,6 +165,14 @@ reference must name its file, and the target must be indexed in
 `hooks/source-refs.yaml`. Regenerate with `hooks/check-source-refs.py --update`
 after bumping the pin, then re-verify each reference the diff names.
 
+Never read a cited range out of `$FREESWITCH_SOURCE` — the checkout is not
+parked on the pin, so the text at that line is some other commit's and the
+reference reads as stale when it is correct. Use
+`hooks/check-source-refs.py --show switch_core_media.c:13650-13651`, which
+prints from the pinned blob. Only the FreeSWITCH tree is indexed: sofia-sip is
+a separate repository, so its references are symbol-only (`sdp_media_has_rtp`
+in `sdp_parse.c`) and carry no line number to verify.
+
 **design-rationale is rationale, not changelog.** Version bumps, MSRV changes,
 dep updates, and plain feature adds belong in the release tag's ChangeLog.
 Only genuine design decisions (new layering, reversed trade-off, new invariant)

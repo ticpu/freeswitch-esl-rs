@@ -10,8 +10,13 @@ target text moved.
 Local only -- it needs a FreeSWITCH clone at $FREESWITCH_SOURCE containing the
 pinned commit, which CI does not have.
 
-    hooks/check-source-refs.py            verify
-    hooks/check-source-refs.py --update   regenerate the index
+The checkout is almost never parked on the pin, so reading a cited range out of
+the working tree yields the wrong text and a bogus "this reference is stale"
+conclusion. --show reads it from the pinned blob instead.
+
+    hooks/check-source-refs.py                                  verify
+    hooks/check-source-refs.py --update                         regenerate the index
+    hooks/check-source-refs.py --show switch_core_media.c:5805  print the pinned text
 """
 
 import argparse
@@ -77,7 +82,11 @@ class FsTree:
                     self._paths[name] = "\0".join(real)
         found = self._paths.get(basename)
         if found is None:
-            fail(f"{basename} is not in FreeSWITCH {self.commit[:10]}")
+            fail(
+                f"{basename} is not in FreeSWITCH {self.commit[:10]}. Only the "
+                "FreeSWITCH tree is indexed -- sofia-sip and other unvendored "
+                "dependencies are cited by symbol name, never by line."
+            )
         if "\0" in found:
             fail(f"{basename} is ambiguous: {found.replace(chr(0), ', ')}")
         return found
@@ -150,6 +159,25 @@ def _line_refs(line: str, last_file: str | None):
             yield (last_file, start, int(m.group("end") or start))
 
 
+def show(tree: FsTree, specs: list[str], tag: str) -> int:
+    """Print the pinned text a reference resolves to, so it can be verified."""
+    for spec in specs:
+        m = REF.fullmatch(spec.strip("`"))
+        if not m:
+            fail(f"{spec!r} is not a file.c:NNN or file.c:NNN-MMM reference")
+        start = int(m.group("start"))
+        end = int(m.group("end") or start)
+        path = tree.path_for(m.group("file"))
+        lines = tree.lines(path)
+        if end > len(lines):
+            fail(f"{path}:{start}-{end} runs past EOF at {tree.commit[:10]}")
+        span = f"{start}" if start == end else f"{start}-{end}"
+        print(f"=== {path}:{span} @ {tag}")
+        for n in range(start, end + 1):
+            print(f"{n:>6}  {lines[n - 1]}")
+    return 0
+
+
 def ref_key(basename: str, start: int, end: int, tree: FsTree) -> str:
     path = tree.path_for(basename)
     return f"{path}:{start}" if start == end else f"{path}:{start}-{end}"
@@ -214,6 +242,12 @@ def main() -> int:
         action="store_true",
         help="print every citation and the reference it resolves to, for review",
     )
+    ap.add_argument(
+        "--show",
+        nargs="+",
+        metavar="REF",
+        help="print the pinned text of file.c:NNN[-MMM]; the working tree is not the pin",
+    )
     args = ap.parse_args()
 
     repo = Path(__file__).resolve().parent.parent
@@ -222,6 +256,9 @@ def main() -> int:
     else:
         commit, tag, indexed = load_index(repo)
     tree = open_tree(commit)
+
+    if args.show:
+        return show(tree, args.show, tag)
 
     refs, commits = extract(repo)
     seen = {ref_key(*k, tree): v for k, v in refs.items()}
