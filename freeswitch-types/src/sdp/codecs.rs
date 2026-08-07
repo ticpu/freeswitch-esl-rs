@@ -554,8 +554,8 @@ fn parse_media_section(
 
 /// Cursor over an `a=rtpmap`/`a=fmtp` attribute value.
 ///
-/// Whitespace is decided once, here, mirroring sofia's `parse_ul`
-/// (`sdp_parse.c:1834`) and `token` (`sdp_parse.c:1879`) — not re-trimmed at
+/// Whitespace is decided once, here, mirroring `parse_ul` and `token` in
+/// sofia-sip's `sdp_parse.c` — not re-trimmed at
 /// each field after a naive split, which is how a field with no trim call
 /// (the encoding name) used to slip through with leading whitespace attached.
 struct AttrCursor<'a> {

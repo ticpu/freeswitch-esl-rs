@@ -4,6 +4,9 @@
 //! provides the building blocks needed to derive a codec string from an SDP session
 //! description: RFC 3551 static payload type resolution, canonical FreeSWITCH encoding
 //! name normalization, and static bitrate lookup.
+//!
+//! Line numbers in this module index FreeSWITCH `v1.11.1`
+//! (`c2c59645f6911a76589e5008c4d73349ded44b65`).
 
 /// Loaded-implementation modelling: which codec-string entries survive matching.
 pub mod available;

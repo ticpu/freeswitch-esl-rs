@@ -337,7 +337,7 @@ async fn handle_answered_channel(
             .unwrap_or_else(|| default_rate(first.name()));
         if let Some(fmtp) = parsed.fmtp_for(first.name(), rate) {
             // uuid_setvar splits on spaces and processes \ escapes even inside single
-            // quotes (cleanup_separated_string, switch_utils.c:2702). Escape ' and \
+            // quotes (cleanup_separated_string). Escape ' and \
             // in the raw peer fmtp before wrapping in single quotes: unescaped '
             // toggles quote state (corrupting the argument boundary) and unescaped \
             // consumes the next char. \n is line-split out of wire headers so it
