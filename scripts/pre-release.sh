@@ -21,8 +21,10 @@ cargo test --test live_freeswitch -- --ignored
 cargo build --workspace --release --all-features
 cargo build --examples --all-features
 cargo check --workspace --all-features --target x86_64-pc-windows-msvc
-cargo semver-checks check-release -p freeswitch-types
-cargo semver-checks check-release -p freeswitch-esl-tokio
+# --all-features or the check is blind to sdp and conference-info, which are
+# off by default: a removed method there passes an unqualified run untouched.
+cargo semver-checks check-release --all-features -p freeswitch-types
+cargo semver-checks check-release --all-features -p freeswitch-esl-tokio
 # Only types: freeswitch-esl-tokio pins an exact freeswitch-types version that
 # is not on crates.io until the publish step below actually runs.
 cargo publish --dry-run -p freeswitch-types
