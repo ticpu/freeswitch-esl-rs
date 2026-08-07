@@ -255,9 +255,14 @@ Emitted form is `modname.encoding` plus rate, ptime and bitrate/channels
 
 - session-level `a=ptime` is read first as a default (`:13594-13603`), then
   overridden per media section (`:13617-13619`)
-- m-lines with port 0 are skipped (`:13608`, `:13650`)
+- m-lines with port 0 contribute nothing (`:13608`, `:13650`). They are still
+  parsed here and reachable through `SdpCodecs::sections()` — a held stream is
+  what a reader most needs
 - any `m=image` with a nonzero port contributes the literal `t38`, regardless of
   proto or fmt (`:13650-13651`)
+- the walk reads `m->m_rtpmaps`, which libsofia fills only for the protos
+  `sdp_media_transport` maps to an RTP transport (`sdp_media_has_rtp`), so a
+  section on any other proto arrives empty whatever its media type
 - an inbound leg, or one with `ep_codec_prefer_sdp` set, walks the SDP's rtpmaps
   in the outer loop so SDP order wins; an outbound leg walks the local
   preference list outer so local order wins (`:13674-13731`)

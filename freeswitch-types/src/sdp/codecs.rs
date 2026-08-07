@@ -13,30 +13,103 @@ use crate::sdp::{
 /// A single entry in a parsed SDP offer.
 ///
 /// Payloads negotiated outside the codec string are excluded from entries and
-/// retained whole by [`SdpCodecs::non_codec_payloads`].
+/// retained whole by [`SdpMediaSection::non_codec_payloads`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SdpCodecEntry {
     /// An RTP codec negotiated via `a=rtpmap` or the RFC 3551 static table.
     Rtp(SdpCodec),
-    /// T.38 fax relay, derived from any `m=image` section with a nonzero port.
+    /// T.38 fax relay, derived from any `m=image` section.
     ///
     /// The proto and fmt fields are not inspected — FreeSWITCH negotiates T.38
-    /// parameters independently of the codec string.
+    /// parameters independently of the codec string. Whether the section reaches
+    /// a codec string is [`SdpMediaSection::is_negotiable`].
     T38,
+}
+
+/// One `m=` section of an SDP offer, whatever its port or media type.
+///
+/// Sections that contribute nothing to a codec string are retained all the same:
+/// a port-0 section is the offer's held or declined stream and is exactly what a
+/// reader needs when a call has no audio. [`is_negotiable`](Self::is_negotiable)
+/// separates the two.
+#[derive(Debug, Clone)]
+pub struct SdpMediaSection {
+    media_type: SdpMediaType,
+    port: u16,
+    proto: String,
+    formats: String,
+    direction: SdpDirection,
+    entries: Vec<SdpCodecEntry>,
+    unmapped: Vec<UnmappedPayload>,
+    non_codec: Vec<NonCodecPayload>,
+}
+
+impl SdpMediaSection {
+    /// The media type from the `m=` line.
+    pub fn media_type(&self) -> &SdpMediaType {
+        &self.media_type
+    }
+
+    /// The transport port; `0` means the peer declined or held this stream.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// The transport protocol from the `m=` line, verbatim.
+    pub fn proto(&self) -> &str {
+        &self.proto
+    }
+
+    /// The `m=` format list, verbatim — the only content a non-RTP section carries.
+    pub fn formats(&self) -> &str {
+        &self.formats
+    }
+
+    /// The direction the peer wrote, defaulting to the session's.
+    ///
+    /// Sofia forces a port-0 section to inactive regardless, so on a held section
+    /// this is what was offered, not what the switch acted on.
+    pub fn direction(&self) -> SdpDirection {
+        self.direction
+    }
+
+    /// Codec entries in `m=` format-list order.
+    pub fn entries(&self) -> &[SdpCodecEntry] {
+        &self.entries
+    }
+
+    /// Payload types this section named that could not be resolved to a codec.
+    pub fn unmapped(&self) -> &[UnmappedPayload] {
+        &self.unmapped
+    }
+
+    /// Payloads the switch negotiates outside the codec string, in format-list order.
+    ///
+    /// Not deduplicated. See [`NonCodecPayload`] for what the switch itself retains.
+    pub fn non_codec_payloads(&self) -> &[NonCodecPayload] {
+        &self.non_codec
+    }
+
+    /// Whether this section feeds the codec string and the top-level views.
+    pub fn is_negotiable(&self) -> bool {
+        let derives_entries = matches!(self.media_type, SdpMediaType::Audio | SdpMediaType::Video)
+            || is_image(&self.media_type);
+        self.port != 0 && derives_entries
+    }
 }
 
 /// Codecs and ancillary data extracted from an SDP session description.
 ///
-/// Produced by [`SdpCodecs::parse`]. Reflects the same extraction logic used by
-/// FreeSWITCH's `switch_core_media_set_r_sdp_codec_string` to build
-/// `ep_codec_string`. See `docs/codec-string-format.md` for the mapping rules.
+/// Produced by [`SdpCodecs::parse`]. The accessors that feed a codec string reflect
+/// the same extraction logic as FreeSWITCH's
+/// `switch_core_media_set_r_sdp_codec_string`; [`sections`](Self::sections) is the
+/// wider view, every `m=` line the offer carried. See `docs/codec-string-format.md`
+/// for the mapping rules.
 #[derive(Debug)]
 pub struct SdpCodecs {
-    entries: Vec<SdpCodecEntry>,
-    unmapped: Vec<UnmappedPayload>,
+    sections: Vec<SdpMediaSection>,
     warnings: Vec<SdpWarning>,
-    non_codec: Vec<NonCodecPayload>,
 }
 
 impl SdpCodecs {
@@ -54,10 +127,8 @@ impl SdpCodecs {
 
     fn from_session(session: &sdp_types::Session) -> Result<Self, SdpCodecError> {
         let mut result = Self {
-            entries: Vec::new(),
-            unmapped: Vec::new(),
+            sections: Vec::new(),
             warnings: Vec::new(),
-            non_codec: Vec::new(),
         };
 
         // Session-level defaults; media-level attributes override these per section.
@@ -68,21 +139,6 @@ impl SdpCodecs {
             direction_from_attrs(&session.attributes).unwrap_or(SdpDirection::SendRecv);
 
         for media in &session.medias {
-            if media.port == 0 {
-                continue;
-            }
-
-            // Any m=image with nonzero port yields T38 regardless of proto/fmt.
-            if media
-                .media
-                .eq_ignore_ascii_case("image")
-            {
-                result
-                    .entries
-                    .push(SdpCodecEntry::T38);
-                continue;
-            }
-
             // SdpMediaType::from_str is infallible (Err = std::convert::Infallible).
             let media_type: SdpMediaType = match media
                 .media
@@ -92,83 +148,113 @@ impl SdpCodecs {
                 Err(e) => match e {},
             };
 
-            // Only audio and video sections contribute codec entries.
-            match media_type {
-                SdpMediaType::Audio | SdpMediaType::Video => {}
-                _ => continue,
+            let mut section = SdpMediaSection {
+                media_type: media_type.clone(),
+                port: media.port,
+                proto: media
+                    .proto
+                    .clone(),
+                formats: media
+                    .fmt
+                    .clone(),
+                direction: direction_from_attrs(&media.attributes).unwrap_or(session_direction),
+                entries: Vec::new(),
+                unmapped: Vec::new(),
+                non_codec: Vec::new(),
+            };
+
+            if is_image(&media_type) {
+                // The proto and fmt are not inspected; the section is the T.38 stream.
+                section
+                    .entries
+                    .push(SdpCodecEntry::T38);
+            } else if proto_has_rtp(&media.proto) {
+                // A single structurally broken section (bad rtpmap/fmtp/payload type)
+                // must not discard every other section already parsed. Stage this
+                // section's output locally and only merge it in on success.
+                match parse_media_section(
+                    media,
+                    media_type.clone(),
+                    session_ptime,
+                    session_maxptime,
+                    section.direction,
+                ) {
+                    Ok(parsed) => {
+                        section.entries = parsed.entries;
+                        section.unmapped = parsed.unmapped;
+                        section.non_codec = parsed.non_codec;
+                        result
+                            .warnings
+                            .extend(parsed.warnings);
+                    }
+                    Err(e) => {
+                        result
+                            .warnings
+                            .push(SdpWarning::malformed_media_section(
+                                media_type.to_string(),
+                                e.to_string(),
+                            ));
+                    }
+                }
             }
 
-            // A single structurally broken section (bad rtpmap/fmtp/payload type)
-            // must not discard every other section already parsed. Stage this
-            // section's output locally and only merge it in on success.
-            match parse_media_section(
-                media,
-                media_type.clone(),
-                session_ptime,
-                session_maxptime,
-                session_direction,
-            ) {
-                Ok(section) => {
-                    result
-                        .entries
-                        .extend(section.entries);
-                    result
-                        .unmapped
-                        .extend(section.unmapped);
-                    result
-                        .warnings
-                        .extend(section.warnings);
-                    result
-                        .non_codec
-                        .extend(section.non_codec);
-                }
-                Err(e) => {
-                    result
-                        .warnings
-                        .push(SdpWarning::malformed_media_section(
-                            media_type.to_string(),
-                            e.to_string(),
-                        ));
-                }
-            }
+            result
+                .sections
+                .push(section);
         }
 
         Ok(result)
     }
 
-    /// All codec entries in SDP offer order.
-    pub fn entries(&self) -> &[SdpCodecEntry] {
-        &self.entries
+    /// Every `m=` section the offer carried, in offer order.
+    ///
+    /// This is the inventory, including the sections no codec string can reach — a
+    /// held or declined stream, or a media type the switch derives no codec from.
+    pub fn sections(&self) -> &[SdpMediaSection] {
+        &self.sections
     }
 
-    /// Iterator over codec entries in SDP offer order.
-    pub fn iter(&self) -> std::slice::Iter<'_, SdpCodecEntry> {
-        self.entries
+    fn negotiable(&self) -> impl Iterator<Item = &SdpMediaSection> {
+        self.sections
             .iter()
+            .filter(|s| s.is_negotiable())
     }
 
-    /// Consume this collection, returning the inner entry vector.
+    /// Codec entries from the negotiable sections, in SDP offer order.
+    pub fn entries(&self) -> impl Iterator<Item = &SdpCodecEntry> {
+        self.negotiable()
+            .flat_map(|s| {
+                s.entries
+                    .iter()
+            })
+    }
+
+    /// Consume this collection, returning the negotiable sections' entries.
     pub fn into_entries(self) -> Vec<SdpCodecEntry> {
-        self.entries
+        self.sections
+            .into_iter()
+            .filter(|s| s.is_negotiable())
+            .flat_map(|s| s.entries)
+            .collect()
     }
 
     /// Number of codec entries; payloads from [`non_codec_payloads`](Self::non_codec_payloads)
     /// are not counted.
     pub fn len(&self) -> usize {
-        self.entries
-            .len()
+        self.entries()
+            .count()
     }
 
-    /// `true` when the offer contained no codecs, ignoring any non-codec payloads.
+    /// `true` when the offer negotiates no codecs, ignoring any non-codec payloads.
     pub fn is_empty(&self) -> bool {
-        self.entries
-            .is_empty()
+        self.entries()
+            .next()
+            .is_none()
     }
 
     /// Iterator over audio RTP codecs only.
     pub fn audio(&self) -> impl Iterator<Item = &SdpCodec> {
-        self.entries
-            .iter()
+        self.entries()
             .filter_map(|e| match e {
                 SdpCodecEntry::Rtp(c) if c.media() == &SdpMediaType::Audio => Some(c),
                 _ => None,
@@ -177,41 +263,47 @@ impl SdpCodecs {
 
     /// Iterator over video RTP codecs only.
     pub fn video(&self) -> impl Iterator<Item = &SdpCodec> {
-        self.entries
-            .iter()
+        self.entries()
             .filter_map(|e| match e {
                 SdpCodecEntry::Rtp(c) if c.media() == &SdpMediaType::Video => Some(c),
                 _ => None,
             })
     }
 
-    /// Retain only the entries for which `f` returns `true`.
-    pub fn retain(&mut self, f: impl FnMut(&SdpCodecEntry) -> bool) {
-        self.entries
-            .retain(f);
-    }
-
     /// Payload types that could not be named (no `a=rtpmap`, no static-table entry).
     ///
     /// These are surfaced as data rather than an error so the caller can distinguish
-    /// "never offered" from "offered but unresolvable".
-    pub fn unmapped(&self) -> &[UnmappedPayload] {
-        &self.unmapped
+    /// "never offered" from "offered but unresolvable". A non-negotiable section's
+    /// unresolvable payloads stay on [`SdpMediaSection::unmapped`].
+    pub fn unmapped(&self) -> impl Iterator<Item = &UnmappedPayload> {
+        self.negotiable()
+            .flat_map(|s| {
+                s.unmapped
+                    .iter()
+            })
     }
 
     /// Recoverable parse warnings (e.g. unparseable numeric attributes).
+    ///
+    /// Covers every section, negotiable or not — the excluded ones are parsed rather
+    /// than skipped, so they warn where the switch has no occasion to.
     pub fn warnings(&self) -> &[SdpWarning] {
         &self.warnings
     }
 
     /// Payloads the switch negotiates outside the codec string, in `m=` order.
     ///
-    /// Never included in [`entries`](Self::entries) or [`unmapped`](Self::unmapped).
-    /// Not deduplicated: two sections offering the same kind at one clock rate under
-    /// different payload types yield two entries. See [`NonCodecPayload`] for what the
-    /// switch itself retains from these.
-    pub fn non_codec_payloads(&self) -> &[NonCodecPayload] {
-        &self.non_codec
+    /// Never included in [`entries`](Self::entries) or [`unmapped`](Self::unmapped),
+    /// and drawn from the negotiable sections only; a held section's are on
+    /// [`SdpMediaSection::non_codec_payloads`]. Not deduplicated: two sections offering
+    /// the same kind at one clock rate under different payload types yield two entries.
+    /// See [`NonCodecPayload`] for what the switch itself retains from these.
+    pub fn non_codec_payloads(&self) -> impl Iterator<Item = &NonCodecPayload> {
+        self.negotiable()
+            .flat_map(|s| {
+                s.non_codec
+                    .iter()
+            })
     }
 
     /// Build a FreeSWITCH codec string from this offer's audio codecs.
@@ -235,7 +327,7 @@ impl SdpCodecs {
         mut warnings: Option<&mut Vec<SdpWarning>>,
     ) -> Result<CodecString, CodecStringError> {
         let mut out = CodecString::new();
-        for entry in &self.entries {
+        for entry in self.entries() {
             match entry {
                 // The literal "t38" contains no codec-string grammar delimiter, so this
                 // can't actually fail; propagating via `?` still means a mistaken future
@@ -349,14 +441,41 @@ fn codec_to_entry_lenient(
 
 // --- private helpers ---
 
-/// One `m=` section's contribution, staged locally so a mid-section parse
-/// failure can be discarded wholesale instead of polluting `SdpCodecs`.
+/// One `m=` section's payload walk, staged locally so a mid-section parse
+/// failure can be discarded wholesale instead of reaching [`SdpMediaSection`].
 #[derive(Default)]
 struct MediaSection {
     entries: Vec<SdpCodecEntry>,
     unmapped: Vec<UnmappedPayload>,
     warnings: Vec<SdpWarning>,
     non_codec: Vec<NonCodecPayload>,
+}
+
+/// `m=image`, matched case-insensitively as FreeSWITCH's own comparison is.
+fn is_image(media_type: &SdpMediaType) -> bool {
+    matches!(media_type, SdpMediaType::Other(s) if s.eq_ignore_ascii_case("image"))
+}
+
+/// Whether sofia would read this section's format list as RTP payload types.
+///
+/// `sdp_media_transport` matches the proto against an exact set, so a name merely
+/// containing `RTP` is not one; `sdp_media_has_rtp` then decides whether the
+/// format list, `a=rtpmap` and `a=fmtp` are read into the section's rtpmap list at
+/// all. The bare `RTP` is sofia's non-strict spelling of `RTP/AVP`.
+fn proto_has_rtp(proto: &str) -> bool {
+    const RTP_PROTOS: [&str; 8] = [
+        "RTP",
+        "RTP/AVP",
+        "RTP/AVPF",
+        "RTP/SAVP",
+        "RTP/SAVPF",
+        "UDP/RTP/AVPF",
+        "UDP/TLS/RTP/SAVP",
+        "UDP/TLS/RTP/SAVPF",
+    ];
+    RTP_PROTOS
+        .iter()
+        .any(|p| p.eq_ignore_ascii_case(proto))
 }
 
 /// Classify an encoding name the switch negotiates outside the codec string.
@@ -374,18 +493,18 @@ fn non_codec_kind(canonical_name: &str) -> Option<NonCodecKind> {
     }
 }
 
-/// Parse one audio/video `m=` section into its codec entries.
+/// Walk one RTP `m=` section's format list into codec entries.
 ///
 /// Returns `Err` only for structural breakage within this section (an
 /// unparseable `a=rtpmap`, `a=fmtp`, or `m=` format-list payload type) — the
-/// caller records this as [`SdpWarning::MalformedMediaSection`] and skips the
-/// section rather than aborting the whole parse.
+/// caller records this as [`SdpWarning::MalformedMediaSection`] and keeps the
+/// section empty rather than aborting the whole parse.
 fn parse_media_section(
     media: &sdp_types::Media,
     media_type: SdpMediaType,
     session_ptime: Option<u32>,
     session_maxptime: Option<u32>,
-    session_direction: SdpDirection,
+    media_direction: SdpDirection,
 ) -> Result<MediaSection, SdpCodecError> {
     let mut section = MediaSection::default();
 
@@ -394,7 +513,6 @@ fn parse_media_section(
         ptime_from_attrs(&media.attributes, "ptime", &mut section.warnings).or(session_ptime);
     let media_maxptime =
         ptime_from_attrs(&media.attributes, "maxptime", &mut section.warnings).or(session_maxptime);
-    let media_direction = direction_from_attrs(&media.attributes).unwrap_or(session_direction);
 
     // Build per-section rtpmap and fmtp lookup tables.
     let mut rtpmap: HashMap<u8, (String, u32, Option<u8>)> = HashMap::new();

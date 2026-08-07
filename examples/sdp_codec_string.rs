@@ -198,6 +198,38 @@ async fn handle_answered_channel(
         }
     }
 
+    // sections() is every m= line the offer carried, in order, including the ones the
+    // table above cannot show: a port-0 section is a held or declined stream, and its
+    // codecs are exactly what you want in front of you on a "no audio" complaint.
+    for section in parsed.sections() {
+        if section.is_negotiable() {
+            continue;
+        }
+        println!(
+            "{}: m={} port {} {} {} (excluded from the codec string)",
+            short,
+            section.media_type(),
+            section.port(),
+            section.proto(),
+            section.formats(),
+        );
+        for entry in section.entries() {
+            if let SdpCodecEntry::Rtp(c) = entry {
+                println!(
+                    "    [{:>3}] {}/{} {}",
+                    c.payload_type(),
+                    c.name(),
+                    c.clock_rate(),
+                    c.fmtp()
+                        .unwrap_or(""),
+                );
+            }
+        }
+        for payload in section.non_codec_payloads() {
+            println!("    {}", payload);
+        }
+    }
+
     // Negotiated through FreeSWITCH's smh->mparams->te and cng_pt paths, never through
     // the codec string, so these never reach entries() or the string built below. This
     // is what the offer said, not what the switch picked: it keeps one of each per

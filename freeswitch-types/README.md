@@ -33,7 +33,7 @@ which re-exports everything from this crate.
 | `variables` | `ChannelVariable`, `CoreMediaVariable` (`unit()` → `RtpStatUnit`), `SofiaVariable`, `LoopbackVariable` (+ `LoopbackResignation`, the bowout marker), `ConferenceVariable`, `SipPassthroughHeader` (unified `sip_h_*`/`sip_i_*`/etc. with `extract_from()`), `EslArray`, `MultipartBody` |
 | `event` | `EslEvent`, `EslEventType`, `EventFormat`, `EslEventPriority`, `LossyValues`/`LossyValue` (non-UTF-8 header-value signal) *(requires `esl` feature)* |
 | `commands` | `Originate`, `BridgeDialString`, `UuidKill`, `UuidBridge`, endpoint types *(requires `esl` feature)* |
-| `sdp` | `CodecString`/`CodecStringEntry` (the FreeSWITCH codec-string grammar, parse and emit, with `dedup`/`simplify` ported from the switch), `SdpCodecs` (SDP offer → typed codec list, plus `NonCodecPayload` for what the switch negotiates outside the string), `CodecImplementation` (filter a codec string against what a switch has loaded) *(requires `sdp` feature)* |
+| `sdp` | `CodecString`/`CodecStringEntry` (the FreeSWITCH codec-string grammar, parse and emit, with `dedup`/`simplify` ported from the switch), `SdpCodecs` (SDP offer → typed codec list, plus `SdpMediaSection` for every `m=` line the offer carried — held streams included — and `NonCodecPayload` for what the switch negotiates outside the string), `CodecImplementation` (filter a codec string against what a switch has loaded) *(requires `sdp` feature)* |
 | `conference_info` | RFC 4575 `conference-info+xml` types *(requires `conference-info` feature)* |
 
 ## Features
