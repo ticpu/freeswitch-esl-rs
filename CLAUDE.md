@@ -129,12 +129,16 @@ of the event group constants (`CHANNEL_EVENTS`, `MEDIA_EVENTS`,
 `PRESENCE_EVENTS`, `SYSTEM_EVENTS`, `CONFERENCE_EVENTS`) in
 `freeswitch-types/src/event.rs` and update them accordingly.
 
+`sdp` and `conference-info` are not default features, so anything without
+`--all-features` compiles, lints and tests a subset of the workspace — a green
+run there says nothing about those modules.
+
 ```sh
 cargo fmt --all
 cargo check -p freeswitch-types --no-default-features --message-format=short
-cargo check --workspace --message-format=short
-cargo clippy --workspace --fix --allow-dirty --message-format=short
-cargo test --workspace --lib
+cargo check --workspace --all-features --message-format=short
+cargo clippy --workspace --all-features --fix --allow-dirty --message-format=short
+cargo test --workspace --all-features --lib
 ```
 
 When FreeSWITCH ESL is available on `127.0.0.1:8022`, also run live tests:
