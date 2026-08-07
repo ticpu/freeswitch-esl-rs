@@ -10,14 +10,17 @@ This is a two-crate workspace. `freeswitch-esl-tokio` depends on
 `scripts/pre-release.sh` is the gate: fmt, feature matrix, clippy, workspace and
 live tests, Windows cross-check, semver-checks, and a publish dry-run.
 
+**A pushed tag is immutable — it is created only once CI is green on the commit
+it will point at. Never push a tag and its commit together.**
+
 **Never `cargo publish` without completing these steps first:**
 
 1. `scripts/pre-release.sh` passes
-2. Create signed annotated tags (`git tag -as`) with a brief changelog
+2. Push the release commit alone (`git push`) and wait for CI to pass on it
+3. Create signed annotated tags (`git tag -as`) with a brief changelog
    in the tag message (use `git log --oneline <previous-tag>..HEAD` to
    generate it)
-3. Push the tags (`git push --tags`)
-4. Wait for CI to pass on the tagged commit
+4. Push the tag (`git push --tags`)
 5. Only then publish, types first:
 
 ```sh
@@ -87,7 +90,16 @@ git commit -m "release: vX.Y.Z"
    - what changed
    ```
 
-6. Tag and push:
+6. Push the release commit **alone** and wait for CI to go green on it. The tag
+   is immutable once pushed, so it is not created until this passes; a red run
+   here is fixed with another commit, not a retag:
+
+```sh
+git push
+gh run watch "$(gh run list --branch master --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+7. Tag the green commit and push the tag on its own:
 
 ```sh
 git tag -as vX.Y.Z -m "$(cat <<'EOF'
@@ -96,17 +108,17 @@ vX.Y.Z
 <changelog>
 EOF
 )"
-git push && git push --tags
+git push --tags
 ```
 
-7. Wait for CI to pass on the tagged commit, then publish:
+8. Publish, types first:
 
 ```sh
 cargo publish -p freeswitch-types
 cargo publish -p freeswitch-esl-tokio
 ```
 
-8. Report the tag and the changelog.
+9. Report the tag and the changelog.
 
 ## Important
 
