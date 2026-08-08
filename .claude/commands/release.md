@@ -11,21 +11,23 @@ This is a two-crate workspace. `freeswitch-esl-tokio` depends on
 live tests, Windows cross-check, semver-checks, and a publish dry-run.
 
 **A pushed tag is immutable — it is created only once CI is green on the commit
-it will point at. Never push a tag and its commit together.**
+it is built on. Never push a tag and its commit together.**
 
 **Never `cargo publish` without completing these steps first:**
 
 1. `scripts/pre-release.sh` passes
 2. Push the release commit alone (`git push`) and wait for CI to pass on it
-3. Create signed annotated tags (`git tag -as`) with a brief changelog
-   in the tag message (use `git log --oneline <previous-tag>..HEAD` to
-   generate it)
+3. Detach, pin `Cargo.lock` on a child commit, and tag it (`git tag -as`) with a
+   brief changelog in the tag message (use `git log --oneline <previous-tag>..HEAD`
+   to generate it)
 4. Push the tag (`git push --tags`)
-5. Only then publish, types first:
+5. Only then publish, from the tagged commit and types first:
 
 ```sh
+git checkout vX.Y.Z
 cargo publish -p freeswitch-types
 cargo publish -p freeswitch-esl-tokio
+git switch master
 ```
 
 ## Version determination
@@ -99,29 +101,64 @@ git push
 gh run watch "$(gh run list --branch master --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
 
-7. Tag the green commit and push the tag on its own:
+7. Build the tag locally — nothing is pushed yet. It sits on a detached child of
+   the green commit that pins `Cargo.lock`, so a tagged tree resolves the exact
+   dependency set CI validated rather than whatever is caret-compatible a year
+   from now, while the lock never lands on master:
 
 ```sh
+git checkout --detach
+git symbolic-ref -q HEAD
+git add -f Cargo.lock
+git commit -m "build: pin Cargo.lock for vX.Y.Z"
 git tag -as vX.Y.Z -m "$(cat <<'EOF'
 vX.Y.Z
 
 <changelog>
 EOF
 )"
-git push --tags
+git switch master
 ```
 
-8. Publish, types first:
+   Run these as **separate** commands, never chained with `&&`. If a chained
+   command is rejected part-way — a hook, a denied permission — the untried half
+   is silently skipped, and the failure mode here is committing `Cargo.lock` onto
+   master because the `git checkout --detach` never ran. `git symbolic-ref -q HEAD`
+   must **fail** before the lock is staged; that is the confirmation the detach
+   took. `pre-commit` rejects a staged `Cargo.lock` on a branch and `pre-push`
+   rejects a branch tip that tracks it, but neither replaces checking.
+
+   The tagged commit differs from the green one by `Cargo.lock` alone.
+
+8. Push the tag on its own. `ci.yml` triggers on `push` with no ref filter, so the
+   tag gets its own run — the only one that builds against the pinned lock. Wait
+   for it before publishing:
 
 ```sh
-cargo publish -p freeswitch-types
-cargo publish -p freeswitch-esl-tokio
+git push --tags
+gh run watch "$(gh run list --branch vX.Y.Z --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
 
-9. Report the tag and the changelog.
+   Red here means the pin resolved something the floating build did not. Never
+   retag; fix on master and cut a new patch release.
+
+9. Publish from the tagged commit, types first:
+
+```sh
+git checkout vX.Y.Z
+cargo publish -p freeswitch-types
+cargo publish -p freeswitch-esl-tokio
+git switch master
+```
+
+   `git switch master` deletes the working-tree `Cargo.lock` (untracked there);
+   the next cargo command regenerates it.
+
+10. Report the tag and the changelog.
 
 ## Important
 
-- **Never commit Cargo.lock** — this is a library crate. Cargo.lock stays gitignored.
+- **Cargo.lock never reaches master** — library workspace, gitignored there. It
+  exists only on the tag's own commit, so a release build is reproducible.
 - The tag is IMMUTABLE once pushed — never retag. If something is wrong,
   make a new patch release.
