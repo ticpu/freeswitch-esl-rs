@@ -1,5 +1,7 @@
 //! Typed mod_sofia / SIP channel variable names.
 
+use sip_header::SipHeader;
+
 sip_header::define_header_enum! {
     tests_mod: sofia_variable_generated_tests,
     error_type: ParseSofiaVariableError => "unknown sofia variable",
@@ -163,6 +165,170 @@ sip_header::define_header_enum! {
 
         // --- SIP Body ---
         SipMultipart => "sip_multipart",
+    }
+}
+
+/// Relationship between a [`SofiaVariable`] and the SIP header behind it.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CarriedHeader {
+    /// The variable holds the header's field-value verbatim.
+    Verbatim(SipHeader),
+    /// The variable holds a field mod_sofia parsed out of the header. Lossy: the
+    /// header is the source of truth and the parts cannot rebuild it.
+    Derived(SipHeader),
+}
+
+impl SofiaVariable {
+    /// The SIP header this variable's value came from, if any.
+    ///
+    /// `None` covers everything carrying no header field-value: switch-side config
+    /// and knobs, transport addresses, the Request-URI, values computed rather than
+    /// read off the wire, and values the caller sets for mod_sofia to build a header
+    /// from.
+    ///
+    /// The match is exhaustive by design. A new variant has to be classified here,
+    /// and a catch-all arm would answer `None` for it in silence.
+    pub fn carried_header(&self) -> Option<CarriedHeader> {
+        use CarriedHeader::{Derived, Verbatim};
+        use SipHeader as H;
+
+        match self {
+            Self::SipFromUser
+            | Self::SipFromHost
+            | Self::SipFromPort
+            | Self::SipFromUri
+            | Self::SipFromDisplay
+            | Self::SipFromTag
+            | Self::SipFromComment
+            | Self::SipFromUserStripped => Some(Derived(H::From)),
+            Self::SipFullFrom => Some(Verbatim(H::From)),
+
+            Self::SipToUser
+            | Self::SipToHost
+            | Self::SipToPort
+            | Self::SipToUri
+            | Self::SipToDisplay
+            | Self::SipToTag
+            | Self::SipToComment => Some(Derived(H::To)),
+            Self::SipFullTo => Some(Verbatim(H::To)),
+
+            Self::SipContactUser
+            | Self::SipContactHost
+            | Self::SipContactPort
+            | Self::SipContactUri
+            | Self::SipContactParams => Some(Derived(H::Contact)),
+
+            // The Request-URI is on the request line, not in a header.
+            Self::SipReqUser
+            | Self::SipReqHost
+            | Self::SipReqPort
+            | Self::SipReqUri
+            | Self::SipInviteReqUri => None,
+
+            Self::SipViaHost | Self::SipViaPort | Self::SipViaRport | Self::SipViaProtocol => {
+                Some(Derived(H::Via))
+            }
+            Self::SipFullVia => Some(Verbatim(H::Via)),
+            Self::SipFullRoute => Some(Verbatim(H::Route)),
+
+            Self::SipCallId => Some(Verbatim(H::CallId)),
+            Self::SipCseq => Some(Verbatim(H::Cseq)),
+            // Falls back to Server when the message that carried it was a response.
+            Self::SipUserAgent => Some(Verbatim(H::UserAgent)),
+            Self::SipSubject => Some(Verbatim(H::Subject)),
+            Self::SipAllow => Some(Verbatim(H::Allow)),
+            // Only the first entry of the list.
+            Self::SipAcceptLanguage => Some(Derived(H::AcceptLanguage)),
+            Self::SipCallInfo => Some(Verbatim(H::CallInfo)),
+            Self::SipDateEpochTime => Some(Derived(H::Date)),
+
+            Self::SipReceivedIp
+            | Self::SipReceivedPort
+            | Self::SipNetworkIp
+            | Self::SipNetworkPort
+            | Self::SipNatDetected
+            | Self::SipTransport
+            | Self::SipReplyHost => None,
+
+            Self::SipAuthUsername
+            | Self::SipAuthPassword
+            | Self::SipAuthorized
+            | Self::SipAclAuthedBy
+            | Self::SipAclToken
+            | Self::SipChallengeRealm => None,
+
+            Self::SipInviteFailureStatus
+            | Self::SipInviteFailurePhrase
+            | Self::SipHangupDisposition
+            | Self::SipTermStatus
+            | Self::SipTermCause => None,
+            Self::SipReason => Some(Verbatim(H::Reason)),
+
+            Self::SipPAssertedIdentity => Some(Verbatim(H::PAssertedIdentity)),
+            Self::SipPPreferredIdentity => Some(Verbatim(H::PPreferredIdentity)),
+            Self::SipPrivacy => Some(Verbatim(H::Privacy)),
+            Self::SipRemotePartyId => Some(Verbatim(H::RemotePartyId)),
+            // A verification verdict and the attestation level asked of us, neither
+            // of them a field of the Identity header they concern.
+            Self::SipStirShakenAttest | Self::SipVerstat | Self::SipVerstatDetailed => None,
+
+            Self::SipInviteCallId => Some(Verbatim(H::CallId)),
+            Self::SipInviteCseq => Some(Verbatim(H::Cseq)),
+            Self::SipInviteFullFrom => Some(Verbatim(H::From)),
+            Self::SipInviteFullTo => Some(Verbatim(H::To)),
+            Self::SipInviteFullVia => Some(Verbatim(H::Via)),
+            Self::SipInviteFromUri => Some(Derived(H::From)),
+            Self::SipInviteToUri => Some(Derived(H::To)),
+            Self::SipInviteRecordRoute => Some(Verbatim(H::RecordRoute)),
+            Self::SipInviteRouteUri => Some(Derived(H::Route)),
+            Self::SipInviteDomain | Self::SipInviteParams => None,
+
+            Self::SipAutoAnswer
+            | Self::SipAutoSimplify
+            | Self::SipEnableSoa
+            | Self::SipCopyCustomHeaders
+            | Self::SipCopyMultipart
+            | Self::SipLoopedCall => None,
+
+            Self::SipRedirectedTo => Some(Verbatim(H::Contact)),
+            Self::SipRedirectedBy => Some(Verbatim(H::Diversion)),
+            Self::SipReferredByFull => Some(Verbatim(H::ReferredBy)),
+            Self::SipReferredByCid => Some(Derived(H::ReferredBy)),
+            Self::SipRedirectDialstring
+            | Self::SipReferReply
+            | Self::SipReferStatusCode
+            | Self::SipReinviteSdp => None,
+
+            Self::SipGateway
+            | Self::SipGatewayName
+            | Self::SipUseGateway
+            | Self::SipDestinationUrl
+            | Self::SipProfileName
+            | Self::SofiaProfileName
+            | Self::SofiaProfileUrl
+            | Self::SofiaProfileDomainName => None,
+
+            Self::RtpSecureMediaConfirmed
+            | Self::Rtp2833SendPayload
+            | Self::Rtp2833RecvPayload
+            | Self::RtpDisableHold
+            | Self::RtpJitterBufferPlc
+            | Self::RtpVideoMaxBandwidthIn
+            | Self::RtpVideoMaxBandwidthOut => None,
+
+            // Caller-supplied identity mod_sofia builds an outbound header from; which
+            // header depends on sip_cid_type, so none of them carries one.
+            Self::SipCalleeIdName | Self::SipCalleeIdNumber | Self::SipCidType => None,
+
+            // P-RTP-Stat has no SipHeader variant to name.
+            Self::SipRtpRxstat | Self::SipRtpTxstat | Self::SipPRtpStat => None,
+
+            Self::SipHistoryInfo => Some(Verbatim(H::HistoryInfo)),
+            Self::SipGeolocation => Some(Verbatim(H::Geolocation)),
+
+            Self::SipMultipart => None,
+        }
     }
 }
 
