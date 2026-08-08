@@ -206,4 +206,63 @@ mod tests {
         let err = "nonexistent_sip_var".parse::<SofiaVariable>();
         assert!(err.is_err());
     }
+
+    #[test]
+    fn carried_header_verbatim() {
+        assert_eq!(
+            SofiaVariable::SipPrivacy.carried_header(),
+            Some(CarriedHeader::Verbatim(SipHeader::Privacy))
+        );
+        assert_eq!(
+            SofiaVariable::SipPAssertedIdentity.carried_header(),
+            Some(CarriedHeader::Verbatim(SipHeader::PAssertedIdentity))
+        );
+        assert_eq!(
+            SofiaVariable::SipRemotePartyId.carried_header(),
+            Some(CarriedHeader::Verbatim(SipHeader::RemotePartyId))
+        );
+        assert_eq!(
+            SofiaVariable::SipFullFrom.carried_header(),
+            Some(CarriedHeader::Verbatim(SipHeader::From))
+        );
+    }
+
+    #[test]
+    fn carried_header_derived() {
+        assert_eq!(
+            SofiaVariable::SipFromUser.carried_header(),
+            Some(CarriedHeader::Derived(SipHeader::From))
+        );
+    }
+
+    #[test]
+    fn carried_header_none() {
+        // The Request-URI is not a header, and a gateway name is switch config.
+        assert_eq!(SofiaVariable::SipReqUri.carried_header(), None);
+        assert_eq!(SofiaVariable::SipGateway.carried_header(), None);
+    }
+
+    /// A wire name that already spells the header keeps its exact canonical
+    /// casing, so any typo in either table shows up as a mismatch here.
+    #[test]
+    fn hyphenated_wire_names_match_their_header() {
+        for var in SofiaVariable::ALL {
+            let Some(suffix) = var
+                .as_str()
+                .strip_prefix("sip_")
+            else {
+                continue;
+            };
+            if !suffix.contains('-') {
+                continue;
+            }
+            let Some(carried) = var.carried_header() else {
+                panic!("{} spells a header but carries none", var.as_str());
+            };
+            let CarriedHeader::Verbatim(header) = carried else {
+                panic!("{} spells a header but is not verbatim", var.as_str());
+            };
+            assert_eq!(header.as_str(), suffix, "for {}", var.as_str());
+        }
+    }
 }
