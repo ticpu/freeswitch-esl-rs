@@ -39,8 +39,7 @@ named constructors) **only when something outside the crate has to build one** �
 a test fixture, an example, or a downstream app with a legitimate reason to
 construct the value. Types that only ever come out of a parser or a wire decode
 need none; add one when a caller actually asks. Optional fields use builder
-methods (`with_foo()`). **Always run `cargo build --examples`** after adding
-or modifying public structs to verify external construction still works.
+methods (`with_foo()`).
 
 ## SIP Modules Are Protocol-Agnostic
 
@@ -120,26 +119,29 @@ Run `grep -r OldTypeName --include='*.{rs,md,toml,sh}'` to catch stragglers.
 
 ## Build & Test Workflow
 
-**Always run `cargo fmt` before every commit.** The pre-commit hook enforces
-formatting, clippy warnings, all tests (including doctests), `-D missing_docs`
-doc coverage, and EslEventType sync with C ESL.
+The pre-commit hook is the gate: fmt, clippy over `--workspace --all-features
+--all-targets` (examples included), `-D missing_docs` and broken intra-doc
+links, the full test suite with doctests, and the enum/source-ref sync checks.
+Do not re-run any of those separately — a failing hook rejects the commit and
+prints the same thing.
+
+Run before committing:
+
+```sh
+cargo clippy --workspace --all-features --fix --allow-dirty --message-format=short
+cargo fmt --all
+cargo check -p freeswitch-types --no-default-features --message-format=short
+```
+
+The first two fix rather than check. The third is the one build the hook never
+does: it is `--all-features` throughout, so an item that should sit behind
+`#[cfg(feature = "sdp")]` or `"conference-info"` and does not passes every hook
+stage and breaks only for a consumer on the default feature set.
 
 **When adding new `EslEventType` variants**, check whether they belong in any
 of the event group constants (`CHANNEL_EVENTS`, `MEDIA_EVENTS`,
 `PRESENCE_EVENTS`, `SYSTEM_EVENTS`, `CONFERENCE_EVENTS`) in
 `freeswitch-types/src/event.rs` and update them accordingly.
-
-`sdp` and `conference-info` are not default features, so anything without
-`--all-features` compiles, lints and tests a subset of the workspace — a green
-run there says nothing about those modules.
-
-```sh
-cargo fmt --all
-cargo check -p freeswitch-types --no-default-features --message-format=short
-cargo check --workspace --all-features --message-format=short
-cargo clippy --workspace --all-features --fix --allow-dirty --message-format=short
-cargo test --workspace --all-features --lib
-```
 
 When FreeSWITCH ESL is available on `127.0.0.1:8022`, also run live tests:
 `ss -tlnp sport = :8022` to check, then `cargo test --test live_freeswitch -- --ignored`.
