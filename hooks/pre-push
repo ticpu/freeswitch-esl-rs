@@ -1,0 +1,26 @@
+#!/bin/bash
+# Pre-push hook: keep Cargo.lock off pushed branches.
+#
+# Backstop to the pre-commit check, which only sees the commit being made.
+# A rebase, a cherry-pick, or an amended history can still carry the lock onto
+# a branch tip; tags are exempt because the release tag is where it belongs.
+
+set -e
+
+ZERO="$(git hash-object --stdin </dev/null | tr '[:xdigit:]' 0)"
+
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+	case "$local_ref" in
+	refs/heads/*) ;;
+	*) continue ;;
+	esac
+	[ "$local_sha" = "$ZERO" ] && continue
+
+	if [ -n "$(git ls-tree --name-only "$local_sha" -- Cargo.lock)" ]; then
+		echo "${local_ref#refs/heads/} tracks Cargo.lock at $local_sha."
+		echo "The lock belongs only on the release tag's own commit, never on a branch."
+		exit 1
+	fi
+done
+
+exit 0
