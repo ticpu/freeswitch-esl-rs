@@ -660,6 +660,23 @@ trying `SipHeader::from_str` on the re-hyphenated suffix. For unknown
 headers the reversal is lossy — original casing is lost — but this is
 inherent to FreeSWITCH's wire format, not a library limitation.
 
+## A channel variable names the SIP header behind it, exhaustively
+
+The mapping from a mod_sofia channel variable to the SIP header it came from is
+curated here rather than derived from the variable's wire name: the wire spelling
+is inconsistent about preserving the header's casing, and many variables hold a
+field parsed out of a header rather than the header. A consumer cannot compute it,
+so every consumer keeping its own table has a catch-all where a row is missing.
+
+The match answering it takes no catch-all arm, so a new variable fails this crate's
+build until someone classifies it. The absence is the point rather than an
+oversight: adding the arm restores that same silent omission a layer down.
+
+A variable holding a parsed-out field answers with the header it came from, marked
+as derived. Answering nothing hands the table back to the caller for precisely the
+variables carrying subscriber identity, and answering unmarked asserts the value is
+the field-value, which a caller redacting or rewriting headers acts on.
+
 ## Salvage rather than fail on truncated userauth
 
 FreeSWITCH `mod_event_socket.c` truncates long `userauth` replies into a
