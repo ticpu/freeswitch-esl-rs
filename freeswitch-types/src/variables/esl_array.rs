@@ -142,6 +142,20 @@ impl fmt::Display for EslArray {
 mod tests {
     use super::*;
 
+    /// Callers scanning prose for an embedded array need the marker without
+    /// hardcoding it.
+    #[test]
+    fn prefix_is_the_wire_marker() {
+        assert_eq!(EslArray::PREFIX, "ARRAY::");
+        let input = format!("{}one|:two", EslArray::PREFIX);
+        assert_eq!(
+            EslArray::parse(&input)
+                .unwrap()
+                .items(),
+            &["one", "two"]
+        );
+    }
+
     #[test]
     fn parse_single_item() {
         let arr = EslArray::parse("ARRAY::hello").unwrap();
