@@ -1,4 +1,4 @@
-use super::EslArray;
+use super::{EslArray, EslArrayError};
 
 /// A single part from a SIP multipart body
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +37,7 @@ impl MultipartBody {
     pub fn parse(s: &str) -> Result<Option<Self>, String> {
         let array = match EslArray::parse(s) {
             Ok(a) => a,
-            Err(super::EslArrayError::MissingPrefix) => return Ok(None),
+            Err(EslArrayError::MissingPrefix) => return Ok(None),
             Err(e) => return Err(e.to_string()),
         };
         let mut items = Vec::with_capacity(
@@ -45,11 +45,21 @@ impl MultipartBody {
                 .items()
                 .len(),
         );
-        for entry in array.items() {
+        for (index, entry) in array
+            .items()
+            .iter()
+            .enumerate()
+        {
+            // A multipart body carries subscriber data, so the rejection names
+            // where the entry was and how long it was, never what it held.
             let (mime_type, data) = entry
                 .split_once(':')
                 .ok_or_else(|| {
-                    format!("malformed multipart ARRAY entry (missing ':'): {}", entry)
+                    format!(
+                        "malformed multipart entry {index} ({} bytes): \
+                         no ':' between MIME type and body",
+                        entry.len()
+                    )
                 })?;
             items.push(MultipartItem {
                 mime_type: mime_type.to_string(),
@@ -155,10 +165,21 @@ mod tests {
             .is_none());
     }
 
+    /// A multipart body carries subscriber data, so a rejection names where it
+    /// was and how long it was, never what it held.
     #[test]
-    fn malformed_entry_is_error() {
-        let input = "ARRAY::application/sdp:v=0|:no-colon-here|:text/plain:ok";
-        let err = MultipartBody::parse(input).unwrap_err();
-        assert!(err.contains("no-colon-here"));
+    fn malformed_entry_error_names_position_not_content() {
+        let input = "ARRAY::application/sdp:v=0|:123 Example St|:text/plain:ok";
+        let msg = MultipartBody::parse(input)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !msg.contains("123 Example St"),
+            "error quoted its input: {msg}"
+        );
+        assert!(
+            msg.contains("entry 1"),
+            "error does not name the entry: {msg}"
+        );
     }
 }
