@@ -43,6 +43,9 @@ impl std::error::Error for EslArrayError {}
 pub struct EslArray(Vec<String>);
 
 impl EslArray {
+    /// Wire marker every `ARRAY::` value starts with.
+    pub const PREFIX: &'static str = ARRAY_HEADER;
+
     /// Parse an `ARRAY::` formatted string.
     ///
     /// Returns [`EslArrayError::MissingPrefix`] if the prefix is absent, or
