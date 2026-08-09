@@ -167,8 +167,9 @@ typed state on demand without going through `EslEvent`.
 
 Parsing channel state, timetable timestamps, and header names returns `Result`
 or typed errors — never `.ok()` collapsing that hides parse failures.
-`ParseTimetableError` includes the header name and unparseable value so callers
-can diagnose protocol issues. This follows the crate's correctness-over-recovery
+`ParseTimetableError` carries the header name and the unparseable value for the
+caller to diagnose with, the value as data rather than as message text. This
+follows the crate's correctness-over-recovery
 philosophy: if FreeSWITCH sends an unparseable timestamp, that's a signal, not
 something to silently ignore.
 
@@ -318,10 +319,10 @@ is the only place where newlines are dangerous.
 The same principle applies to `CommandBuilder::header()` and `body()` —
 they reject newlines in both names and values.
 
-## Credential safety
+## Credentials and wire content in logs
 
-ESL authentication sends passwords in cleartext over TCP. Two protections
-prevent accidental exposure in logs:
+ESL authentication sends passwords in cleartext over TCP, and the parsers here
+read subscriber data off it. Three protections keep both out of logs:
 
 1. **Manual `Debug` on `EslCommand`** — the derived `Debug` would print
    `Auth { password: "ClueCon" }` in any debug log. The manual impl redacts
@@ -331,9 +332,16 @@ prevent accidental exposure in logs:
    `redact_wire()` which replaces the password in `auth` and `userauth`
    commands and strips the `\n\n` terminator for cleaner output.
 
+3. **Errors name their input, never quote it** — a parse error's `Display`
+   renders the shape of what it rejected: a field name, an entry index, a byte
+   length. The bytes stay on a public field for a caller that decides to print
+   them. Interpolated, they reach every line a consumer logs from `{e}`, around
+   the redaction it applies to that same value on its own path. A codec string
+   the caller wrote is the exception.
+
 These exist because production ESL daemons run with debug logging enabled
-during incident investigation. A sysadmin grepping logs should not find
-ESL passwords.
+during incident investigation. A sysadmin grepping logs should not find an ESL
+password or a caller's number.
 
 ## Sequential command serialization
 
@@ -675,7 +683,9 @@ oversight: adding the arm restores that same silent omission a layer down.
 A variable holding a parsed-out field answers with the header it came from, marked
 as derived. Answering nothing hands the table back to the caller for precisely the
 variables carrying subscriber identity, and answering unmarked asserts the value is
-the field-value, which a caller redacting or rewriting headers acts on.
+the field-value, which a caller redacting or rewriting headers acts on. Where the
+switch fills a variable from whichever of several headers carried the value, the
+answer names those candidates rather than collapsing to nothing.
 
 ## Salvage rather than fail on truncated userauth
 
