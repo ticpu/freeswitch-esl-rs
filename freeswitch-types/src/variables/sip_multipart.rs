@@ -197,6 +197,28 @@ mod tests {
     }
 
     #[test]
+    fn media_type_strips_parameters() {
+        let item = MultipartItem::new("application/sdp;charset=utf-8", "v=0");
+        assert_eq!(item.media_type(), "application/sdp");
+        let plain = MultipartItem::new("text/plain", "hello");
+        assert_eq!(plain.media_type(), "text/plain");
+    }
+
+    #[test]
+    fn by_media_type_ignores_parameters_and_case() {
+        let input = "ARRAY::application/sdp;charset=utf-8:v=0|:Application/PIDF+XML:<pidf/>";
+        let body = MultipartBody::parse(input)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(body.by_media_type("application/sdp"), vec!["v=0"]);
+        assert_eq!(body.by_media_type("application/pidf+xml"), vec!["<pidf/>"]);
+        assert!(body
+            .by_mime_type("application/sdp")
+            .is_empty());
+    }
+
+    #[test]
     fn non_array_returns_none() {
         assert!(MultipartBody::parse("not an array")
             .unwrap()
