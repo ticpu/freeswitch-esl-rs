@@ -347,8 +347,10 @@ impl fmt::Display for ParseTimetableError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "invalid timetable value for {}: {:?}",
-            self.header, self.value
+            "invalid timetable value for {} ({} bytes)",
+            self.header,
+            self.value
+                .len()
         )
     }
 }

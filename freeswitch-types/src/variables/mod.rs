@@ -22,7 +22,7 @@ pub use loopback::{
     LoopbackHangupCause, LoopbackResignation, LoopbackVariable, ParseLoopbackHangupCauseError,
     ParseLoopbackVariableError,
 };
-pub use sip_multipart::{MultipartBody, MultipartItem};
+pub use sip_multipart::{MultipartBody, MultipartBodyError, MultipartItem};
 pub use sip_passthrough::{
     InvalidHeaderName, ParseSipPassthroughError, SipHeaderPrefix, SipPassthroughHeader,
 };

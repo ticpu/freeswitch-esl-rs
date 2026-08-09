@@ -1,4 +1,47 @@
-use super::EslArray;
+use super::{EslArray, EslArrayError};
+use std::fmt;
+
+/// Errors from [`MultipartBody::parse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MultipartBodyError {
+    /// The `ARRAY::` wrapper could not be parsed.
+    Array(EslArrayError),
+    /// An entry had no `:` between its MIME type and its body.
+    MissingSeparator {
+        /// Zero-based position of the entry within the ARRAY.
+        index: usize,
+        /// Byte length of the entry.
+        len: usize,
+    },
+}
+
+impl fmt::Display for MultipartBodyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Array(e) => write!(f, "{e}"),
+            Self::MissingSeparator { index, len } => write!(
+                f,
+                "malformed multipart entry {index} ({len} bytes): no ':' between MIME type and body"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MultipartBodyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Array(e) => Some(e),
+            Self::MissingSeparator { .. } => None,
+        }
+    }
+}
+
+impl From<EslArrayError> for MultipartBodyError {
+    fn from(e: EslArrayError) -> Self {
+        Self::Array(e)
+    }
+}
 
 /// A single part from a SIP multipart body
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,22 +77,27 @@ impl MultipartBody {
     /// Returns `Ok(None)` if the input is not `ARRAY::` formatted.
     /// Returns `Err` if an ARRAY entry is malformed (missing `:`
     /// separator between MIME type and body).
-    pub fn parse(s: &str) -> Result<Option<Self>, String> {
+    pub fn parse(s: &str) -> Result<Option<Self>, MultipartBodyError> {
         let array = match EslArray::parse(s) {
             Ok(a) => a,
-            Err(super::EslArrayError::MissingPrefix) => return Ok(None),
-            Err(e) => return Err(e.to_string()),
+            Err(EslArrayError::MissingPrefix) => return Ok(None),
+            Err(e) => return Err(e.into()),
         };
         let mut items = Vec::with_capacity(
             array
                 .items()
                 .len(),
         );
-        for entry in array.items() {
+        for (index, entry) in array
+            .items()
+            .iter()
+            .enumerate()
+        {
             let (mime_type, data) = entry
                 .split_once(':')
-                .ok_or_else(|| {
-                    format!("malformed multipart ARRAY entry (missing ':'): {}", entry)
+                .ok_or(MultipartBodyError::MissingSeparator {
+                    index,
+                    len: entry.len(),
                 })?;
             items.push(MultipartItem {
                 mime_type: mime_type.to_string(),

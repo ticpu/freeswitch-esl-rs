@@ -233,10 +233,10 @@ impl FromStr for Variables {
             (b'{', b'}') => (VariablesType::Default, &s[1..s.len() - 1]),
             (b'<', b'>') => (VariablesType::Enterprise, &s[1..s.len() - 1]),
             (b'[', b']') => (VariablesType::Channel, &s[1..s.len() - 1]),
-            _ => {
+            (open, close) => {
                 return Err(OriginateError::ParseError(format!(
-                    "unknown variable delimiters: {}",
-                    s
+                    "unknown variable delimiters: {:?}..{:?}",
+                    open as char, close as char
                 )));
             }
         };
@@ -258,21 +258,27 @@ impl FromStr for Variables {
                 }
                 let var_str = &rest[sep.len_utf8()..];
                 if !var_str.is_empty() {
-                    for part in var_str.split(sep) {
+                    for (i, part) in var_str
+                        .split(sep)
+                        .enumerate()
+                    {
                         let (key, value) = part
                             .split_once('=')
                             .ok_or_else(|| {
-                                OriginateError::ParseError(format!("missing = in variable: {part}"))
+                                OriginateError::ParseError(format!("missing = in variable {i}"))
                             })?;
                         inner.insert(key.to_string(), value.to_string());
                     }
                 }
             } else {
-                for part in split_unescaped_commas(inner_str) {
+                for (i, part) in split_unescaped_commas(inner_str)
+                    .into_iter()
+                    .enumerate()
+                {
                     let (key, value) = part
                         .split_once('=')
                         .ok_or_else(|| {
-                            OriginateError::ParseError(format!("missing = in variable: {part}"))
+                            OriginateError::ParseError(format!("missing = in variable {i}"))
                         })?;
                     inner.insert(key.to_string(), unescape_value(value));
                 }

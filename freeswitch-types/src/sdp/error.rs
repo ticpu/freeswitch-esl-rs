@@ -49,12 +49,18 @@ impl fmt::Display for SdpCodecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ParseFailure { message, .. } => write!(f, "SDP parse failure: {message}"),
-            Self::MalformedRtpmap(raw) => write!(f, "malformed a=rtpmap: {raw:?}"),
+            Self::MalformedRtpmap(raw) => {
+                write!(f, "malformed a=rtpmap ({} bytes)", raw.len())
+            }
             Self::NonNumericPayloadType(raw) => {
-                write!(f, "non-numeric payload type in m= format list: {raw:?}")
+                write!(
+                    f,
+                    "non-numeric payload type in m= format list ({} bytes)",
+                    raw.len()
+                )
             }
             Self::MalformedFmtp(raw) => {
-                write!(f, "malformed a=fmtp: {raw:?}")
+                write!(f, "malformed a=fmtp ({} bytes)", raw.len())
             }
         }
     }
