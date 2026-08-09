@@ -62,6 +62,18 @@ impl MultipartItem {
             data: data.into(),
         }
     }
+
+    /// The type and subtype alone, with any MIME parameters stripped.
+    pub fn media_type(&self) -> &str {
+        match self
+            .mime_type
+            .find(';')
+        {
+            Some(i) => &self.mime_type[..i],
+            None => &self.mime_type,
+        }
+        .trim()
+    }
 }
 
 /// Parses `variable_sip_multipart` ARRAY:: format.
@@ -124,11 +136,29 @@ impl MultipartBody {
             .is_empty()
     }
 
-    /// Collect body data for all parts matching the given MIME type.
+    /// Collect body data for all parts whose MIME type matches exactly,
+    /// parameters included. Use [`by_media_type`](Self::by_media_type) to match
+    /// `application/sdp` against a part typed `application/sdp;charset=utf-8`.
     pub fn by_mime_type(&self, mime: &str) -> Vec<&str> {
         self.0
             .iter()
             .filter(|item| item.mime_type == mime)
+            .map(|item| {
+                item.data
+                    .as_str()
+            })
+            .collect()
+    }
+
+    /// Collect body data for all parts with the given media type, ignoring MIME
+    /// parameters and case.
+    pub fn by_media_type(&self, media: &str) -> Vec<&str> {
+        self.0
+            .iter()
+            .filter(|item| {
+                item.media_type()
+                    .eq_ignore_ascii_case(media)
+            })
             .map(|item| {
                 item.data
                     .as_str()
