@@ -402,6 +402,77 @@ mod tests {
     }
 
     #[test]
+    fn recovery_and_outbound_contact_are_verbatim() {
+        assert_eq!(
+            SofiaVariable::SipRecoverVia.carried_header(),
+            Some(CarriedHeader::Verbatim(SipHeader::Via))
+        );
+        assert_eq!(
+            SofiaVariable::SipRecoverContact.carried_header(),
+            Some(CarriedHeader::Verbatim(SipHeader::Contact))
+        );
+        assert_eq!(
+            SofiaVariable::SipOutgoingContactUri.carried_header(),
+            Some(CarriedHeader::Verbatim(SipHeader::Contact))
+        );
+    }
+
+    #[test]
+    fn parsed_sub_fields_are_derived() {
+        assert_eq!(
+            SofiaVariable::SipFromParams.carried_header(),
+            Some(CarriedHeader::Derived(SipHeader::From))
+        );
+        assert_eq!(
+            SofiaVariable::SipToParams.carried_header(),
+            Some(CarriedHeader::Derived(SipHeader::To))
+        );
+        assert_eq!(
+            SofiaVariable::SipReferredByParams.carried_header(),
+            Some(CarriedHeader::Derived(SipHeader::ReferredBy))
+        );
+        assert_eq!(
+            SofiaVariable::SipAcceptLanguageCount.carried_header(),
+            Some(CarriedHeader::Derived(SipHeader::AcceptLanguage))
+        );
+    }
+
+    /// mod_sofia fills these from whichever of several headers was present, so
+    /// neither a single header nor `None` is a true answer.
+    #[test]
+    fn runtime_chosen_source_names_the_candidates() {
+        assert_eq!(
+            SofiaVariable::SipNameParams.carried_header(),
+            Some(CarriedHeader::DerivedOneOf(&[
+                SipHeader::From,
+                SipHeader::PAssertedIdentity,
+                SipHeader::PPreferredIdentity,
+                SipHeader::RemotePartyId,
+            ]))
+        );
+        assert_eq!(
+            SofiaVariable::SipAuthRealm.carried_header(),
+            Some(CarriedHeader::DerivedOneOf(&[
+                SipHeader::Authorization,
+                SipHeader::ProxyAuthorization,
+            ]))
+        );
+    }
+
+    #[test]
+    fn switch_side_variables_carry_no_header() {
+        for var in [
+            SofiaVariable::SipInviteStamp,
+            SofiaVariable::SipReplyPort,
+            SofiaVariable::SipLocalNetworkAddr,
+            SofiaVariable::SipNumberAlias,
+            SofiaVariable::SipReqParams,
+        ] {
+            assert_eq!(var.carried_header(), None, "{}", var.as_str());
+        }
+    }
+
+    #[test]
     fn carried_header_none() {
         // The Request-URI is not a header, and a gateway name is switch config.
         assert_eq!(SofiaVariable::SipReqUri.carried_header(), None);
