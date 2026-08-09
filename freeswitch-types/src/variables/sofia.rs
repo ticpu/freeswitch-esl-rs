@@ -165,6 +165,35 @@ sip_header::define_header_enum! {
 
         // --- SIP Body ---
         SipMultipart => "sip_multipart",
+
+        // --- SIP Referred-By ---
+        SipReferredByUser => "sip_referred_by_user",
+        SipReferredByUserStripped => "sip_referred_by_user_stripped",
+        SipReferredByHost => "sip_referred_by_host",
+        SipReferredByPort => "sip_referred_by_port",
+        SipReferredByUri => "sip_referred_by_uri",
+        SipReferredByParams => "sip_referred_by_params",
+
+        // --- Parsed sub-fields ---
+        SipFromParams => "sip_from_params",
+        SipToParams => "sip_to_params",
+        SipReqParams => "sip_req_params",
+        SipNameParams => "sip_name_params",
+        SipAcceptLanguageCount => "sip_accept_language_count",
+
+        // --- Auth / directory ---
+        SipAuthRealm => "sip_auth_realm",
+        SipNumberAlias => "sip_number_alias",
+
+        // --- Recovery / outbound Contact ---
+        SipRecoverVia => "sip_recover_via",
+        SipRecoverContact => "sip_recover_contact",
+        SipOutgoingContactUri => "sip_outgoing_contact_uri",
+
+        // --- Local transport / timing ---
+        SipInviteStamp => "sip_invite_stamp",
+        SipReplyPort => "sip_reply_port",
+        SipLocalNetworkAddr => "sip_local_network_addr",
     }
 }
 
@@ -177,6 +206,9 @@ pub enum CarriedHeader {
     /// The variable holds a field mod_sofia parsed out of the header. Lossy: the
     /// header is the source of truth and the parts cannot rebuild it.
     Derived(SipHeader),
+    /// As [`Derived`](Self::Derived), for a variable mod_sofia fills from whichever
+    /// of these headers the message carried.
+    DerivedOneOf(&'static [SipHeader]),
 }
 
 impl SofiaVariable {
@@ -190,7 +222,7 @@ impl SofiaVariable {
     /// The match is exhaustive by design. A new variant has to be classified here,
     /// and a catch-all arm would answer `None` for it in silence.
     pub fn carried_header(&self) -> Option<CarriedHeader> {
-        use CarriedHeader::{Derived, Verbatim};
+        use CarriedHeader::{Derived, DerivedOneOf, Verbatim};
         use SipHeader as H;
 
         match self {
@@ -201,7 +233,8 @@ impl SofiaVariable {
             | Self::SipFromDisplay
             | Self::SipFromTag
             | Self::SipFromComment
-            | Self::SipFromUserStripped => Some(Derived(H::From)),
+            | Self::SipFromUserStripped
+            | Self::SipFromParams => Some(Derived(H::From)),
             Self::SipFullFrom => Some(Verbatim(H::From)),
 
             Self::SipToUser
@@ -210,7 +243,8 @@ impl SofiaVariable {
             | Self::SipToUri
             | Self::SipToDisplay
             | Self::SipToTag
-            | Self::SipToComment => Some(Derived(H::To)),
+            | Self::SipToComment
+            | Self::SipToParams => Some(Derived(H::To)),
             Self::SipFullTo => Some(Verbatim(H::To)),
 
             Self::SipContactUser
@@ -224,12 +258,13 @@ impl SofiaVariable {
             | Self::SipReqHost
             | Self::SipReqPort
             | Self::SipReqUri
+            | Self::SipReqParams
             | Self::SipInviteReqUri => None,
 
             Self::SipViaHost | Self::SipViaPort | Self::SipViaRport | Self::SipViaProtocol => {
                 Some(Derived(H::Via))
             }
-            Self::SipFullVia => Some(Verbatim(H::Via)),
+            Self::SipFullVia | Self::SipRecoverVia => Some(Verbatim(H::Via)),
             Self::SipFullRoute => Some(Verbatim(H::Route)),
 
             Self::SipCallId => Some(Verbatim(H::CallId)),
@@ -239,7 +274,9 @@ impl SofiaVariable {
             Self::SipSubject => Some(Verbatim(H::Subject)),
             Self::SipAllow => Some(Verbatim(H::Allow)),
             // Only the first entry of the list.
-            Self::SipAcceptLanguage => Some(Derived(H::AcceptLanguage)),
+            Self::SipAcceptLanguage | Self::SipAcceptLanguageCount => {
+                Some(Derived(H::AcceptLanguage))
+            }
             Self::SipCallInfo => Some(Verbatim(H::CallInfo)),
             Self::SipDateEpochTime => Some(Derived(H::Date)),
 
@@ -249,14 +286,18 @@ impl SofiaVariable {
             | Self::SipNetworkPort
             | Self::SipNatDetected
             | Self::SipTransport
-            | Self::SipReplyHost => None,
+            | Self::SipReplyHost
+            | Self::SipReplyPort
+            | Self::SipLocalNetworkAddr => None,
 
             Self::SipAuthUsername
             | Self::SipAuthPassword
             | Self::SipAuthorized
             | Self::SipAclAuthedBy
             | Self::SipAclToken
-            | Self::SipChallengeRealm => None,
+            | Self::SipChallengeRealm
+            | Self::SipNumberAlias => None,
+            Self::SipAuthRealm => Some(DerivedOneOf(&[H::Authorization, H::ProxyAuthorization])),
 
             Self::SipInviteFailureStatus
             | Self::SipInviteFailurePhrase
@@ -282,7 +323,7 @@ impl SofiaVariable {
             Self::SipInviteToUri => Some(Derived(H::To)),
             Self::SipInviteRecordRoute => Some(Verbatim(H::RecordRoute)),
             Self::SipInviteRouteUri => Some(Derived(H::Route)),
-            Self::SipInviteDomain | Self::SipInviteParams => None,
+            Self::SipInviteDomain | Self::SipInviteParams | Self::SipInviteStamp => None,
 
             Self::SipAutoAnswer
             | Self::SipAutoSimplify
@@ -291,10 +332,26 @@ impl SofiaVariable {
             | Self::SipCopyMultipart
             | Self::SipLoopedCall => None,
 
-            Self::SipRedirectedTo => Some(Verbatim(H::Contact)),
+            Self::SipRedirectedTo | Self::SipRecoverContact | Self::SipOutgoingContactUri => {
+                Some(Verbatim(H::Contact))
+            }
             Self::SipRedirectedBy => Some(Verbatim(H::Diversion)),
             Self::SipReferredByFull => Some(Verbatim(H::ReferredBy)),
-            Self::SipReferredByCid => Some(Derived(H::ReferredBy)),
+            Self::SipReferredByCid
+            | Self::SipReferredByUser
+            | Self::SipReferredByUserStripped
+            | Self::SipReferredByHost
+            | Self::SipReferredByPort
+            | Self::SipReferredByUri
+            | Self::SipReferredByParams => Some(Derived(H::ReferredBy)),
+            // The user part comes from whichever identity header mod_sofia resolved
+            // the caller from.
+            Self::SipNameParams => Some(DerivedOneOf(&[
+                H::From,
+                H::PAssertedIdentity,
+                H::PPreferredIdentity,
+                H::RemotePartyId,
+            ])),
             Self::SipRedirectDialstring
             | Self::SipReferReply
             | Self::SipReferStatusCode
