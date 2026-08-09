@@ -470,7 +470,12 @@ mod tests {
         let e = SdpCodecError::MalformedRtpmap("opus/abc/2".into());
         let msg = e.to_string();
         assert!(msg.contains("malformed a=rtpmap"));
-        assert!(msg.contains("opus/abc/2"));
+        assert!(!msg.contains("opus/abc/2"), "error quoted its input: {msg}");
+        assert!(msg.contains("10 bytes"), "{msg}");
+        let SdpCodecError::MalformedRtpmap(raw) = &e else {
+            panic!("wrong variant");
+        };
+        assert_eq!(raw, "opus/abc/2");
     }
 
     #[test]
@@ -478,7 +483,8 @@ mod tests {
         let e = SdpCodecError::NonNumericPayloadType("abc".into());
         let msg = e.to_string();
         assert!(msg.contains("non-numeric payload type"));
-        assert!(msg.contains("abc"));
+        assert!(!msg.contains("abc"), "error quoted its input: {msg}");
+        assert!(msg.contains("3 bytes"), "{msg}");
     }
 
     #[test]
@@ -492,7 +498,8 @@ mod tests {
         let e = SdpCodecError::MalformedFmtp("x minptime=10".into());
         let msg = e.to_string();
         assert!(msg.contains("malformed a=fmtp"));
-        assert!(msg.contains("x minptime=10"));
+        assert!(!msg.contains("minptime"), "error quoted its input: {msg}");
+        assert!(msg.contains("13 bytes"), "{msg}");
     }
 
     // --- CodecStringError ---

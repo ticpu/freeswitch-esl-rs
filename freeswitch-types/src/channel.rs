@@ -467,6 +467,15 @@ mod tests {
     //     on the wire_enum! invocation above). ---
 
     #[test]
+    fn timetable_error_display_omits_the_value() {
+        let err = ParseTimetableError::new("Caller-Channel-Created-Time", "5551234567");
+        let msg = err.to_string();
+        assert!(!msg.contains("5551234567"), "error quoted its input: {msg}");
+        assert!(msg.contains("Caller-Channel-Created-Time"), "{msg}");
+        assert_eq!(err.value, "5551234567");
+    }
+
+    #[test]
     fn test_channel_state_from_number() {
         assert_eq!(ChannelState::from_number(0), Some(ChannelState::CsNew));
         assert_eq!(ChannelState::from_number(4), Some(ChannelState::CsExecute));

@@ -155,10 +155,21 @@ mod tests {
             .is_none());
     }
 
+    /// A part with no `:` is often a civic address or an SDP body, so the error
+    /// names where it was and how long it was, never what it held.
     #[test]
-    fn malformed_entry_is_error() {
-        let input = "ARRAY::application/sdp:v=0|:no-colon-here|:text/plain:ok";
-        let err = MultipartBody::parse(input).unwrap_err();
-        assert!(err.contains("no-colon-here"));
+    fn malformed_entry_error_names_position_not_content() {
+        let input = "ARRAY::application/sdp:v=0|:123 Example St|:text/plain:ok";
+        let msg = MultipartBody::parse(input)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !msg.contains("123 Example St"),
+            "error quoted its input: {msg}"
+        );
+        assert!(
+            msg.contains("entry 1"),
+            "error does not name the entry: {msg}"
+        );
     }
 }

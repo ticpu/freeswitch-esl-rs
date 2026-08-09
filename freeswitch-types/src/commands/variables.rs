@@ -315,6 +315,36 @@ pub(super) fn split_unescaped_commas(s: &str) -> Vec<&str> {
 mod tests {
     use super::*;
 
+    /// A variable block holds dialled numbers and passthrough header values, so a
+    /// malformed part is reported by position.
+    #[test]
+    fn missing_equals_error_omits_the_fragment() {
+        let msg = "{origination_caller_id_number=15551234567,15550009999}"
+            .parse::<Variables>()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !msg.contains("15550009999"),
+            "error quoted its input: {msg}"
+        );
+        assert!(
+            msg.contains("variable 1"),
+            "error does not name the part: {msg}"
+        );
+    }
+
+    #[test]
+    fn unknown_delimiters_error_omits_the_block() {
+        let msg = "(origination_caller_id_number=15551234567)"
+            .parse::<Variables>()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !msg.contains("15551234567"),
+            "error quoted its input: {msg}"
+        );
+    }
+
     #[test]
     fn variables_standard_chars() {
         let mut vars = Variables::new(VariablesType::Default);
