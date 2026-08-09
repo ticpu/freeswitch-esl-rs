@@ -635,9 +635,9 @@ impl EslParser {
         let mut in_headers = false;
         let mut current_tag: Option<String> = None;
         let mut in_body = false;
-        // Accumulator for text content: quick-xml 0.39 splits text around
-        // entity references (e.g. "Smith &amp; Jones" becomes Text, GeneralRef,
-        // Text), so we must accumulate fragments and flush on End tags.
+        // quick-xml splits text around entity references ("Smith &amp; Jones"
+        // arrives as Text, GeneralRef, Text), so fragments accumulate here and
+        // flush on the End tag.
         let mut text_buf = String::new();
 
         loop {
