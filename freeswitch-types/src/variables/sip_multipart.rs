@@ -234,6 +234,27 @@ mod tests {
         assert_eq!(plain.media_type(), "text/plain");
     }
 
+    /// The wire spells this however the far end felt like, and a consumer that
+    /// also reads the sofia trace parser dispatches on one lowercased value from
+    /// both sides or silently takes a different branch per source.
+    #[test]
+    fn media_type_lowercases() {
+        let item = MultipartItem::new("Application/SDP; charset=utf-8", "v=0");
+        assert_eq!(item.media_type(), "application/sdp");
+        let shouty = MultipartItem::new("APPLICATION/PIDF+XML", "<pidf/>");
+        assert_eq!(shouty.media_type(), "application/pidf+xml");
+    }
+
+    /// The return type exists to avoid allocating on the common path; a plain
+    /// `String` would have been simpler otherwise.
+    #[test]
+    fn media_type_borrows_when_already_normalised() {
+        let item = MultipartItem::new("application/sdp", "v=0");
+        assert!(matches!(item.media_type(), Cow::Borrowed(_)));
+        let upper = MultipartItem::new("Application/SDP", "v=0");
+        assert!(matches!(upper.media_type(), Cow::Owned(_)));
+    }
+
     #[test]
     fn by_media_type_ignores_parameters_and_case() {
         let input = "ARRAY::application/sdp;charset=utf-8:v=0|:Application/PIDF+XML:<pidf/>";
