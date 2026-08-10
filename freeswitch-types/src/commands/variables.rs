@@ -339,6 +339,63 @@ pub(super) fn split_unescaped_commas(s: &str) -> Vec<&str> {
 mod tests {
     use super::*;
 
+    /// Measured against a live switch, with two awkward values in one block —
+    /// a block carrying only one is more forgiving and hides the failure.
+    /// Sweeping the backslash count, each carrier succeeds at counts the other
+    /// fails, so these forms are the wire contract and not a preference.
+    #[test]
+    fn escaping_pins_the_measured_wire_forms() {
+        let cases = [
+            (DialStringCarrier::Dialplan, "it's", r"it\\'s"),
+            (DialStringCarrier::EslApi, "it's", r"it\\\'s"),
+            (DialStringCarrier::Dialplan, r"a\nb", r"a\\\\\\\\nb"),
+            (DialStringCarrier::EslApi, r"a\nb", r"a\\\\\\\\nb"),
+            (DialStringCarrier::Dialplan, "a,b", r"a\,b"),
+            (DialStringCarrier::EslApi, "a,b", r"a\,b"),
+        ];
+        for (carrier, value, want) in cases {
+            assert_eq!(
+                escape_value(value, carrier),
+                want,
+                "{value:?} for {carrier:?}"
+            );
+        }
+    }
+
+    /// The crate exists to drive `api originate`, so a block rendered with no
+    /// carrier named is rendered for that one.
+    #[test]
+    fn display_defaults_to_the_api_carrier() {
+        let mut vars = Variables::new(VariablesType::Default);
+        vars.insert("k", "it's");
+        assert_eq!(vars.to_string(), r"{k=it\\\'s}");
+        assert_eq!(
+            vars.display_for(DialStringCarrier::Dialplan)
+                .to_string(),
+            r"{k=it\\'s}"
+        );
+    }
+
+    #[test]
+    fn round_trips_at_either_carrier() {
+        for carrier in [DialStringCarrier::EslApi, DialStringCarrier::Dialplan] {
+            for value in ["it's", r"a\,b", r"C:\path", "a,b", "with space"] {
+                let mut vars = Variables::new(VariablesType::Default);
+                vars.insert("k", value);
+                vars.insert("after", "sentinel");
+                let rendered = vars
+                    .display_for(carrier)
+                    .to_string();
+
+                let back = Variables::parse_for(&rendered, carrier).unwrap_or_else(|e| {
+                    panic!("{value:?} for {carrier:?} rendered {rendered}: {e}")
+                });
+                assert_eq!(back.get("k"), Some(value), "rendered {rendered}");
+                assert_eq!(back.get("after"), Some("sentinel"), "rendered {rendered}");
+            }
+        }
+    }
+
     /// `split_unescaped_commas` reads a comma behind an even number of
     /// backslashes as a real separator, so a value ending in a backslash has to
     /// be written with its own backslash escaped or the writer contradicts the
