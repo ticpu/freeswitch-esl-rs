@@ -4,10 +4,12 @@
 //! Run with: cargo test --test live_freeswitch -- --ignored
 
 use freeswitch_esl_tokio::commands::originate::{OriginateTarget, Variables, VariablesType};
+use freeswitch_esl_tokio::commands::DialStringCarrier;
 use freeswitch_esl_tokio::commands::{
     LoopbackEndpoint, UuidGetVar, UuidKill, UuidSetVar, UuidTransfer,
 };
 use freeswitch_esl_tokio::variables::LoopbackVariable;
+use freeswitch_esl_tokio::ExecuteOptions;
 use freeswitch_esl_tokio::{
     parse_api_body, Application, ChannelState, ConnectionStatus, DialplanType, DisconnectReason,
     Endpoint, EslClient, EslConnectOptions, EslError, EslEvent, EslEventPriority, EslEventType,
@@ -2502,6 +2504,223 @@ async fn live_outbound_connect_response_preserves_underscored_case() {
     {
         kill_channel(&inbound, &uuid).await;
     }
+
+    drop(permit);
+}
+
+// --- Dial-string escaping, per carrier ---
+
+/// Values whose escaping is not obvious, each paired with a sentinel so a value
+/// that eats its separator shows up as damage to a *later* variable.
+///
+/// Two quoted values, never one: a block carrying a single quote has no partner
+/// for it to pair with and passes under encodings that corrupt a realistic
+/// block. The empty value is absent because no dial string can express it —
+/// `Variables` refuses it at the boundaries that can.
+const ESCAPING_CASES: &[(&str, &[(&str, &str)])] = &[
+    ("plain comma", &[("p1", "a,b"), ("p2", "SENTINEL")]),
+    (
+        "comma and space",
+        &[("p1", "T-1001, urgent"), ("p2", "SENTINEL")],
+    ),
+    (
+        "two quoted values",
+        &[("p1", "it's"), ("p2", "don't"), ("p3", "SENTINEL")],
+    ),
+    (
+        "backslash before an inert character",
+        &[("p1", r"C:\path"), ("p2", "SENTINEL")],
+    ),
+    (
+        "backslash before one the switch reads as an escape",
+        &[("p1", r"a\nb"), ("p2", "SENTINEL")],
+    ),
+];
+
+fn escaping_block(pairs: &[(&str, &str)]) -> Variables {
+    let mut vars = Variables::new(VariablesType::Default);
+    for (k, v) in pairs {
+        vars.insert(*k, *v);
+    }
+    vars
+}
+
+/// The `originate` API splits its argument list before the block is parsed, so
+/// this carrier needs one escaping level more than a dialplan application.
+#[tokio::test]
+#[ignore]
+async fn live_escaping_survives_the_api_carrier() {
+    let (client, _events, permit) = connect().await;
+
+    for (label, pairs) in ESCAPING_CASES {
+        let vars = escaping_block(pairs);
+        let resp = client
+            .api(&format!("originate {vars}null/escaping &park()"))
+            .await
+            .unwrap_or_else(|e| panic!("{label}: originate transport error: {e}"));
+        let uuid = resp
+            .api_result()
+            .unwrap_or_else(|e| panic!("{label}: originate rejected {vars}: {e}"))
+            .to_string();
+
+        let mut reaper = Reaper::new(&client);
+        reaper.track(&uuid);
+        let mut results = Vec::new();
+        for (key, want) in *pairs {
+            results.push((*key, *want, getvar(&client, &uuid, key).await));
+        }
+        reaper
+            .reap()
+            .await;
+
+        for (key, want, got) in results {
+            assert_eq!(got.as_deref(), Some(want), "{label}: {key} arrived wrong");
+        }
+    }
+
+    drop(permit);
+}
+
+/// A dialplan application receives its argument whole, so the same values need
+/// one level less. Rendering with the API default here would corrupt a quoted
+/// value, which is the whole reason the carrier is nameable.
+#[tokio::test]
+#[ignore]
+async fn live_escaping_survives_the_dialplan_carrier() {
+    let (client, _events, permit) = connect().await;
+
+    for (label, pairs) in ESCAPING_CASES {
+        let b_uuid = client
+            .api("create_uuid")
+            .await
+            .expect("create_uuid transport error")
+            .api_result()
+            .expect("create_uuid failed")
+            .to_string();
+        let a_uuid = client
+            .api("originate null/anchor &park()")
+            .await
+            .expect("anchor transport error")
+            .api_result()
+            .expect("anchor originate failed")
+            .to_string();
+
+        // Pre-assigning the B leg's uuid is what makes the far side findable;
+        // it leads the block so a later value cannot take it with it.
+        let mut vars = Variables::new(VariablesType::Default);
+        vars.insert("origination_uuid", &b_uuid);
+        for (k, v) in *pairs {
+            vars.insert(*k, *v);
+        }
+
+        let mut reaper = Reaper::new(&client);
+        reaper.track(&a_uuid);
+        reaper.track(&b_uuid);
+
+        client
+            .execute_with_options(
+                "bridge",
+                Some(&format!(
+                    "{}null/escaping",
+                    vars.display_for(DialStringCarrier::Dialplan)
+                )),
+                Some(&a_uuid),
+                ExecuteOptions::new().with_async(),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{label}: execute bridge failed: {e}"));
+
+        // The bridge is async, so the far leg appears a moment later.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let mut results = Vec::new();
+        for (key, want) in *pairs {
+            results.push((*key, *want, getvar(&client, &b_uuid, key).await));
+        }
+        reaper
+            .reap()
+            .await;
+
+        for (key, want, got) in results {
+            assert_eq!(got.as_deref(), Some(want), "{label}: {key} arrived wrong");
+        }
+    }
+
+    drop(permit);
+}
+
+/// A separator the values do not contain is the only way a `${...}`-expanded
+/// value carries a comma, since substitution happens before the block is parsed.
+#[tokio::test]
+#[ignore]
+async fn live_chosen_separator_carries_commas_unescaped() {
+    let (client, _events, permit) = connect().await;
+
+    let mut vars = Variables::new(VariablesType::Default);
+    vars.insert("codecs", "PCMA,PCMU,G729");
+    vars.insert("tenant", "acme");
+    let vars = vars
+        .with_separator(':')
+        .expect("':' does not appear in any value here");
+
+    let uuid = client
+        .api(&format!("originate {vars}null/escaping &park()"))
+        .await
+        .expect("originate transport error")
+        .api_result()
+        .unwrap_or_else(|e| panic!("originate rejected {vars}: {e}"))
+        .to_string();
+
+    let mut reaper = Reaper::new(&client);
+    reaper.track(&uuid);
+    let codecs = getvar(&client, &uuid, "codecs").await;
+    let tenant = getvar(&client, &uuid, "tenant").await;
+    reaper
+        .reap()
+        .await;
+
+    assert_eq!(codecs.as_deref(), Some("PCMA,PCMU,G729"));
+    assert_eq!(tenant.as_deref(), Some("acme"));
+
+    drop(permit);
+}
+
+/// The refusal in `Variables` rests on this: an empty value never reaches the
+/// channel. The block is written by hand because the typed API will not build
+/// one, and the point is to check the switch rather than the crate.
+///
+/// Failing here is good news — it would mean FreeSWITCH started honouring an
+/// empty pair, and the refusal should then be revisited rather than kept.
+#[tokio::test]
+#[ignore]
+async fn live_empty_value_still_never_reaches_the_channel() {
+    let (client, _events, permit) = connect().await;
+
+    let uuid = client
+        .api("originate {p1=,p2=SENTINEL}null/escaping &park()")
+        .await
+        .expect("originate transport error")
+        .api_result()
+        .expect("originate rejected")
+        .to_string();
+
+    let mut reaper = Reaper::new(&client);
+    reaper.track(&uuid);
+    let empty = getvar(&client, &uuid, "p1").await;
+    let sentinel = getvar(&client, &uuid, "p2").await;
+    reaper
+        .reap()
+        .await;
+
+    assert_eq!(
+        empty, None,
+        "the switch now keeps an empty pair; Variables refuses to build one, so \
+         that refusal is no longer justified"
+    );
+    assert_eq!(
+        sentinel.as_deref(),
+        Some("SENTINEL"),
+        "the block itself must be well-formed, or the assertion above proves nothing"
+    );
 
     drop(permit);
 }
