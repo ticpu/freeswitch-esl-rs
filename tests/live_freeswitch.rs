@@ -1723,18 +1723,18 @@ async fn live_command_timeout_msleep() {
 async fn live_filter_event_name() {
     let (client, mut events, _permit) = connect().await;
 
-    // Subscribe to multiple event types
+    // Filter before subscribing: the switch is shared, so any window between the
+    // two queues a parallel test's BACKGROUND_JOB on this listener.
+    client
+        .filter(EventHeader::EventName, "HEARTBEAT")
+        .await
+        .unwrap();
+
     client
         .subscribe_events(
             EventFormat::Plain,
             &[EslEventType::Heartbeat, EslEventType::BackgroundJob],
         )
-        .await
-        .unwrap();
-
-    // Filter: only receive HEARTBEAT
-    client
-        .filter(EventHeader::EventName, "HEARTBEAT")
         .await
         .unwrap();
 
