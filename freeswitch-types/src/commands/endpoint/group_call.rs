@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use super::{extract_variables, write_variables};
 use crate::commands::originate::OriginateError;
+use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
 
 wire_enum! {
@@ -68,9 +69,13 @@ impl GroupCall {
     }
 }
 
-impl fmt::Display for GroupCall {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_variables(f, &self.variables)?;
+impl GroupCall {
+    pub(super) fn write_for(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        carrier: DialStringCarrier,
+    ) -> fmt::Result {
+        write_variables(f, &self.variables, carrier)?;
         match &self.order {
             Some(o) => write!(f, "${{group_call({}@{}+{})}}", self.group, self.domain, o),
             None => write!(f, "${{group_call({}@{})}}", self.group, self.domain),
@@ -78,11 +83,17 @@ impl fmt::Display for GroupCall {
     }
 }
 
+impl fmt::Display for GroupCall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_for(f, DialStringCarrier::EslApi)
+    }
+}
+
 impl FromStr for GroupCall {
     type Err = OriginateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (variables, uri) = extract_variables(s)?;
+        let (variables, uri) = extract_variables(s, DialStringCarrier::EslApi)?;
         let inner = uri
             .strip_prefix("${group_call(")
             .and_then(|r| r.strip_suffix(")}"))

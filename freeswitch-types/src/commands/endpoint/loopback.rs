@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use super::{strip_endpoint_prefix, write_variables};
 use crate::commands::originate::OriginateError;
+use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
 
 /// Internal loopback endpoint: `loopback/{extension}[/{context}]`.
@@ -50,9 +51,13 @@ impl LoopbackEndpoint {
     }
 }
 
-impl fmt::Display for LoopbackEndpoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_variables(f, &self.variables)?;
+impl LoopbackEndpoint {
+    pub(super) fn write_for(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        carrier: DialStringCarrier,
+    ) -> fmt::Result {
+        write_variables(f, &self.variables, carrier)?;
         match &self.context {
             Some(ctx) => write!(f, "loopback/{}/{}", self.extension, ctx),
             None => write!(f, "loopback/{}", self.extension),
@@ -60,11 +65,18 @@ impl fmt::Display for LoopbackEndpoint {
     }
 }
 
+impl fmt::Display for LoopbackEndpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_for(f, DialStringCarrier::EslApi)
+    }
+}
+
 impl FromStr for LoopbackEndpoint {
     type Err = OriginateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (variables, rest) = strip_endpoint_prefix(s, "loopback/", "loopback")?;
+        let (variables, rest) =
+            strip_endpoint_prefix(s, "loopback/", "loopback", DialStringCarrier::EslApi)?;
         let (extension, context) = match rest.split_once('/') {
             Some((ext, ctx)) => (ext, Some(ctx.to_string())),
             None => (rest, None),

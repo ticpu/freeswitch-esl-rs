@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use super::{strip_endpoint_prefix, write_variables};
 use crate::commands::originate::OriginateError;
+use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
 
 /// Directory-based endpoint: `user/{name}[@{domain}]`.
@@ -49,9 +50,13 @@ impl UserEndpoint {
     }
 }
 
-impl fmt::Display for UserEndpoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_variables(f, &self.variables)?;
+impl UserEndpoint {
+    pub(super) fn write_for(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        carrier: DialStringCarrier,
+    ) -> fmt::Result {
+        write_variables(f, &self.variables, carrier)?;
         match &self.domain {
             Some(d) => write!(f, "user/{}@{}", self.name, d),
             None => write!(f, "user/{}", self.name),
@@ -59,11 +64,18 @@ impl fmt::Display for UserEndpoint {
     }
 }
 
+impl fmt::Display for UserEndpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_for(f, DialStringCarrier::EslApi)
+    }
+}
+
 impl FromStr for UserEndpoint {
     type Err = OriginateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (variables, rest) = strip_endpoint_prefix(s, "user/", "user")?;
+        let (variables, rest) =
+            strip_endpoint_prefix(s, "user/", "user", DialStringCarrier::EslApi)?;
         let (name, domain) = if let Some((n, d)) = rest.split_once('@') {
             (n.to_string(), Some(d.to_string()))
         } else {

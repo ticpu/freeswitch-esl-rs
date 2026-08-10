@@ -54,11 +54,46 @@ pub struct Variables {
     inner: IndexMap<String, String>,
 }
 
-pub(super) fn escape_value(value: &str) -> String {
-    // The backslash goes first, or the ones introduced below get doubled.
+/// Which command carries a dial string, and therefore how deeply its variable
+/// values must be escaped.
+///
+/// FreeSWITCH escape-processes a bracket block a different number of times
+/// depending on the command it arrived on, and the correct escaping of a value
+/// containing a single quote differs between them with no form that satisfies
+/// both. Naming the carrier is the only way a renderer can be right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum DialStringCarrier {
+    /// `api originate` / `bgapi originate`, whose argument list is split before
+    /// the block itself is parsed. The default for [`Display`](fmt::Display).
+    EslApi,
+    /// A dialplan application such as `bridge`, including via `sendmsg execute`,
+    /// which receives its argument whole.
+    Dialplan,
+}
+
+/// A literal backslash, whatever follows it.
+const BACKSLASH: &str = r"\\\\\\\\";
+/// A literal single quote, per carrier.
+const QUOTE_DIALPLAN: &str = r"\\'";
+const QUOTE_ESL_API: &str = r"\\\'";
+
+impl DialStringCarrier {
+    fn quote_escape(self) -> &'static str {
+        match self {
+            Self::EslApi => QUOTE_ESL_API,
+            Self::Dialplan => QUOTE_DIALPLAN,
+        }
+    }
+}
+
+pub(super) fn escape_value(value: &str, carrier: DialStringCarrier) -> String {
+    // The backslash goes first, or the ones the other rules introduce get
+    // escaped in turn.
     let escaped = value
-        .replace('\\', "\\\\")
-        .replace('\'', "\\'")
+        .replace('\\', BACKSLASH)
+        .replace('\'', carrier.quote_escape())
         .replace(',', "\\,");
     if escaped.contains(' ') {
         format!("'{}'", escaped)
@@ -67,26 +102,18 @@ pub(super) fn escape_value(value: &str) -> String {
     }
 }
 
-fn unescape_value(value: &str) -> String {
+/// Inverts [`escape_value`], undoing each substitution in the reverse order it
+/// was applied so an escape introduced by a later rule is not read as input to
+/// an earlier one.
+fn unescape_value(value: &str, carrier: DialStringCarrier) -> String {
     let s = value
         .strip_prefix('\'')
         .and_then(|s| s.strip_suffix('\''))
         .unwrap_or(value);
 
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some(next) => out.push(next),
-            // Hand-written input can end in a backslash that escapes nothing.
-            None => out.push('\\'),
-        }
-    }
-    out
+    s.replace("\\,", ",")
+        .replace(carrier.quote_escape(), "'")
+        .replace(BACKSLASH, "\\")
 }
 
 impl Variables {
@@ -216,8 +243,36 @@ impl<'de> serde::Deserialize<'de> for Variables {
     }
 }
 
-impl fmt::Display for Variables {
+/// Renders a [`Variables`] for one carrier. Returned by
+/// [`Variables::display_for`].
+#[derive(Debug, Clone, Copy)]
+pub struct VariablesDisplay<'a> {
+    vars: &'a Variables,
+    carrier: DialStringCarrier,
+}
+
+impl fmt::Display for VariablesDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.vars
+            .write_for(f, self.carrier)
+    }
+}
+
+impl Variables {
+    /// Render for a named carrier, rather than the [`DialStringCarrier::EslApi`]
+    /// default that [`Display`](fmt::Display) uses.
+    pub fn display_for(&self, carrier: DialStringCarrier) -> VariablesDisplay<'_> {
+        VariablesDisplay {
+            vars: self,
+            carrier,
+        }
+    }
+
+    pub(super) fn write_for(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        carrier: DialStringCarrier,
+    ) -> fmt::Result {
         let (open, close) = self
             .vars_type
             .delimiters();
@@ -230,9 +285,15 @@ impl fmt::Display for Variables {
             if i > 0 {
                 f.write_str(",")?;
             }
-            write!(f, "{}={}", key, escape_value(value))?;
+            write!(f, "{}={}", key, escape_value(value, carrier))?;
         }
         f.write_fmt(format_args!("{}", close))
+    }
+}
+
+impl fmt::Display for Variables {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_for(f, DialStringCarrier::EslApi)
     }
 }
 
@@ -240,6 +301,16 @@ impl FromStr for Variables {
     type Err = OriginateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse_for(s, DialStringCarrier::EslApi)
+    }
+}
+
+impl Variables {
+    /// Parse a block written for a named carrier, mirroring
+    /// [`display_for`](Self::display_for). [`FromStr`] uses the same
+    /// [`DialStringCarrier::EslApi`] default as [`Display`](fmt::Display), so
+    /// the two round-trip.
+    pub fn parse_for(s: &str, carrier: DialStringCarrier) -> Result<Self, OriginateError> {
         let s = s.trim();
         if s.len() < 2 {
             return Err(OriginateError::ParseError(
@@ -298,7 +369,7 @@ impl FromStr for Variables {
                         .ok_or_else(|| {
                             OriginateError::ParseError(format!("missing = in variable {i}"))
                         })?;
-                    inner.insert(key.to_string(), unescape_value(value));
+                    inner.insert(key.to_string(), unescape_value(value, carrier));
                 }
             }
         }

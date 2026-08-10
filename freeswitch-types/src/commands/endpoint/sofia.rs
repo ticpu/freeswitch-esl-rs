@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use super::{extract_variables, strip_endpoint_prefix, write_variables};
 use crate::commands::originate::OriginateError;
+use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
 
 /// SIP endpoint via a named profile: `sofia/{profile}/{destination}`.
@@ -147,16 +148,30 @@ impl SofiaContact {
     }
 }
 
-impl fmt::Display for SofiaEndpoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_variables(f, &self.variables)?;
+impl SofiaEndpoint {
+    pub(super) fn write_for(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        carrier: DialStringCarrier,
+    ) -> fmt::Result {
+        write_variables(f, &self.variables, carrier)?;
         write!(f, "sofia/{}/{}", self.profile, self.destination)
     }
 }
 
-impl fmt::Display for SofiaGateway {
+impl fmt::Display for SofiaEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_variables(f, &self.variables)?;
+        self.write_for(f, DialStringCarrier::EslApi)
+    }
+}
+
+impl SofiaGateway {
+    pub(super) fn write_for(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        carrier: DialStringCarrier,
+    ) -> fmt::Result {
+        write_variables(f, &self.variables, carrier)?;
         match &self.profile {
             Some(p) => write!(
                 f,
@@ -168,9 +183,19 @@ impl fmt::Display for SofiaGateway {
     }
 }
 
-impl fmt::Display for SofiaContact {
+impl fmt::Display for SofiaGateway {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_variables(f, &self.variables)?;
+        self.write_for(f, DialStringCarrier::EslApi)
+    }
+}
+
+impl SofiaContact {
+    pub(super) fn write_for(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        carrier: DialStringCarrier,
+    ) -> fmt::Result {
+        write_variables(f, &self.variables, carrier)?;
         match &self.profile {
             Some(p) => write!(f, "${{sofia_contact({}/{}@{})}}", p, self.user, self.domain),
             None => write!(f, "${{sofia_contact({}@{})}}", self.user, self.domain),
@@ -178,11 +203,18 @@ impl fmt::Display for SofiaContact {
     }
 }
 
+impl fmt::Display for SofiaContact {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_for(f, DialStringCarrier::EslApi)
+    }
+}
+
 impl FromStr for SofiaEndpoint {
     type Err = OriginateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (variables, rest) = strip_endpoint_prefix(s, "sofia/", "sofia")?;
+        let (variables, rest) =
+            strip_endpoint_prefix(s, "sofia/", "sofia", DialStringCarrier::EslApi)?;
         let (profile, destination) = rest
             .split_once('/')
             .ok_or_else(|| {
@@ -200,7 +232,12 @@ impl FromStr for SofiaGateway {
     type Err = OriginateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (variables, rest) = strip_endpoint_prefix(s, "sofia/gateway/", "sofia gateway")?;
+        let (variables, rest) = strip_endpoint_prefix(
+            s,
+            "sofia/gateway/",
+            "sofia gateway",
+            DialStringCarrier::EslApi,
+        )?;
         let (gateway_part, destination) = rest
             .split_once('/')
             .ok_or_else(|| {
@@ -224,7 +261,7 @@ impl FromStr for SofiaContact {
     type Err = OriginateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (variables, uri) = extract_variables(s)?;
+        let (variables, uri) = extract_variables(s, DialStringCarrier::EslApi)?;
         let inner = uri
             .strip_prefix("${sofia_contact(")
             .and_then(|r| r.strip_suffix(")}"))

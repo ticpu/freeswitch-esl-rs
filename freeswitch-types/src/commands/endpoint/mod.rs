@@ -24,7 +24,7 @@ use std::str::FromStr;
 
 use super::find_matching_bracket;
 use super::originate::OriginateError;
-use super::variables::Variables;
+use super::variables::{DialStringCarrier, Variables};
 
 /// Common interface for anything that formats as a FreeSWITCH dial string.
 ///
@@ -43,10 +43,14 @@ pub trait DialString: fmt::Display {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn write_variables(f: &mut fmt::Formatter<'_>, vars: &Option<Variables>) -> fmt::Result {
+fn write_variables(
+    f: &mut fmt::Formatter<'_>,
+    vars: &Option<Variables>,
+    carrier: DialStringCarrier,
+) -> fmt::Result {
     if let Some(vars) = vars {
         if !vars.is_empty() {
-            write!(f, "{}", vars)?;
+            write!(f, "{}", vars.display_for(carrier))?;
         }
     }
     Ok(())
@@ -60,8 +64,9 @@ pub(super) fn strip_endpoint_prefix<'a>(
     s: &'a str,
     prefix: &str,
     kind: &str,
+    carrier: DialStringCarrier,
 ) -> Result<(Option<Variables>, &'a str), OriginateError> {
-    let (variables, uri) = extract_variables(s)?;
+    let (variables, uri) = extract_variables(s, carrier)?;
     let rest = uri
         .strip_prefix(prefix)
         .ok_or_else(|| OriginateError::ParseError(format!("not a {} endpoint", kind)))?;
@@ -73,7 +78,10 @@ pub(super) fn strip_endpoint_prefix<'a>(
 ///
 /// Uses depth-aware bracket matching so nested brackets in values (e.g.
 /// `<sip_h_Call-Info=<url>>`) don't cause premature closure.
-fn extract_variables(s: &str) -> Result<(Option<Variables>, &str), OriginateError> {
+fn extract_variables(
+    s: &str,
+    carrier: DialStringCarrier,
+) -> Result<(Option<Variables>, &str), OriginateError> {
     let (open, close_ch) = match s
         .as_bytes()
         .first()
@@ -86,7 +94,7 @@ fn extract_variables(s: &str) -> Result<(Option<Variables>, &str), OriginateErro
     let close = find_matching_bracket(s, open, close_ch)
         .ok_or_else(|| OriginateError::ParseError(format!("unclosed {} in endpoint", open)))?;
     let var_str = &s[..=close];
-    let vars: Variables = var_str.parse()?;
+    let vars = Variables::parse_for(var_str, carrier)?;
     let vars = if vars.is_empty() { None } else { Some(vars) };
     Ok((vars, s[close + 1..].trim()))
 }
@@ -178,20 +186,69 @@ impl From<ErrorEndpoint> for Endpoint {
 // Display
 // ---------------------------------------------------------------------------
 
+impl Endpoint {
+    pub(crate) fn write_for(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        carrier: DialStringCarrier,
+    ) -> fmt::Result {
+        match self {
+            Self::Sofia(ep) => ep.write_for(f, carrier),
+            Self::SofiaGateway(ep) => ep.write_for(f, carrier),
+            Self::Loopback(ep) => ep.write_for(f, carrier),
+            Self::User(ep) => ep.write_for(f, carrier),
+            Self::SofiaContact(ep) => ep.write_for(f, carrier),
+            Self::GroupCall(ep) => ep.write_for(f, carrier),
+            Self::Error(ep) => fmt::Display::fmt(ep, f),
+            Self::PortAudio(ep) => ep.write_with_prefix(f, "portaudio", carrier),
+            Self::PulseAudio(ep) => ep.write_with_prefix(f, "pulseaudio", carrier),
+            Self::Alsa(ep) => ep.write_with_prefix(f, "alsa", carrier),
+        }
+    }
+
+    /// Render for a named carrier rather than the
+    /// [`DialStringCarrier::EslApi`] default of [`Display`](fmt::Display).
+    pub fn display_for(&self, carrier: DialStringCarrier) -> EndpointDisplay<'_> {
+        EndpointDisplay {
+            endpoint: self,
+            carrier,
+        }
+    }
+
+    /// Parse a dial string written for a named carrier, mirroring
+    /// [`display_for`](Self::display_for). [`FromStr`] uses the
+    /// [`DialStringCarrier::EslApi`] default.
+    pub fn parse_for(s: &str, carrier: DialStringCarrier) -> Result<Self, OriginateError> {
+        // Take the leading block at the caller's carrier, then let the endpoint
+        // parse what is left; re-attaching avoids every endpoint's FromStr
+        // having to thread a carrier it would only forward.
+        let (variables, rest) = extract_variables(s, carrier)?;
+        let mut endpoint: Self = rest.parse()?;
+        if variables.is_some() {
+            endpoint.set_variables(variables);
+        }
+        Ok(endpoint)
+    }
+}
+
+/// Renders an [`Endpoint`] for one carrier. Returned by
+/// [`Endpoint::display_for`].
+#[derive(Debug, Clone, Copy)]
+pub struct EndpointDisplay<'a> {
+    endpoint: &'a Endpoint,
+    carrier: DialStringCarrier,
+}
+
+impl fmt::Display for EndpointDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.endpoint
+            .write_for(f, self.carrier)
+    }
+}
+
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Sofia(ep) => ep.fmt(f),
-            Self::SofiaGateway(ep) => ep.fmt(f),
-            Self::Loopback(ep) => ep.fmt(f),
-            Self::User(ep) => ep.fmt(f),
-            Self::SofiaContact(ep) => ep.fmt(f),
-            Self::GroupCall(ep) => ep.fmt(f),
-            Self::Error(ep) => ep.fmt(f),
-            Self::PortAudio(ep) => ep.fmt_with_prefix(f, "portaudio"),
-            Self::PulseAudio(ep) => ep.fmt_with_prefix(f, "pulseaudio"),
-            Self::Alsa(ep) => ep.fmt_with_prefix(f, "alsa"),
-        }
+        self.write_for(f, DialStringCarrier::EslApi)
     }
 }
 
@@ -203,7 +260,7 @@ impl FromStr for Endpoint {
     type Err = OriginateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (variables, uri) = extract_variables(s)?;
+        let (variables, uri) = extract_variables(s, DialStringCarrier::EslApi)?;
         // Re-assemble with variables for individual FromStr impls
         let full = if variables.is_some() {
             s.to_string()
@@ -338,21 +395,26 @@ mod tests {
 
     #[test]
     fn extract_variables_nested_angle_brackets() {
-        let (vars, rest) = extract_variables("<sip_h_Call-Info=<url>>sofia/gw/x").unwrap();
+        let (vars, rest) = extract_variables(
+            "<sip_h_Call-Info=<url>>sofia/gw/x",
+            DialStringCarrier::EslApi,
+        )
+        .unwrap();
         assert_eq!(rest, "sofia/gw/x");
         assert!(vars.is_some());
     }
 
     #[test]
     fn extract_variables_nested_curly_brackets() {
-        let (vars, rest) = extract_variables("{a={b}}sofia/internal/1000").unwrap();
+        let (vars, rest) =
+            extract_variables("{a={b}}sofia/internal/1000", DialStringCarrier::EslApi).unwrap();
         assert_eq!(rest, "sofia/internal/1000");
         assert!(vars.is_some());
     }
 
     #[test]
     fn extract_variables_unclosed_returns_error() {
-        let result = extract_variables("{a=b");
+        let result = extract_variables("{a=b", DialStringCarrier::EslApi);
         assert!(result.is_err());
     }
 

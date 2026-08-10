@@ -2,6 +2,7 @@ use std::fmt;
 
 use super::{extract_variables, write_variables};
 use crate::commands::originate::OriginateError;
+use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
 
 /// Audio device endpoint for portaudio, pulseaudio, or ALSA modules.
@@ -44,9 +45,23 @@ impl AudioEndpoint {
         self
     }
 
-    /// Format with the given module prefix (`portaudio`, `pulseaudio`, `alsa`).
+    /// Format with the given module prefix (`portaudio`, `pulseaudio`, `alsa`),
+    /// which the [`Endpoint`](super::Endpoint) variant supplies because this
+    /// struct does not record which of the three modules it belongs to.
+    ///
+    /// Renders for [`DialStringCarrier::EslApi`]; the [`Endpoint`](super::Endpoint)
+    /// variants render for whichever carrier they were asked for.
     pub fn fmt_with_prefix(&self, f: &mut fmt::Formatter<'_>, prefix: &str) -> fmt::Result {
-        write_variables(f, &self.variables)?;
+        self.write_with_prefix(f, prefix, DialStringCarrier::EslApi)
+    }
+
+    pub(super) fn write_with_prefix(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        prefix: &str,
+        carrier: DialStringCarrier,
+    ) -> fmt::Result {
+        write_variables(f, &self.variables, carrier)?;
         match &self.destination {
             Some(dest) => write!(f, "{}/{}", prefix, dest),
             None => f.write_str(prefix),
@@ -55,7 +70,7 @@ impl AudioEndpoint {
 
     /// Parse from a dial string with the given module prefix.
     pub fn parse_with_prefix(s: &str, prefix: &str) -> Result<Self, OriginateError> {
-        let (variables, uri) = extract_variables(s)?;
+        let (variables, uri) = extract_variables(s, DialStringCarrier::EslApi)?;
         let rest = uri
             .strip_prefix(prefix)
             .ok_or_else(|| OriginateError::ParseError(format!("not a {} endpoint", prefix)))?;

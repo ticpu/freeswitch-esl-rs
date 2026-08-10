@@ -9,7 +9,13 @@ use std::str::FromStr;
 use super::endpoint::Endpoint;
 use super::find_matching_bracket;
 use super::originate::OriginateError;
-use super::variables::Variables;
+use super::variables::{DialStringCarrier, Variables};
+
+/// A bridge dial string is the argument of a dialplan application, which
+/// receives it whole, so it renders and parses one escaping level shallower
+/// than the [`DialStringCarrier::EslApi`] default the endpoint types use on
+/// their own.
+const CARRIER: DialStringCarrier = DialStringCarrier::Dialplan;
 
 /// Typed bridge dial string.
 ///
@@ -72,7 +78,7 @@ impl fmt::Display for BridgeDialString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(vars) = &self.variables {
             if !vars.is_empty() {
-                write!(f, "{}", vars)?;
+                write!(f, "{}", vars.display_for(CARRIER))?;
             }
         }
         for (gi, group) in self
@@ -90,7 +96,7 @@ impl fmt::Display for BridgeDialString {
                 if ei > 0 {
                     f.write_str(",")?;
                 }
-                write!(f, "{}", ep)?;
+                write!(f, "{}", ep.display_for(CARRIER))?;
             }
         }
         Ok(())
@@ -114,7 +120,7 @@ impl FromStr for BridgeDialString {
                 OriginateError::ParseError("unclosed { in bridge dial string".into())
             })?;
             let var_str = &s[..=close];
-            let vars: Variables = var_str.parse()?;
+            let vars = Variables::parse_for(var_str, CARRIER)?;
             let vars = if vars.is_empty() { None } else { Some(vars) };
             (vars, &s[close + 1..])
         } else {
@@ -137,7 +143,7 @@ impl FromStr for BridgeDialString {
                 if ep_str.is_empty() {
                     continue;
                 }
-                let ep: Endpoint = ep_str.parse()?;
+                let ep = Endpoint::parse_for(ep_str, CARRIER)?;
                 endpoints.push(ep);
             }
             if !endpoints.is_empty() {
@@ -187,6 +193,42 @@ mod tests {
     use crate::commands::variables::VariablesType;
 
     // === Display ===
+
+    /// The block reaches a dialplan application whole, one tokenizer pass
+    /// shallower than an `originate` argument, so a quoted value carries one
+    /// backslash fewer here than the same value rendered on its own.
+    #[test]
+    fn bridge_renders_one_level_shallower_than_the_default() {
+        let mut vars = Variables::new(VariablesType::Default);
+        vars.insert("cid", "it's");
+        let ep = SofiaGateway::new("gw", "18005551234");
+        let bridge = BridgeDialString::new(vec![vec![ep.into()]]).with_variables(vars.clone());
+
+        assert_eq!(
+            bridge.to_string(),
+            r"{cid=it\\'s}sofia/gateway/gw/18005551234"
+        );
+        assert_eq!(vars.to_string(), r"{cid=it\\\'s}");
+    }
+
+    /// Both halves have to agree on the carrier. Rendering at dialplan depth
+    /// and parsing back at the default would unescape one level too deep and
+    /// silently return a different value than was put in.
+    #[test]
+    fn per_endpoint_quoted_values_round_trip() {
+        let mut ep_vars = Variables::new(VariablesType::Channel);
+        ep_vars.insert("cid", "it's");
+        ep_vars.insert("other", "don't");
+        let bridge = BridgeDialString::new(vec![vec![SofiaGateway::new("gw", "1234")
+            .with_variables(ep_vars)
+            .into()]]);
+
+        let rendered = bridge.to_string();
+        let back: BridgeDialString = rendered
+            .parse()
+            .unwrap_or_else(|e| panic!("{rendered} failed to parse: {e}"));
+        assert_eq!(back, bridge, "rendered {rendered}");
+    }
 
     #[test]
     fn display_single_endpoint() {

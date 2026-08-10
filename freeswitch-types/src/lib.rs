@@ -55,10 +55,11 @@ pub use channel::{
 };
 #[cfg(feature = "esl")]
 pub use commands::{
-    Application, BridgeDialString, DialString, DialplanType, Endpoint, GroupCallOrder, Originate,
-    OriginateError, OriginateTarget, ParseDialplanTypeError, ParseGroupCallOrderError, UuidAnswer,
-    UuidBridge, UuidDeflect, UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar,
-    UuidTransfer, Variables, VariablesType,
+    Application, BridgeDialString, DialString, DialStringCarrier, DialplanType, Endpoint,
+    EndpointDisplay, GroupCallOrder, Originate, OriginateError, OriginateTarget,
+    ParseDialplanTypeError, ParseGroupCallOrderError, UuidAnswer, UuidBridge, UuidDeflect,
+    UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar, UuidTransfer, Variables,
+    VariablesDisplay, VariablesType,
 };
 #[cfg(feature = "esl")]
 pub use event::{

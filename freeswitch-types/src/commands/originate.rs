@@ -687,9 +687,11 @@ mod tests {
             destination: "123@example.com".into(),
             variables: Some(vars),
         });
+        // An endpoint renders for the ESL API carrier, which is the deeper of
+        // the two escapings.
         assert_eq!(
             ep.to_string(),
-            "{one_variable=one\\'quote}sofia/internal/123@example.com"
+            r"{one_variable=one\\\'quote}sofia/internal/123@example.com"
         );
     }
 
