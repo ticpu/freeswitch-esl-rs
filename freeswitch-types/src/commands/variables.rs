@@ -52,6 +52,10 @@ impl VariablesType {
 pub struct Variables {
     vars_type: VariablesType,
     inner: IndexMap<String, String>,
+    /// Set by [`with_separator`](Variables::with_separator). Parsing a `^^`
+    /// block does not populate it: reading one back and writing it out
+    /// canonicalises to a comma, and the other form is asked for explicitly.
+    separator: Option<char>,
 }
 
 /// Which command carries a dial string, and therefore how deeply its variable
@@ -85,6 +89,19 @@ impl DialStringCarrier {
             Self::EslApi => QUOTE_ESL_API,
             Self::Dialplan => QUOTE_DIALPLAN,
         }
+    }
+}
+
+/// Escaping for a block whose separator is not the comma, so a comma in a value
+/// is ordinary text. Everything else is escaped as it would be otherwise.
+fn escape_value_keeping_commas(value: &str, carrier: DialStringCarrier) -> String {
+    let escaped = value
+        .replace('\\', BACKSLASH)
+        .replace('\'', carrier.quote_escape());
+    if escaped.contains(' ') {
+        format!("'{}'", escaped)
+    } else {
+        escaped
     }
 }
 
@@ -122,6 +139,7 @@ impl Variables {
         Self {
             vars_type,
             inner: IndexMap::new(),
+            separator: None,
         }
     }
 
@@ -136,7 +154,46 @@ impl Variables {
                 .into_iter()
                 .map(|(k, v)| (k.into(), v.into()))
                 .collect(),
+            separator: None,
         }
+    }
+
+    /// Separate the pairs with `sep` instead of a comma, emitting the block in
+    /// FreeSWITCH's `^^<sep>` form.
+    ///
+    /// A value expanded from `${...}` in a dialplan is substituted before the
+    /// block is parsed, so no escaping can be inserted into it; choosing a
+    /// separator none of the values contain is the only way such a value can
+    /// carry a comma. The separator is given rather than derived, so a block
+    /// renders the same way whatever its values happen to be that call.
+    ///
+    /// Fails if `sep` cannot delimit this block, or if a value already present
+    /// contains it. Values inserted afterwards are not checked.
+    pub fn with_separator(mut self, sep: char) -> Result<Self, OriginateError> {
+        let (_, close) = self
+            .vars_type
+            .delimiters();
+        if sep == close || sep == '=' || sep == '^' {
+            return Err(OriginateError::ParseError(format!(
+                "invalid ^^ separator: '{sep}'"
+            )));
+        }
+        if let Some((key, _)) = self
+            .inner
+            .iter()
+            .find(|(_, v)| v.contains(sep))
+        {
+            return Err(OriginateError::ParseError(format!(
+                "variable {key} contains the chosen '{sep}' separator"
+            )));
+        }
+        self.separator = Some(sep);
+        Ok(self)
+    }
+
+    /// The `^^` separator this block renders with, if one was chosen.
+    pub fn separator(&self) -> Option<char> {
+        self.separator
     }
 
     /// Insert or overwrite a variable.
@@ -234,10 +291,12 @@ impl<'de> serde::Deserialize<'de> for Variables {
             VariablesRepr::Scoped { scope, vars } => Ok(Self {
                 vars_type: scope,
                 inner: vars,
+                separator: None,
             }),
             VariablesRepr::Flat(map) => Ok(Self {
                 vars_type: VariablesType::Default,
                 inner: map,
+                separator: None,
             }),
         }
     }
@@ -277,15 +336,27 @@ impl Variables {
             .vars_type
             .delimiters();
         f.write_fmt(format_args!("{}", open))?;
+        if let Some(sep) = self.separator {
+            write!(f, "^^{sep}")?;
+        }
+        // A chosen separator carries the values that a comma would have needed
+        // escaping for, so only the comma form escapes them.
+        let sep = self
+            .separator
+            .unwrap_or(',');
         for (i, (key, value)) in self
             .inner
             .iter()
             .enumerate()
         {
             if i > 0 {
-                f.write_str(",")?;
+                write!(f, "{sep}")?;
             }
-            write!(f, "{}={}", key, escape_value(value, carrier))?;
+            let value = match self.separator {
+                Some(_) => escape_value_keeping_commas(value, carrier),
+                None => escape_value(value, carrier),
+            };
+            write!(f, "{}={}", key, value)?;
         }
         f.write_fmt(format_args!("{}", close))
     }
@@ -374,7 +445,11 @@ impl Variables {
             }
         }
 
-        Ok(Self { vars_type, inner })
+        Ok(Self {
+            vars_type,
+            inner,
+            separator: None,
+        })
     }
 }
 
@@ -409,6 +484,50 @@ pub(super) fn split_unescaped_commas(s: &str) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A chosen separator is what carries a comma through a value that was
+    /// expanded before the block was parsed, so the comma must survive as
+    /// ordinary text rather than picking up an escape.
+    #[test]
+    fn chosen_separator_leaves_commas_alone() {
+        let mut vars = Variables::new(VariablesType::Default);
+        vars.insert("codecs", "PCMA,PCMU,G729");
+        let vars = vars
+            .with_separator(':')
+            .unwrap();
+
+        assert_eq!(vars.to_string(), "{^^:codecs=PCMA,PCMU,G729}");
+        assert_eq!(vars.separator(), Some(':'));
+    }
+
+    #[test]
+    fn separator_that_cannot_delimit_the_block_is_refused() {
+        let vars = Variables::new(VariablesType::Channel);
+        for sep in [']', '=', '^'] {
+            assert!(
+                vars.clone()
+                    .with_separator(sep)
+                    .is_err(),
+                "accepted {sep:?}"
+            );
+        }
+    }
+
+    /// Refusing here is the whole point: a value carrying the separator would
+    /// split into a pair that was never written, and the switch reports nothing.
+    #[test]
+    fn separator_already_present_in_a_value_is_refused() {
+        let mut vars = Variables::new(VariablesType::Default);
+        vars.insert("uri", "sip:bob@example.com");
+        let err = vars
+            .with_separator(':')
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("uri"),
+            "error does not name the variable: {err}"
+        );
+    }
 
     /// Measured against a live switch, with two awkward values in one block —
     /// a block carrying only one is more forgiving and hides the failure.
