@@ -171,49 +171,110 @@ Effective variables on the channel: `ultra_global=1`, `thread_global=2`,
 
 ## Variable value escaping
 
-Variable values in bracket notation need escaping when they contain special
-characters.
+How much escaping a value needs depends on **which command carries the block**,
+because the switch escape-processes it a different number of times per carrier.
+See [Parse depth](#parse-depth) below before relying on any of the forms here;
+the rules in this section are what the `freeswitch-esl-tokio` crate emits, and
+were measured against a live switch rather than derived from the source.
 
 ### Backslash escaping
 
-Commas and single quotes are escaped with backslash:
+A comma is escaped with a backslash, on either carrier:
 
 ```
 {sip_h_Call-Info=<url>;meta=123\,<uri>}endpoint
-{greeting=it\'s_me}endpoint
 ```
 
-Values containing spaces are wrapped in single quotes:
+A literal backslash needs **eight**, on either carrier. Fewer and the switch
+reads the sequence as an escape and substitutes the character it names, so
+`a\nb` arrives carrying a newline:
+
+```
+{path=C:\\\\\\\\Users}endpoint
+```
+
+A single quote is the one rule that differs by carrier — two backslashes
+through a dialplan application, three through the `originate` API:
+
+```
+{greeting=it\\'s_me}endpoint      <- dialplan: bridge, sendmsg execute
+{greeting=it\\\'s_me}endpoint     <- api originate, bgapi originate
+```
+
+No count satisfies both: sweeping one to nine backslashes, each carrier succeeds
+only at counts the other fails. A block carrying a single quoted value is more
+forgiving than one carrying two, so test with two.
+
+Values containing spaces are wrapped in single quotes. Those wrapping quotes are
+balanced, so unlike a quote *inside* a value they behave identically on both
+carriers:
 
 ```
 {sip_h_X-Info='value with spaces'}endpoint
 ```
 
-### `^^X` custom delimiter
+### Values that cannot be expressed at all
 
-Alternative to backslash-escaping for values containing commas. The value
-starts with `^^` followed by a replacement character. FreeSWITCH converts
-the replacement character back to commas when setting the channel variable.
+- **An empty value.** `{k=}` never reaches the channel: the switch splits the
+  pair on `=`, requires exactly two fields, and `k=` yields one. The only
+  `switch_log_printf` in that loop is inside the successful branch, so nothing
+  is logged at any level. Quoting does not help — `k=''`, `k=\'\'` and
+  `k=\\'\\'` were all measured discarded on both carriers.
+- **A value closing a bracket it never opened.** `switch_find_end_paren` counts
+  depth and honours no escape while doing so, so a lone `}`, `]` or `>` ends the
+  block early and the remainder becomes dial-string text. A balanced pair such
+  as `${var}` is fine and ordinary.
 
-```
-{absolute_codec_string=^^:PCMA@8000h@20i:PCMU@8000h@20i:G729@8000h@20i}endpoint
-```
+### `^^X` block separator
 
-Here `:` replaces `,` in the codec list. The channel variable is set to
-`PCMA@8000h@20i,PCMU@8000h@20i,G729@8000h@20i`.
-
-Also supported inside brackets: `[^^var=val]`.
-
-### Bracket-level `^^:` delimiter
-
-When used at the **block level** (as the first element after the opening
-bracket), changes the delimiter between key=value pairs for the entire block:
+Placed **immediately after the opening bracket**, `^^` and a replacement
+character change the separator between pairs for the whole block, so values may
+contain commas with no escaping:
 
 ```
 {^^:sip_invite_domain=example.com:presence_id=bob@example.com}endpoint
+{^^:codecs=PCMA,PCMU,G729:tenant=acme}endpoint
 ```
 
-Here `:` separates variables instead of `,`.
+This is the only mechanism available when values arrive by `${...}` expansion,
+because substitution happens *before* the block is parsed and no escaping can be
+inserted into the result. It works identically on both carriers.
+
+It does not help with a quoted value: the quote pairing suppresses splitting on
+whichever separator is in use, so two quoted values still merge.
+
+**A `^^X` prefix on an individual value is not a general mechanism.** Writing
+`{k=^^:a:b}` sets `k` to the literal `^^:a:b` — measured on both carriers. Only
+consumers that specifically decode it, such as the codec-string parser reading
+`absolute_codec_string`, interpret the form; the bracket parser stores it
+verbatim.
+
+### Parse depth
+
+`switch_event_create_brackets` tokenizes a block **twice on its own** — once
+splitting the pairs on the separator, once splitting each pair on `=` — and both
+calls run the full quote-stripping, backslash-consuming cleanup over their
+results. Reached through the `originate` API a third pass applies, because
+`mod_commands` splits its argument list first with a tokenizer that treats a
+quote as opening a quoted region regardless of any delimiter.
+
+| Carrier | Passes |
+|---|---|
+| `bridge` and other dialplan applications, incl. `sendmsg execute` | 2 |
+| `api originate`, `bgapi originate` | 3 |
+
+Consequences worth knowing before hand-writing a block:
+
+- An unescaped quote reaching the `originate` argv pass turns off space
+  splitting for the rest of the line, so the command fails with a usage error
+  rather than corrupting a value. That is the loud case.
+- Two quotes that survive to the block parse pair with each other across the
+  separator, so the pair between them is not split: the *first* value absorbs
+  the second and the second is never set. The variable that goes missing is not
+  the one that contained the quote.
+- A log line is not evidence either way. `mod_logfile` splits its own output
+  with the same tokenizer, so a value is mangled in the log whether or not it
+  was mangled on the wire. Read values back with `uuid_getvar` or `uuid_dump`.
 
 ## Bridge separators
 
@@ -362,3 +423,12 @@ originate loopback/9199/test '&socket(127.0.0.1:8040 async full)'
 
 The `freeswitch-esl-tokio` library handles this quoting automatically via
 `originate_quote()` / `originate_unquote()`.
+
+These two lines are the two carriers of [Parse depth](#parse-depth), and the
+typed API picks the right escaping for each without being told: `Originate`
+renders for the API carrier, `BridgeDialString` for the dialplan one. `Display`
+on a bare `Variables` or `Endpoint` means the API carrier, because that is what
+this crate mostly drives — so a block rendered on its own and spliced into a
+dialplan string by hand is the one case that needs
+`display_for(DialStringCarrier::Dialplan)` and will otherwise be escaped one
+level too deep.
