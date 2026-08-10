@@ -3,6 +3,14 @@
 This is a **library-first** crate. There is an examples/ folder buildable binaries
 `Cargo.lock` is gitignored per Cargo convention for libraries.
 
+## `freeswitch-types` Version Requirement
+
+While the workspace is on a beta, the root `Cargo.toml` requires the full
+three-component prerelease — a caret only resolves prereleases when it carries
+one itself, and one that does floats to later betas of that version and to any
+later stable in the major. Move the floor to the version being released each
+time; never `=`-pin the exact beta.
+
 ## Enum Variant Ordering — Append Only
 
 New variants on public enums without `#[repr(...)]` **must be appended at

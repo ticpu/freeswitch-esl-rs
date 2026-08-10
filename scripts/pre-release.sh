@@ -25,6 +25,6 @@ cargo check --workspace --all-features --target x86_64-pc-windows-msvc
 # off by default: a removed method there passes an unqualified run untouched.
 cargo semver-checks check-release --all-features -p freeswitch-types
 cargo semver-checks check-release --all-features -p freeswitch-esl-tokio
-# Only types: freeswitch-esl-tokio pins an exact freeswitch-types version that
-# is not on crates.io until the publish step below actually runs.
+# Only types: freeswitch-esl-tokio requires a freeswitch-types floor that is not
+# on crates.io until the publish step below actually runs.
 cargo publish --dry-run -p freeswitch-types
