@@ -92,6 +92,49 @@ impl DialStringCarrier {
     }
 }
 
+/// Reject a value the wire cannot carry, whatever escaping is applied to it.
+///
+/// Two shapes qualify. An empty value is discarded by the switch under every
+/// encoding, and the block's own parse reports nothing when it happens. A value
+/// carrying an unbalanced bracket ends the block early, because the switch finds
+/// the block's end by counting depth and does not honour escapes while doing so;
+/// a balanced pair such as `${var}` is fine and common.
+fn check_representable(
+    key: &str,
+    value: &str,
+    vars_type: VariablesType,
+) -> Result<(), OriginateError> {
+    if value.is_empty() {
+        return Err(OriginateError::ParseError(format!(
+            "variable {key} has an empty value: the switch discards such a pair \
+             without logging it, so it cannot be told from an absent variable on \
+             the wire. Give it a value or remove it -- and if its presence was \
+             itself the signal, that signal needs a home outside the dial string"
+        )));
+    }
+
+    let (open, close) = vars_type.delimiters();
+    let mut depth = 0i32;
+    for ch in value.chars() {
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth < 0 {
+                return Err(OriginateError::ParseError(format!(
+                    "variable {key} closes a '{open}' it never opened, ending the block early"
+                )));
+            }
+        }
+    }
+    if depth != 0 {
+        return Err(OriginateError::ParseError(format!(
+            "variable {key} opens a '{open}' it never closes, swallowing the block's end"
+        )));
+    }
+    Ok(())
+}
+
 /// Escaping for a block whose separator is not the comma, so a comma in a value
 /// is ordinary text. Everything else is escaped as it would be otherwise.
 fn escape_value_keeping_commas(value: &str, carrier: DialStringCarrier) -> String {
@@ -287,18 +330,20 @@ impl<'de> serde::Deserialize<'de> for Variables {
             Flat(IndexMap<String, String>),
         }
 
-        match VariablesRepr::deserialize(deserializer)? {
-            VariablesRepr::Scoped { scope, vars } => Ok(Self {
-                vars_type: scope,
-                inner: vars,
-                separator: None,
-            }),
-            VariablesRepr::Flat(map) => Ok(Self {
-                vars_type: VariablesType::Default,
-                inner: map,
-                separator: None,
-            }),
+        let (vars_type, inner) = match VariablesRepr::deserialize(deserializer)? {
+            VariablesRepr::Scoped { scope, vars } => (scope, vars),
+            VariablesRepr::Flat(map) => (VariablesType::Default, map),
+        };
+        // A config naming a value the wire cannot carry fails at load rather
+        // than on the call it was loaded for.
+        for (key, value) in &inner {
+            check_representable(key, value, vars_type).map_err(serde::de::Error::custom)?;
         }
+        Ok(Self {
+            vars_type,
+            inner,
+            separator: None,
+        })
     }
 }
 
@@ -427,6 +472,7 @@ impl Variables {
                             .ok_or_else(|| {
                                 OriginateError::ParseError(format!("missing = in variable {i}"))
                             })?;
+                        check_representable(key, value, vars_type)?;
                         inner.insert(key.to_string(), value.to_string());
                     }
                 }
@@ -440,7 +486,9 @@ impl Variables {
                         .ok_or_else(|| {
                             OriginateError::ParseError(format!("missing = in variable {i}"))
                         })?;
-                    inner.insert(key.to_string(), unescape_value(value, carrier));
+                    let value = unescape_value(value, carrier);
+                    check_representable(key, &value, vars_type)?;
+                    inner.insert(key.to_string(), value);
                 }
             }
         }
@@ -484,6 +532,47 @@ pub(super) fn split_unescaped_commas(s: &str) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Measured on a live switch: bare, quoted, escaped-quoted and
+    /// backslash-quoted empty values are all discarded, on both carriers, with
+    /// no diagnostic from the switch at any level. Nothing can be emitted for
+    /// one, so it is refused where refusing is possible.
+    /// A config that loaded yesterday and does not today has to say what to do
+    /// about it: the remedy is dropping the key, which is not guessable from
+    /// being told the value is unrepresentable.
+    #[test]
+    fn an_empty_value_is_refused_at_the_boundary() {
+        let err = "{k=,after=sentinel}"
+            .parse::<Variables>()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains('k'), "error does not name the variable: {err}");
+        assert!(
+            err.contains("remove it"),
+            "error does not name a remedy: {err}"
+        );
+        // Prescribing removal alone is wrong for a caller whose *presence* test
+        // is the signal: dropping the key silently reverses that decision.
+        assert!(
+            err.contains("presence"),
+            "error prescribes a fix without allowing that presence meant something: {err}"
+        );
+    }
+
+    /// The switch finds a block's end by counting bracket depth and honours no
+    /// escape while doing so, so a value closing a bracket it never opened ends
+    /// the block early and the rest becomes dial-string text.
+    #[test]
+    fn an_unbalanced_bracket_is_refused_while_a_balanced_one_is_not() {
+        assert!("{k=oops}extra}"
+            .parse::<Variables>()
+            .is_err());
+
+        let balanced: Variables = "{k=${some_var}}"
+            .parse()
+            .expect("a balanced ${...} is ordinary and must parse");
+        assert_eq!(balanced.get("k"), Some("${some_var}"));
+    }
 
     /// A chosen separator is what carries a comma through a value that was
     /// expanded before the block was parsed, so the comma must survive as

@@ -326,6 +326,14 @@ is the only place where newlines are dangerous.
 The same principle applies to `CommandBuilder::header()` and `body()` —
 they reject newlines in both names and values.
 
+A value that cannot be represented at all is refused earlier than that. An empty
+variable value and one closing a bracket it never opened have no working
+encoding — the switch discards the first without logging it and truncates the
+block on the second — so both are rejected at every boundary that can fail,
+config load included. A newline is safe as data and dangerous only on the wire;
+these are impossible at any layer, and a silent drop is indistinguishable from
+success for as long as nobody reads the channel back.
+
 ## Credentials and wire content in logs
 
 ESL authentication sends passwords in cleartext over TCP, and the parsers here
