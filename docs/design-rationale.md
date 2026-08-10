@@ -252,6 +252,13 @@ and `FromStr` with no dependency on `EslClient`. They produce strings,
 - Round-trip testing (`parse` ↔ `to_string`)
 - Reuse in contexts beyond this library (logging, debugging, CLI tools)
 
+`Display` alone cannot serve a value whose escaping depends on the command
+carrying it. A variable block passes through the switch's tokenizer a differing
+number of times depending on which command took it, and each pass consumes one
+level of escaping, so a render that cannot name its destination is right for one
+carrier and quietly wrong for the rest. Such a value names its target, and its
+bare `Display` is the shorthand for one carrier rather than the only form.
+
 ### Serde on command builders for config-driven deployments
 
 The serde derives on `Originate`, `Endpoint`, `Variables`, and
