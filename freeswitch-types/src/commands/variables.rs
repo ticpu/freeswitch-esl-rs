@@ -36,8 +36,11 @@ impl VariablesType {
 
 /// Ordered set of channel variables with FreeSWITCH escaping.
 ///
-/// Values containing commas are escaped with `\,`, single quotes with `\'`,
-/// and values with spaces are wrapped in single quotes.
+/// Backslashes are doubled, commas are escaped with `\,`, single quotes with
+/// `\'`, and values with spaces are wrapped in single quotes. This form
+/// round-trips through [`FromStr`]; what the switch itself decodes depends on
+/// which command carries the block, and is documented in
+/// `docs/dial-string-format.md`.
 ///
 /// # Serde format
 ///
@@ -52,7 +55,9 @@ pub struct Variables {
 }
 
 pub(super) fn escape_value(value: &str) -> String {
+    // The backslash goes first, or the ones introduced below get doubled.
     let escaped = value
+        .replace('\\', "\\\\")
         .replace('\'', "\\'")
         .replace(',', "\\,");
     if escaped.contains(' ') {
@@ -67,8 +72,21 @@ fn unescape_value(value: &str) -> String {
         .strip_prefix('\'')
         .and_then(|s| s.strip_suffix('\''))
         .unwrap_or(value);
-    s.replace("\\,", ",")
-        .replace("\\'", "'")
+
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some(next) => out.push(next),
+            // Hand-written input can end in a backslash that escapes nothing.
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 impl Variables {
