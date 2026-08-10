@@ -321,6 +321,32 @@ pub(super) fn split_unescaped_commas(s: &str) -> Vec<&str> {
 mod tests {
     use super::*;
 
+    /// `split_unescaped_commas` reads a comma behind an even number of
+    /// backslashes as a real separator, so a value ending in a backslash has to
+    /// be written with its own backslash escaped or the writer contradicts the
+    /// reader and the block no longer parses.
+    #[test]
+    fn value_with_backslash_round_trips() {
+        for value in [r"a\,b", r"C:\path", r"trailing\", r"\\", r"a\nb"] {
+            let mut vars = Variables::new(VariablesType::Default);
+            vars.insert("k", value);
+            vars.insert("after", "sentinel");
+            let rendered = vars.to_string();
+
+            let back: Variables = rendered
+                .parse()
+                .unwrap_or_else(|e| {
+                    panic!("{value:?} rendered {rendered} and failed to parse: {e}")
+                });
+            assert_eq!(back.get("k"), Some(value), "rendered {rendered}");
+            assert_eq!(
+                back.get("after"),
+                Some("sentinel"),
+                "value {value:?} ate the next variable: {rendered}"
+            );
+        }
+    }
+
     /// A variable block holds dialled numbers and passthrough header values, so a
     /// malformed part is reported by position.
     #[test]
