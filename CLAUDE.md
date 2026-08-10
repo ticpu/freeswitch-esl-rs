@@ -3,6 +3,16 @@
 This is a **library-first** crate. There is an examples/ folder buildable binaries
 `Cargo.lock` is gitignored per Cargo convention for libraries.
 
+## Reference Documentation
+
+@docs/
+
+Before changing an area, read the doc covering it — the whole file, not the
+section that looks relevant. These carry wire-format and FreeSWITCH behaviour
+detail that is in neither the source nor `design-rationale.md`, which records
+only the decisions and deliberately leaves the mechanics here. Citing a line
+range out of one you have half-read is how a reference goes stale.
+
 ## `freeswitch-types` Version Requirement
 
 While the workspace is on a beta, the root `Cargo.toml` requires the full
