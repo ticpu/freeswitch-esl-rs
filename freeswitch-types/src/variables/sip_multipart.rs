@@ -1,4 +1,5 @@
 use super::{EslArray, EslArrayError};
+use std::borrow::Cow;
 use std::fmt;
 
 /// Errors from [`MultipartBody::parse`].
@@ -63,16 +64,28 @@ impl MultipartItem {
         }
     }
 
-    /// The type and subtype alone, with any MIME parameters stripped.
-    pub fn media_type(&self) -> &str {
-        match self
+    /// MIME type with parameters stripped and lowercased, e.g.
+    /// `application/sdp` from `Application/SDP; charset=utf-8`. Use this to
+    /// dispatch on the type rather than matching [`mime_type`](Self::mime_type)
+    /// directly.
+    pub fn media_type(&self) -> Cow<'_, str> {
+        let bare = match self
             .mime_type
             .find(';')
         {
             Some(i) => &self.mime_type[..i],
             None => &self.mime_type,
         }
-        .trim()
+        .trim();
+
+        if bare
+            .bytes()
+            .any(|b| b.is_ascii_uppercase())
+        {
+            Cow::Owned(bare.to_ascii_lowercase())
+        } else {
+            Cow::Borrowed(bare)
+        }
     }
 }
 
