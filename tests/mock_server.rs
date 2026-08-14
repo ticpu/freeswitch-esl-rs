@@ -1,8 +1,10 @@
 //! Mock FreeSWITCH ESL server for integration testing
+#![allow(dead_code)]
 
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -308,4 +310,17 @@ pub async fn setup_connected_pair_with_options(
 
     let (esl_client, esl_events) = esl_result.unwrap();
     (mock_client, esl_client, esl_events)
+}
+
+/// Receive the next event with a 5s timeout, unwrapping every layer down to
+/// the `EslEvent`. Panics with a descriptive message on timeout, channel
+/// close, or event error -- the common case in tests that expect success.
+pub async fn recv_event(
+    events: &mut freeswitch_esl_tokio::EslEventStream,
+) -> freeswitch_esl_tokio::EslEvent {
+    tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .expect("timeout")
+        .expect("channel closed")
+        .expect("event error")
 }
