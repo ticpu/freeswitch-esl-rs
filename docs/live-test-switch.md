@@ -27,7 +27,9 @@ UUID; see [Writing a live test](#writing-a-live-test).
 ## Session admission rate
 
 **This is the one that bites.** The suite raises `sessions-per-second` to 1000
-once per run, before the first test connects, and leaves it raised.
+before the first test connects, and leaves it raised. It's issued once per
+live test binary rather than once per run -- `fsctl sps` is idempotent, so a
+switch shared across binaries just gets the same value set more than once.
 
 A loopback originate costs two sessions and the bowout pair costs four, so five
 tests originating at once burst well past a stock rate limit — peaks of ~90/s
