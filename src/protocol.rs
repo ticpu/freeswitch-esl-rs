@@ -129,6 +129,7 @@ enum ParseState {
         message_type: MessageType,
         headers: IndexMap<String, String>,
         body_length: usize,
+        lossy_values: LossyValues,
     },
 }
 
@@ -250,19 +251,12 @@ impl EslParser {
                         }
 
                         if length > 0 {
-                            // Body-bearing messages have framing-only envelopes
-                            // (Content-Length/Content-Type/Reply-Text), which
-                            // FreeSWITCH never percent-encodes, so no value here
-                            // can decode lossily.
-                            debug_assert!(
-                                lossy_values.is_empty(),
-                                "framing envelope produced a lossy value"
-                            );
                             // Transition to waiting for body
                             self.state = ParseState::WaitingForBody {
                                 message_type,
                                 headers,
                                 body_length: length,
+                                lossy_values,
                             };
                             // Try to parse body immediately
                             self.parse_message()
@@ -292,6 +286,7 @@ impl EslParser {
                 message_type,
                 headers,
                 body_length,
+                lossy_values,
             } => {
                 if self
                     .buffer
@@ -302,6 +297,7 @@ impl EslParser {
                         message_type,
                         headers,
                         body_length,
+                        lossy_values,
                     };
                     return Ok(None);
                 }
@@ -331,7 +327,8 @@ impl EslParser {
                         lossy
                     }
                 };
-                let mut message = EslMessage::new(message_type, headers, Some(body_str));
+                let mut message = EslMessage::new(message_type, headers, Some(body_str))
+                    .with_lossy_values(lossy_values);
                 message.raw_body = raw_body;
                 Ok(Some(message))
             }
@@ -437,13 +434,11 @@ impl EslParser {
         if let Some(body) = message.body {
             event.set_body(body);
         }
-        if let Some(raw) = message.raw_body {
-            event.set_raw_body(raw);
-        }
         // Synthesize Event-Name so downstream event_type() resolves to
         // EslEventType::Log; FreeSWITCH does not include this header on
         // log/data envelopes.
         event.set_header(EventHeader::EventName.as_str(), EslEventType::Log.as_str());
+        Self::carry_lossy_signal(&mut event, message.lossy_values, message.raw_body);
         Ok(event)
     }
 
@@ -524,6 +519,7 @@ impl EslParser {
 
         // If the event headers contain their own Content-Length, the inner body
         // is that many bytes after the header section
+        let mut inner_raw = None;
         if let Some(ib) = inner_body {
             if !ib.is_empty() {
                 event.set_body(ib.to_string());
@@ -540,12 +536,13 @@ impl EslParser {
                         .position(|w| w == b"\n\n")
                     {
                         raw.drain(..pos + 2);
-                        event.set_raw_body(raw);
+                        inner_raw = Some(raw);
                     }
                 }
             }
         }
 
+        Self::carry_lossy_signal(&mut event, message.lossy_values, inner_raw);
         Ok(event)
     }
 
@@ -584,14 +581,23 @@ impl EslParser {
         Ok(event)
     }
 
-    /// Carry the envelope's lossy-decode signal onto the parsed event.
+    /// Carry the envelope's lossy-decode signal onto the parsed event, keeping
+    /// whatever the event's own values already recorded — every format's parser
+    /// ends here so neither half can shadow the other.
     ///
     /// JSON/XML cannot map wire bytes back to the decoded body, so `raw_body`
     /// is the whole envelope body — the signal (and source bytes) must still
     /// be observable per the warnings-ride-as-data policy.
     fn carry_lossy_signal(event: &mut EslEvent, lossy: LossyValues, raw_body: Option<Vec<u8>>) {
         if !lossy.is_empty() {
-            event.set_lossy_values(lossy);
+            let mut merged = lossy;
+            for value in event
+                .lossy_values()
+                .iter()
+            {
+                merged.push(value.clone());
+            }
+            event.set_lossy_values(merged);
         }
         if let Some(raw) = raw_body {
             event.set_raw_body(raw);
@@ -2000,6 +2006,75 @@ Channel-State: CS_INIT\n\
             Some("Andr\u{FFFD}")
         );
         assert_eq!(event.raw_body(), Some(xml_body));
+    }
+
+    #[test]
+    fn plain_event_merges_envelope_and_body_lossy_values() {
+        let parser = EslParser::new();
+        let mut envelope = LossyValues::default();
+        envelope.push(LossyValue::new(
+            "User-Data".to_string(),
+            "Andr%E9".to_string(),
+        ));
+        let msg = EslMessage::new(
+            MessageType::Event,
+            {
+                let mut h = IndexMap::new();
+                h.insert("Content-Type".to_string(), "text/event-plain".to_string());
+                h
+            },
+            Some("Event-Name: HEARTBEAT\nkey1: %E9foo\n\n".to_string()),
+        )
+        .with_lossy_values(envelope);
+
+        let event = parser
+            .parse_event(msg, EventFormat::Plain)
+            .unwrap();
+
+        let keys: Vec<&str> = event
+            .lossy_values()
+            .iter()
+            .map(|v| v.key())
+            .collect();
+        assert_eq!(keys, vec!["User-Data", "Key1"]);
+    }
+
+    #[test]
+    fn envelope_lossy_value_survives_a_framed_body() {
+        // log/data is the one envelope carrying more than framing headers, so
+        // it is where an outer header can decode lossily on a body-bearing
+        // frame -- the signal must reach the event, not stop at the transition.
+        let mut parser = EslParser::new();
+        let log_text = "some log line\n";
+        let data = format!(
+            "Content-Type: log/data\nContent-Length: {}\nLog-Level: 7\nUser-Data: Andr%E9\n\n{}",
+            log_text.len(),
+            log_text
+        );
+        parser
+            .add_data(data.as_bytes())
+            .unwrap();
+        let message = parser
+            .parse_message()
+            .unwrap()
+            .unwrap();
+        assert!(!message
+            .lossy_values
+            .is_empty());
+
+        let event = parser
+            .parse_event(message, EventFormat::Plain)
+            .unwrap();
+
+        assert_eq!(event.body(), Some(log_text));
+        assert_eq!(event.header_str("User-Data"), Some("Andr\u{FFFD}"));
+        let entry = event
+            .lossy_values()
+            .iter()
+            .next()
+            .unwrap();
+        assert_eq!(entry.key(), "User-Data");
+        assert_eq!(entry.raw_value(), "Andr%E9");
     }
 
     #[test]
