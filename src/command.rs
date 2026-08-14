@@ -4,7 +4,7 @@ use crate::{
     constants::{HEADER_REPLY_TEXT, HEADER_TERMINATOR, LINE_TERMINATOR},
     error::{EslError, EslResult},
     event::EslEvent,
-    headers::{case_alias_key, EventHeader},
+    headers::{case_alias_key, normalize_header_key, EventHeader},
     lookup::HeaderLookup,
     LossyValues,
 };
@@ -134,12 +134,21 @@ pub struct EslResponse {
 }
 
 impl EslResponse {
+    /// Keys are canonicalized with
+    /// [`normalize_header_key`](freeswitch_types::normalize_header_key), so a
+    /// map carrying the same logical header in two casings collapses to one
+    /// entry — the same way [`EslEvent`] treats it.
+    ///
     /// `ReplyStatus` is derived from the `Reply-Text` header. Header
     /// lookups via [`header()`](Self::header) are case-insensitive for
     /// FS framing headers but case-sensitive for `variable_*`,
     /// `sip_h_*`, and `sip_i_*` keys, which must preserve original SIP
     /// wire casing.
     pub fn new(headers: IndexMap<String, String>, body: Option<String>) -> Self {
+        let headers: IndexMap<String, String> = headers
+            .into_iter()
+            .map(|(key, value)| (normalize_header_key(&key), value))
+            .collect();
         let case_index = headers
             .keys()
             .filter_map(|k| case_alias_key(k).map(|alias| (alias, k.clone())))
