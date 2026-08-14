@@ -240,6 +240,12 @@ This is the only mechanism available when values arrive by `${...}` expansion,
 because substitution happens *before* the block is parsed and no escaping can be
 inserted into the result. It works identically on both carriers.
 
+Only the comma changes. The block reaches the same tokenizer the same number of
+times either way, so a literal backslash still needs eight and a single quote
+still needs its per-carrier count: written raw in a `^^` block, `a\nb` arrives
+carrying a newline, and a quote still turns off space splitting for the rest of
+an `originate` line.
+
 It does not help with a quoted value: the quote pairing suppresses splitting on
 whichever separator is in use, so two quoted values still merge.
 
