@@ -884,6 +884,35 @@ mod tests {
     }
 
     #[test]
+    fn esl_response_normalizes_keys_like_esl_event() {
+        // A CODEC event carries the same logical header in two casings; both
+        // types must collapse them onto the same canonical entry.
+        let raw: IndexMap<String, String> = [
+            ("unique-id".into(), "first".into()),
+            ("Unique-ID".into(), "second".into()),
+        ]
+        .into();
+
+        let mut event = EslEvent::new();
+        for (key, value) in &raw {
+            event.set_header(key.clone(), value.clone());
+        }
+        let resp = EslResponse::new(raw, None);
+
+        assert_eq!(
+            resp.headers()
+                .keys()
+                .collect::<Vec<_>>(),
+            event
+                .headers()
+                .keys()
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(resp.header("Unique-ID"), event.header_str("Unique-ID"));
+        assert_eq!(resp.header("unique-id"), event.header_str("unique-id"));
+    }
+
+    #[test]
     fn esl_response_underscored_keys_preserve_case() {
         // variable_*, sip_h_*, sip_i_* must preserve original SIP wire
         // casing — the lowercase fallback must not match these keys, or
