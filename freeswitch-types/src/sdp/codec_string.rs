@@ -531,26 +531,6 @@ impl CodecString {
         }
     }
 
-    /// `true` if any entry's name equals `name` (case-insensitive).
-    ///
-    /// FreeSWITCH's codec hash is case-insensitive (`switch_core_hash_init_nocase`,
-    /// `switch_loadable_module.c:2120`).
-    pub fn contains_name(&self, name: &str) -> bool {
-        self.0
-            .iter()
-            .any(|e| {
-                e.name()
-                    .eq_ignore_ascii_case(name)
-            })
-    }
-
-    /// Iterator over codec names in order.
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.0
-            .iter()
-            .map(|e| e.name())
-    }
-
     /// Iterator over entries that carry at least one explicit qualifier or fmtp.
     ///
     /// Two unrelated reasons make these worth surfacing to the caller. A numeric
@@ -585,67 +565,9 @@ impl CodecString {
     /// Maximum entries FreeSWITCH processes per codec string (`SWITCH_MAX_CODECS`,
     /// `switch_types.h:595`).
     ///
-    /// The cap applies to raw token slots — including empty ones from consecutive
-    /// commas — not to the number of parsed entries. Use [`raw_token_count`](Self::raw_token_count)
-    /// on the original string to compare against this limit accurately.
+    /// The cap applies to raw token slots — including the empty ones consecutive commas
+    /// produce — not to the number of parsed entries.
     pub const MAX_SWITCH_ENTRIES: usize = 50;
-
-    /// How many entries this list has beyond [`MAX_SWITCH_ENTRIES`](Self::MAX_SWITCH_ENTRIES).
-    ///
-    /// FreeSWITCH's codec array (`switch_types.h:595`) silently ignores entries beyond
-    /// position 50. Returns 0 when within the limit.
-    pub fn excess_count(&self) -> usize {
-        self.0
-            .len()
-            .saturating_sub(Self::MAX_SWITCH_ENTRIES)
-    }
-
-    /// Count the token slots a raw codec string would consume in FreeSWITCH's
-    /// `separate_string_char_delim` (`switch_utils.c:2768-2799`).
-    ///
-    /// Unlike `len()` on a parsed [`CodecString`], this counts empty slots from
-    /// consecutive commas: `"PCMU,,PCMA"` → 3, not 2. Compare against
-    /// [`MAX_SWITCH_ENTRIES`](Self::MAX_SWITCH_ENTRIES) to detect silent truncation.
-    pub fn raw_token_count(s: &str) -> usize {
-        // Port of the START/FIND_DELIM state machine, not a delimiter tally: C
-        // allocates a slot only on *entering* START with a non-null char, so a
-        // trailing or doubled comma doesn't necessarily mean an extra slot.
-        enum State {
-            Start,
-            FindDelim,
-        }
-
-        let chars: Vec<char> = s
-            .chars()
-            .collect();
-        let mut state = State::Start;
-        let mut count = 0usize;
-        let mut inside_quotes = false;
-        let mut i = 0usize;
-        while i < chars.len() {
-            match state {
-                State::Start => {
-                    count += 1;
-                    state = State::FindDelim;
-                    // No advance: C re-enters the switch on the same char in FIND_DELIM.
-                }
-                State::FindDelim => {
-                    if chars[i] == '\\' {
-                        // Escaped char: the C ESCAPE_META branch advances once here,
-                        // then the shared trailing advance below skips the escapee too.
-                        i += 1;
-                    } else if chars[i] == '\'' && (inside_quotes || chars[i + 1..].contains(&'\''))
-                    {
-                        inside_quotes = !inside_quotes;
-                    } else if chars[i] == ',' && !inside_quotes {
-                        state = State::Start;
-                    }
-                    i += 1;
-                }
-            }
-        }
-        count
-    }
 }
 
 impl fmt::Display for CodecString {
@@ -2244,27 +2166,6 @@ mod tests {
     }
 
     #[test]
-    fn contains_name_case_insensitive() {
-        let cs: CodecString = "PCMU,pcma"
-            .parse()
-            .unwrap();
-        assert!(cs.contains_name("pcmu"));
-        assert!(cs.contains_name("PCMA"));
-        assert!(!cs.contains_name("G722"));
-    }
-
-    #[test]
-    fn names_yields_all_names() {
-        let cs: CodecString = "PCMU,PCMA"
-            .parse()
-            .unwrap();
-        let names: Vec<&str> = cs
-            .names()
-            .collect();
-        assert_eq!(names, vec!["PCMU", "PCMA"]);
-    }
-
-    #[test]
     fn qualified_yields_entries_with_qualifiers() {
         let cs: CodecString = "PCMU,PCMU@8000h,AMR@8000h@40i"
             .parse()
@@ -2280,55 +2181,6 @@ mod tests {
     #[test]
     fn max_switch_entries_const() {
         assert_eq!(CodecString::MAX_SWITCH_ENTRIES, 50);
-    }
-
-    #[test]
-    fn excess_count_at_limit() {
-        let mut cs = CodecString::new();
-        for _ in 0..50 {
-            cs.push(CodecStringEntry::new("PCMU").unwrap());
-        }
-        assert_eq!(cs.excess_count(), 0);
-    }
-
-    #[test]
-    fn excess_count_over_limit() {
-        let mut cs = CodecString::new();
-        for _ in 0..51 {
-            cs.push(CodecStringEntry::new("PCMU").unwrap());
-        }
-        assert_eq!(cs.excess_count(), 1);
-    }
-
-    #[test]
-    fn raw_token_count_double_comma() {
-        // C's separate_string_char_delim assigns a slot for every token including empties.
-        assert_eq!(CodecString::raw_token_count("PCMU,,PCMA"), 3);
-    }
-
-    #[test]
-    fn raw_token_count_simple() {
-        assert_eq!(CodecString::raw_token_count("PCMU,PCMA,G722"), 3);
-        assert_eq!(CodecString::raw_token_count("PCMU"), 1);
-        assert_eq!(CodecString::raw_token_count(""), 0);
-    }
-
-    #[test]
-    fn raw_token_count_trailing_comma_is_one_slot() {
-        // C only allocates a slot on entering START with a non-null char; a
-        // trailing comma never starts a new token, so it isn't a second slot.
-        assert_eq!(CodecString::raw_token_count("PCMU,"), 1);
-    }
-
-    #[test]
-    fn raw_token_count_bare_commas_two_slots() {
-        assert_eq!(CodecString::raw_token_count("A,,"), 2);
-    }
-
-    #[test]
-    fn raw_token_count_escaped_comma_not_split() {
-        // \, in fmtp is one entry, not two tokens
-        assert_eq!(CodecString::raw_token_count("AMR~mode-set=0\\,1"), 1);
     }
 
     // --- Step 5: dedup() ---
@@ -2519,7 +2371,9 @@ mod tests {
         // Every name present in the input must appear in the output.
         let cs = dedup("PCMU,PCMA,G722,PCMU,PCMA");
         let out_names: std::collections::HashSet<&str> = cs
-            .names()
+            .entries()
+            .iter()
+            .map(|e| e.name())
             .collect();
         for name in &["PCMU", "PCMA", "G722"] {
             assert!(

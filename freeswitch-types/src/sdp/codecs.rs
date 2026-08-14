@@ -2095,7 +2095,10 @@ mod tests {
             .audio_codec_string(&CodecStringOptions::default(), None)
             .unwrap();
         assert!(
-            audio_cs.contains_name("t38"),
+            audio_cs
+                .entries()
+                .iter()
+                .any(|e| e.name() == "t38"),
             "an offered m=image section must append a literal t38 entry to the audio string"
         );
     }

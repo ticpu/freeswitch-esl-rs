@@ -60,8 +60,8 @@ refs:
 - src/switch_core_media.c:13594-13603 39d1f0a6d82f
 - src/switch_core_media.c:13608 906bfc549200
 - src/switch_core_media.c:13617-13619 71bf13d6b2e6
-- src/switch_core_media.c:13650 965a0ab3168d
 - src/switch_core_media.c:13650-13651 df5b3919c1dd
+- src/switch_core_media.c:13650 965a0ab3168d
 - src/switch_core_media.c:13651 d4448ac04d86
 - src/switch_core_media.c:13658 80dfd23faf8b
 - src/switch_core_media.c:13674-13731 348c9a7f65dd
@@ -113,7 +113,6 @@ refs:
 - src/switch_utils.c:2720 822e75441aad
 - src/switch_utils.c:2728 e96958b14338
 - src/switch_utils.c:2768 92828ee48cb1
-- src/switch_utils.c:2768-2799 a49ceb9709b0
 - src/switch_utils.c:2782-2783 a8eedd668f97
 - src/switch_utils.c:2789 0a8b610dc9fd
 - src/switch_utils.c:2791 7dbb736d32ec

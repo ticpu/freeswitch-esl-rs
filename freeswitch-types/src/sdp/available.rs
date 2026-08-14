@@ -268,8 +268,12 @@ mod tests {
         assert_eq!(removed[0].name(), "EVS");
         assert_eq!(removed[0].fmtp(), Some("mode=1"));
         assert_eq!(cs.len(), 2);
-        assert!(cs.contains_name("pcmu"));
-        assert!(cs.contains_name("AMR"));
+        let kept: Vec<&str> = cs
+            .entries()
+            .iter()
+            .map(|e| e.name())
+            .collect();
+        assert_eq!(kept, vec!["pcmu", "AMR"]);
     }
 
     #[test]
