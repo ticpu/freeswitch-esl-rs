@@ -1,3 +1,4 @@
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
@@ -10,7 +11,7 @@ use crate::{
     constants::{CONTENT_TYPE_LOG_DATA, HEADER_CONTENT_TYPE, SOCKET_BUF_SIZE},
     error::EslError,
     event::{EslEvent, EventFormat},
-    protocol::{EslParser, MessageType},
+    protocol::{EslMessage, EslParser, MessageType},
 };
 
 use super::reexec::ReexecReader;
@@ -123,6 +124,255 @@ async fn fail_pending_reply(shared: &SharedState) {
     pending.stale_replies = 0;
 }
 
+/// Routes one parsed message to the event channel or to the waiting command.
+///
+/// `Break` ends the reader loop, carrying the same reason its exits return.
+async fn dispatch_message(
+    message: EslMessage,
+    parser: &EslParser,
+    shared: &SharedState,
+    event_tx: &mpsc::Sender<Result<EslEvent, EslError>>,
+) -> ControlFlow<Option<DisconnectReason>> {
+    match message.message_type {
+        MessageType::Event => {
+            let ct = message
+                .headers
+                .get(HEADER_CONTENT_TYPE)
+                .map(|s| s.as_str());
+
+            // log/data uses single-level framing handled inside
+            // parse_event; skip the format check for it.
+            let format = if ct == Some(CONTENT_TYPE_LOG_DATA) {
+                EventFormat::Plain
+            } else {
+                match ct.map(EventFormat::from_content_type) {
+                    Some(Ok(f)) => f,
+                    Some(Err(e)) => {
+                        warn!("Unknown event content type: {}", e);
+                        if !dispatch_event(
+                            event_tx,
+                            shared,
+                            Err(EslError::InvalidEventFormat {
+                                format: e
+                                    .0
+                                    .clone(),
+                            }),
+                        ) {
+                            debug!("Event channel closed, reader exiting");
+                            return ControlFlow::Break(None);
+                        }
+                        return ControlFlow::Continue(());
+                    }
+                    None => EventFormat::Plain,
+                }
+            };
+
+            let event_result = parser.parse_event(message, format);
+            if !dispatch_event(event_tx, shared, event_result) {
+                debug!("Event channel closed, reader exiting");
+                return ControlFlow::Break(None);
+            }
+        }
+        MessageType::CommandReply | MessageType::ApiResponse => {
+            let mut pending = shared
+                .pending_reply
+                .lock()
+                .await;
+            if pending.stale_replies > 0 {
+                // A previous command timed out and its server reply
+                // arrived late. Discard to preserve correlation.
+                pending.stale_replies -= 1;
+                let reply_text = message
+                    .headers
+                    .get("Reply-Text")
+                    .map(|s| s.as_str())
+                    .unwrap_or("<none>");
+                warn!(
+                    "Discarded stale {:?} reply (Reply-Text: {}) to preserve \
+                     command-reply correlation; {} stale replies remaining",
+                    message.message_type, reply_text, pending.stale_replies,
+                );
+            } else if let Some(tx) = pending
+                .waiting
+                .take()
+            {
+                if tx
+                    .send(message)
+                    .is_err()
+                {
+                    // Caller's receiver was dropped: timeout raced the
+                    // delivery. The timeout arm did not increment
+                    // stale_replies (it saw waiting=None), so this reply
+                    // is already accounted for — no counter adjustment.
+                    debug!("Reply channel closed before delivery (timeout race); reply discarded");
+                }
+            } else {
+                warn!(
+                    "Received unsolicited {:?} with no pending command",
+                    message.message_type,
+                );
+            }
+        }
+        MessageType::Disconnect => {
+            let disposition = message
+                .headers
+                .get("Content-Disposition")
+                .map(|s| s.as_str());
+            if disposition == Some("linger") {
+                debug!("Received disconnect notice with linger disposition, ignoring");
+                return ControlFlow::Continue(());
+            }
+            let controlled_session_uuid = message
+                .headers
+                .get("Controlled-Session-UUID")
+                .cloned();
+            info!("Received disconnect notice from server");
+            return ControlFlow::Break(Some(DisconnectReason::ServerNotice {
+                controlled_session_uuid,
+                body: message.body,
+            }));
+        }
+        MessageType::RudeRejection => {
+            let reason = message
+                .body
+                .unwrap_or_else(|| "rude-rejection without body".to_string());
+            warn!("Rude rejection from server: {}", reason);
+            dispatch_event(
+                event_tx,
+                shared,
+                Err(EslError::AccessDenied {
+                    reason: reason.clone(),
+                }),
+            );
+            return ControlFlow::Break(Some(DisconnectReason::AccessDenied(reason)));
+        }
+        MessageType::AuthRequest => {
+            // After authentication, an unsolicited auth/request
+            // means FreeSWITCH and the client are out of sync —
+            // treat as a protocol error and tear down.
+            let reason = "unsolicited auth/request received after authentication".to_string();
+            warn!("{reason}");
+            dispatch_event(
+                event_tx,
+                shared,
+                Err(EslError::protocol_error(reason.clone())),
+            );
+            return ControlFlow::Break(Some(DisconnectReason::ProtocolError(reason)));
+        }
+    }
+    ControlFlow::Continue(())
+}
+
+/// The teardown caller awaits this channel, so a drain that ends without
+/// sending leaves it blocked until its own timeout.
+#[cfg(unix)]
+fn fail_reexec(reexec: &mut ReexecReader, error: EslError) {
+    if let Some(tx) = reexec
+        .result_tx
+        .take()
+    {
+        if tx
+            .send(Err(error))
+            .is_err()
+        {
+            debug!("Re-exec caller gone before the drain failure was delivered");
+        }
+    }
+}
+
+/// One drain step once the re-exec stop signal has fired.
+///
+/// Stops only at a clean message boundary: mid-body, the residual would be a
+/// partial body without its headers, which the new process cannot parse.
+#[cfg(unix)]
+async fn drain_for_reexec(
+    reader: &mut OwnedReadHalf,
+    parser: &mut EslParser,
+    read_buffer: &mut [u8],
+    reexec: &mut ReexecReader,
+) -> ControlFlow<Option<DisconnectReason>> {
+    use crate::constants::REEXEC_DRAIN_TIMEOUT_MS;
+
+    if parser.is_waiting_for_headers() {
+        let residual = parser
+            .remaining_bytes()
+            .to_vec();
+        debug!("Re-exec drain complete, {} residual bytes", residual.len());
+        if let Some(tx) = reexec
+            .result_tx
+            .take()
+        {
+            if tx
+                .send(Ok(residual))
+                .is_err()
+            {
+                warn!("Re-exec caller gone before the residual bytes were delivered");
+            }
+        }
+        return ControlFlow::Break(Some(DisconnectReason::ReexecTeardown));
+    }
+
+    // WaitingForBody: more socket data is needed to finish the current message.
+    let drain_timeout = Duration::from_millis(REEXEC_DRAIN_TIMEOUT_MS);
+    match timeout(drain_timeout, reader.read(read_buffer)).await {
+        Ok(Ok(0)) => {
+            warn!("Connection closed during re-exec drain");
+            fail_reexec(
+                reexec,
+                EslError::ReexecFailed {
+                    reason: "connection closed during drain".into(),
+                },
+            );
+            ControlFlow::Break(None)
+        }
+        Ok(Ok(n)) => {
+            if let Err(e) = parser.add_data(&read_buffer[..n]) {
+                warn!("Buffer error during re-exec drain: {}", e);
+                fail_reexec(reexec, e);
+                return ControlFlow::Break(None);
+            }
+            ControlFlow::Continue(())
+        }
+        Ok(Err(e)) => {
+            warn!("Read error during re-exec drain: {}", e);
+            fail_reexec(reexec, EslError::Io(e));
+            ControlFlow::Break(None)
+        }
+        Err(_) => {
+            warn!("Re-exec drain timeout waiting for message body");
+            fail_reexec(
+                reexec,
+                EslError::ReexecFailed {
+                    reason: "drain timeout waiting for message body".into(),
+                },
+            );
+            ControlFlow::Break(None)
+        }
+    }
+}
+
+/// Traffic-idle check for the read-timeout tick; a zero threshold disables it.
+fn liveness_expired(shared: &SharedState, last_recv: Instant) -> bool {
+    use std::sync::atomic::Ordering;
+
+    let threshold_ms = shared
+        .liveness_timeout_ms
+        .load(Ordering::Relaxed);
+    if threshold_ms == 0 {
+        return false;
+    }
+    let elapsed = last_recv.elapsed();
+    if elapsed <= Duration::from_millis(threshold_ms) {
+        return false;
+    }
+    warn!(
+        "Liveness timeout: {}ms without traffic (threshold {}ms)",
+        elapsed.as_millis(),
+        threshold_ms
+    );
+    true
+}
+
 /// Returns the reason its caller broadcasts, or `None` for the exits that
 /// publish none: a closed event channel, or a re-exec failure already delivered
 /// on the teardown result channel.
@@ -133,8 +383,6 @@ async fn reader_loop_inner(
     event_tx: &mpsc::Sender<Result<EslEvent, EslError>>,
     #[cfg_attr(not(unix), allow(unused_variables, unused_mut))] mut reexec: ReexecReader,
 ) -> Option<DisconnectReason> {
-    use std::sync::atomic::Ordering;
-
     let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
     let mut last_recv = Instant::now();
     #[cfg(unix)]
@@ -144,138 +392,10 @@ async fn reader_loop_inner(
         // Try to parse a complete message from buffered data first
         match parser.parse_message() {
             Ok(Some(message)) => {
-                match message.message_type {
-                    MessageType::Event => {
-                        let ct = message
-                            .headers
-                            .get(HEADER_CONTENT_TYPE)
-                            .map(|s| s.as_str());
-
-                        // log/data uses single-level framing handled inside
-                        // parse_event; skip the format check for it.
-                        let format = if ct == Some(CONTENT_TYPE_LOG_DATA) {
-                            EventFormat::Plain
-                        } else {
-                            match ct.map(EventFormat::from_content_type) {
-                                Some(Ok(f)) => f,
-                                Some(Err(e)) => {
-                                    warn!("Unknown event content type: {}", e);
-                                    if !dispatch_event(
-                                        event_tx,
-                                        &shared,
-                                        Err(EslError::InvalidEventFormat {
-                                            format: e
-                                                .0
-                                                .clone(),
-                                        }),
-                                    ) {
-                                        debug!("Event channel closed, reader exiting");
-                                        return None;
-                                    }
-                                    continue;
-                                }
-                                None => EventFormat::Plain,
-                            }
-                        };
-
-                        let event_result = parser.parse_event(message, format);
-                        if !dispatch_event(event_tx, &shared, event_result) {
-                            debug!("Event channel closed, reader exiting");
-                            return None;
-                        }
-                    }
-                    MessageType::CommandReply | MessageType::ApiResponse => {
-                        let mut pending = shared
-                            .pending_reply
-                            .lock()
-                            .await;
-                        if pending.stale_replies > 0 {
-                            // A previous command timed out and its server reply
-                            // arrived late. Discard to preserve correlation.
-                            pending.stale_replies -= 1;
-                            let reply_text = message
-                                .headers
-                                .get("Reply-Text")
-                                .map(|s| s.as_str())
-                                .unwrap_or("<none>");
-                            warn!(
-                                "Discarded stale {:?} reply (Reply-Text: {}) to preserve \
-                                 command-reply correlation; {} stale replies remaining",
-                                message.message_type, reply_text, pending.stale_replies,
-                            );
-                        } else if let Some(tx) = pending
-                            .waiting
-                            .take()
-                        {
-                            if tx
-                                .send(message)
-                                .is_err()
-                            {
-                                // Caller's receiver was dropped: timeout raced the
-                                // delivery. The timeout arm did not increment
-                                // stale_replies (it saw waiting=None), so this reply
-                                // is already accounted for — no counter adjustment.
-                                debug!(
-                                    "Reply channel closed before delivery (timeout race); \
-                                     reply discarded"
-                                );
-                            }
-                        } else {
-                            warn!(
-                                "Received unsolicited {:?} with no pending command",
-                                message.message_type,
-                            );
-                        }
-                    }
-                    MessageType::Disconnect => {
-                        let disposition = message
-                            .headers
-                            .get("Content-Disposition")
-                            .map(|s| s.as_str());
-                        if disposition == Some("linger") {
-                            debug!("Received disconnect notice with linger disposition, ignoring");
-                            continue;
-                        }
-                        let controlled_session_uuid = message
-                            .headers
-                            .get("Controlled-Session-UUID")
-                            .cloned();
-                        info!("Received disconnect notice from server");
-                        return Some(DisconnectReason::ServerNotice {
-                            controlled_session_uuid,
-                            body: message.body,
-                        });
-                    }
-                    MessageType::RudeRejection => {
-                        let reason = message
-                            .body
-                            .unwrap_or_else(|| "rude-rejection without body".to_string());
-                        warn!("Rude rejection from server: {}", reason);
-                        dispatch_event(
-                            event_tx,
-                            &shared,
-                            Err(EslError::AccessDenied {
-                                reason: reason.clone(),
-                            }),
-                        );
-                        return Some(DisconnectReason::AccessDenied(reason));
-                    }
-                    MessageType::AuthRequest => {
-                        // After authentication, an unsolicited auth/request
-                        // means FreeSWITCH and the client are out of sync —
-                        // treat as a protocol error and tear down.
-                        let reason =
-                            "unsolicited auth/request received after authentication".to_string();
-                        warn!("{reason}");
-                        dispatch_event(
-                            event_tx,
-                            &shared,
-                            Err(EslError::protocol_error(reason.clone())),
-                        );
-                        return Some(DisconnectReason::ProtocolError(reason));
-                    }
+                match dispatch_message(message, &parser, &shared, event_tx).await {
+                    ControlFlow::Continue(()) => continue,
+                    ControlFlow::Break(reason) => return reason,
                 }
-                continue;
             }
             Ok(None) => {
                 // Need more data from socket
@@ -286,81 +406,14 @@ async fn reader_loop_inner(
             }
         }
 
-        // Re-exec drain completion: parser needs more data and is between messages
-        #[cfg(unix)]
-        if draining && parser.is_waiting_for_headers() {
-            let residual = parser
-                .remaining_bytes()
-                .to_vec();
-            debug!("Re-exec drain complete, {} residual bytes", residual.len());
-            if let Some(tx) = reexec
-                .result_tx
-                .take()
-            {
-                if tx
-                    .send(Ok(residual))
-                    .is_err()
-                {
-                    warn!("Re-exec caller gone before the residual bytes were delivered");
-                }
-            }
-            return Some(DisconnectReason::ReexecTeardown);
-        }
-
-        // Re-exec drain: WaitingForBody, need more socket data to finish the
-        // current message before we can stop cleanly.
+        // Only reached with no complete message buffered, which is the state
+        // the drain inspects for a clean stop.
         #[cfg(unix)]
         if draining {
-            use crate::constants::REEXEC_DRAIN_TIMEOUT_MS;
-            let drain_timeout = Duration::from_millis(REEXEC_DRAIN_TIMEOUT_MS);
-            match timeout(drain_timeout, reader.read(&mut read_buffer)).await {
-                Ok(Ok(0)) => {
-                    warn!("Connection closed during re-exec drain");
-                    if let Some(tx) = reexec
-                        .result_tx
-                        .take()
-                    {
-                        let _ = tx.send(Err(EslError::ReexecFailed {
-                            reason: "connection closed during drain".into(),
-                        }));
-                    }
-                    return None;
-                }
-                Ok(Ok(n)) => {
-                    if let Err(e) = parser.add_data(&read_buffer[..n]) {
-                        if let Some(tx) = reexec
-                            .result_tx
-                            .take()
-                        {
-                            let _ = tx.send(Err(e));
-                        }
-                        return None;
-                    }
-                }
-                Ok(Err(e)) => {
-                    warn!("Read error during re-exec drain: {}", e);
-                    if let Some(tx) = reexec
-                        .result_tx
-                        .take()
-                    {
-                        let _ = tx.send(Err(EslError::Io(e)));
-                    }
-                    return None;
-                }
-                Err(_) => {
-                    warn!("Re-exec drain timeout waiting for message body");
-                    if let Some(tx) = reexec
-                        .result_tx
-                        .take()
-                    {
-                        let _ = tx.send(Err(EslError::ReexecFailed {
-                            reason: "drain timeout waiting for message body".into(),
-                        }));
-                    }
-                    return None;
-                }
+            match drain_for_reexec(&mut reader, &mut parser, &mut read_buffer, &mut reexec).await {
+                ControlFlow::Continue(()) => continue,
+                ControlFlow::Break(reason) => return reason,
             }
-            continue;
         }
 
         // Normal read path with optional reexec stop signal
@@ -395,20 +448,8 @@ async fn reader_loop_inner(
                 return Some(DisconnectReason::IoError(e.to_string()));
             }
             Err(_) => {
-                // Timeout -- check liveness
-                let threshold_ms = shared
-                    .liveness_timeout_ms
-                    .load(Ordering::Relaxed);
-                if threshold_ms > 0 {
-                    let elapsed = last_recv.elapsed();
-                    if elapsed > Duration::from_millis(threshold_ms) {
-                        warn!(
-                            "Liveness timeout: {}ms without traffic (threshold {}ms)",
-                            elapsed.as_millis(),
-                            threshold_ms
-                        );
-                        return Some(DisconnectReason::HeartbeatExpired);
-                    }
+                if liveness_expired(&shared, last_recv) {
+                    return Some(DisconnectReason::HeartbeatExpired);
                 }
             }
         }
