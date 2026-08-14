@@ -354,41 +354,7 @@ impl freeswitch_types::sip_header::SipHeaderLookup for EslResponse {
         self.lookup_header(name)
     }
 
-    fn call_info(
-        &self,
-    ) -> Result<
-        Option<freeswitch_types::sip_header::UriInfo>,
-        freeswitch_types::sip_header::UriInfoError,
-    > {
-        match self.sip_header(freeswitch_types::sip_header::SipHeader::CallInfo) {
-            Some(s) => freeswitch_types::EslHeaders::parse_uri_info(s).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    fn history_info(
-        &self,
-    ) -> Result<
-        Option<freeswitch_types::sip_header::HistoryInfo>,
-        freeswitch_types::sip_header::HistoryInfoError,
-    > {
-        match self.sip_header(freeswitch_types::sip_header::SipHeader::HistoryInfo) {
-            Some(s) => freeswitch_types::EslHeaders::parse_history_info(s).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    fn alert_info(
-        &self,
-    ) -> Result<
-        Option<freeswitch_types::sip_header::UriInfo>,
-        freeswitch_types::sip_header::UriInfoError,
-    > {
-        match self.sip_header(freeswitch_types::sip_header::SipHeader::AlertInfo) {
-            Some(s) => freeswitch_types::EslHeaders::parse_uri_info(s).map(Some),
-            None => Ok(None),
-        }
-    }
+    freeswitch_types::esl_sip_header_overrides!();
 }
 
 impl HeaderLookup for EslResponse {

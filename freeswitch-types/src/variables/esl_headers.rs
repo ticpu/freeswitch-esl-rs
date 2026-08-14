@@ -17,9 +17,7 @@
 //! visible" explains the layering.
 
 use indexmap::IndexMap;
-use sip_header::{
-    HistoryInfo, HistoryInfoError, SipHeader, SipHeaderLookup, UriInfo, UriInfoError,
-};
+use sip_header::{HistoryInfo, HistoryInfoError, SipHeaderLookup, UriInfo, UriInfoError};
 
 use crate::lookup::HeaderLookup;
 use crate::variables::{EslArray, EslArrayError};
@@ -188,6 +186,42 @@ impl EslHeaders {
     }
 }
 
+/// Internal: emits the [`SipHeaderLookup`] method overrides that peel
+/// FreeSWITCH's ARRAY and bracket encoding before RFC parsing. Invoke inside
+/// an `impl SipHeaderLookup for T` block. Not part of the stable API.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! esl_sip_header_overrides {
+    () => {
+        fn call_info(
+            &self,
+        ) -> Result<Option<$crate::sip_header::UriInfo>, $crate::sip_header::UriInfoError> {
+            match self.sip_header($crate::sip_header::SipHeader::CallInfo) {
+                Some(s) => $crate::variables::EslHeaders::parse_uri_info(s).map(Some),
+                None => Ok(None),
+            }
+        }
+
+        fn history_info(
+            &self,
+        ) -> Result<Option<$crate::sip_header::HistoryInfo>, $crate::sip_header::HistoryInfoError> {
+            match self.sip_header($crate::sip_header::SipHeader::HistoryInfo) {
+                Some(s) => $crate::variables::EslHeaders::parse_history_info(s).map(Some),
+                None => Ok(None),
+            }
+        }
+
+        fn alert_info(
+            &self,
+        ) -> Result<Option<$crate::sip_header::UriInfo>, $crate::sip_header::UriInfoError> {
+            match self.sip_header($crate::sip_header::SipHeader::AlertInfo) {
+                Some(s) => $crate::variables::EslHeaders::parse_uri_info(s).map(Some),
+                None => Ok(None),
+            }
+        }
+    };
+}
+
 impl SipHeaderLookup for EslHeaders {
     fn sip_header_str(&self, name: &str) -> Option<&str> {
         self.0
@@ -195,26 +229,7 @@ impl SipHeaderLookup for EslHeaders {
             .map(|s| s.as_str())
     }
 
-    fn call_info(&self) -> Result<Option<UriInfo>, UriInfoError> {
-        match self.sip_header(SipHeader::CallInfo) {
-            Some(s) => Self::parse_uri_info(s).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    fn history_info(&self) -> Result<Option<HistoryInfo>, HistoryInfoError> {
-        match self.sip_header(SipHeader::HistoryInfo) {
-            Some(s) => Self::parse_history_info(s).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    fn alert_info(&self) -> Result<Option<UriInfo>, UriInfoError> {
-        match self.sip_header(SipHeader::AlertInfo) {
-            Some(s) => Self::parse_uri_info(s).map(Some),
-            None => Ok(None),
-        }
-    }
+    crate::esl_sip_header_overrides!();
 }
 
 impl HeaderLookup for EslHeaders {
