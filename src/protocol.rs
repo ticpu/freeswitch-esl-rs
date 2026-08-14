@@ -378,20 +378,22 @@ impl EslParser {
         let mut lossy = LossyValues::default();
         for line in headers_str.lines() {
             if let Some((key, raw_value)) = Self::parse_header_line(line)? {
-                let value = Self::decode_value(
-                    &key,
-                    &raw_value,
-                    "header",
-                    if self.strict_header_utf8 {
-                        None
-                    } else {
-                        Some(&mut lossy)
-                    },
-                )?;
+                let value =
+                    Self::decode_value(&key, &raw_value, "header", self.lossy_sink(&mut lossy))?;
                 headers.insert(key, value);
             }
         }
         Ok((headers, lossy))
+    }
+
+    /// The accumulator [`decode_value`](Self::decode_value) records into, or
+    /// `None` under `strict_header_utf8` to select the hard-fail path.
+    fn lossy_sink<'a>(&self, acc: &'a mut LossyValues) -> Option<&'a mut LossyValues> {
+        if self.strict_header_utf8 {
+            None
+        } else {
+            Some(acc)
+        }
     }
 
     /// Parse event from message, handling different formats.
@@ -512,11 +514,7 @@ impl EslParser {
                     &key,
                     &raw_value,
                     "event header",
-                    if self.strict_header_utf8 {
-                        None
-                    } else {
-                        Some(&mut lossy)
-                    },
+                    self.lossy_sink(&mut lossy),
                 )?;
                 event.set_header(key, value);
             }
