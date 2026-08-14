@@ -1,0 +1,94 @@
+exclude_files = ["target/**", "worktrees/**", ".claude/**", "scratch/**"]
+strict_closures = false
+strict_iterator_chains = false
+allow_recursion = false
+strict_error_propagation = false
+
+# ── Suppression Health ───────────────────────────────────────────────────
+
+max_suppression_ratio = 0.05
+fail_on_warnings = false
+
+# ── Complexity Analysis ──────────────────────────────────────────────────
+
+[complexity]
+enabled = true
+max_cognitive = 30
+max_cyclomatic = 15
+max_nesting_depth = 6
+max_function_lines = 120
+include_nesting_penalty = true
+detect_magic_numbers = true
+detect_unsafe = true
+detect_error_handling = true
+allowed_magic_numbers = ["0", "1", "-1", "2"]
+
+# ── DRY / Duplicate Detection ───────────────────────────────────────────
+
+[duplicates]
+enabled = true
+similarity_threshold = 0.85
+min_tokens = 30
+min_lines = 5
+min_statements = 3
+ignore_trait_impls = true
+detect_dead_code = true
+detect_dead_types = true
+detect_wildcard_imports = true
+detect_repeated_matches = true
+
+# ── Boilerplate Detection ───────────────────────────────────────────────
+
+[boilerplate]
+enabled = true
+suggest_crates = true
+
+# ── SRP (Single Responsibility) ─────────────────────────────────────────
+
+[srp]
+enabled = true
+smell_threshold = 0.6
+max_fields = 12
+max_methods = 20
+max_fan_out = 10
+lcom4_threshold = 2
+weights = [0.4, 0.25, 0.15, 0.2]
+file_length = 1000
+max_independent_clusters = 2
+min_cluster_statements = 5
+max_parameters = 5
+
+# ── Coupling Analysis ───────────────────────────────────────────────────
+
+[coupling]
+enabled = true
+max_instability = 0.8
+max_fan_in = 15
+max_fan_out = 12
+check_sdp = true
+
+# ── Test Quality Analysis ──────────────────────────────────────────────
+
+[test_quality]
+enabled = true
+# coverage_file = "lcov.info"
+
+# ── Test-Code Thresholds ───────────────────────────────────────────────
+# A curated subset of checks also runs on test code (DRY-001/004/005, LONG_FN,
+# SRP file-length, god-struct SRP-001). Each key overrides the matching
+# production threshold FOR TEST CODE ONLY; unset = inherit production.
+
+[tests]
+file_length = 1500
+
+# ── Quality Score Weights ──────────────────────────────────────────────
+# Must sum to approximately 1.0.
+
+[weights]
+iosp         = 0.22
+complexity   = 0.18
+dry          = 0.13
+srp          = 0.18
+coupling     = 0.09
+test_quality = 0.10
+architecture = 0.10
