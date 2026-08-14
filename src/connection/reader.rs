@@ -71,19 +71,28 @@ pub(super) async fn reader_loop(
         reader,
         parser,
         shared.clone(),
-        event_tx,
+        &event_tx,
         reexec,
     ));
-    if futures_util::FutureExt::catch_unwind(result)
-        .await
-        .is_err()
-    {
-        tracing::error!("reader task panicked");
-        let _ = shared
-            .status_tx
-            .send(ConnectionStatus::Disconnected(DisconnectReason::IoError(
+    let reason = match futures_util::FutureExt::catch_unwind(result).await {
+        Ok(reason) => reason,
+        Err(_) => {
+            tracing::error!("reader task panicked");
+            Some(DisconnectReason::IoError(
                 "reader task panicked".to_string(),
-            )));
+            ))
+        }
+    };
+    // `event_tx` is still alive here: a consumer that sees recv() -> None must
+    // find the disconnect status already published, not a stale Connected.
+    if let Some(reason) = reason {
+        if shared
+            .status_tx
+            .send(ConnectionStatus::Disconnected(reason))
+            .is_err()
+        {
+            debug!("No status receiver left to observe the disconnect");
+        }
     }
     fail_pending_reply(&shared).await;
 }
@@ -114,13 +123,16 @@ async fn fail_pending_reply(shared: &SharedState) {
     pending.stale_replies = 0;
 }
 
+/// Returns the reason its caller broadcasts, or `None` for the exits that
+/// publish none: a closed event channel, or a re-exec failure already delivered
+/// on the teardown result channel.
 async fn reader_loop_inner(
     mut reader: OwnedReadHalf,
     mut parser: EslParser,
     shared: Arc<SharedState>,
-    event_tx: mpsc::Sender<Result<EslEvent, EslError>>,
+    event_tx: &mpsc::Sender<Result<EslEvent, EslError>>,
     #[cfg_attr(not(unix), allow(unused_variables, unused_mut))] mut reexec: ReexecReader,
-) {
+) -> Option<DisconnectReason> {
     use std::sync::atomic::Ordering;
 
     let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
@@ -149,7 +161,7 @@ async fn reader_loop_inner(
                                 Some(Err(e)) => {
                                     warn!("Unknown event content type: {}", e);
                                     if !dispatch_event(
-                                        &event_tx,
+                                        event_tx,
                                         &shared,
                                         Err(EslError::InvalidEventFormat {
                                             format: e
@@ -157,7 +169,8 @@ async fn reader_loop_inner(
                                                 .clone(),
                                         }),
                                     ) {
-                                        return;
+                                        debug!("Event channel closed, reader exiting");
+                                        return None;
                                     }
                                     continue;
                                 }
@@ -166,9 +179,9 @@ async fn reader_loop_inner(
                         };
 
                         let event_result = parser.parse_event(message, format);
-                        if !dispatch_event(&event_tx, &shared, event_result) {
+                        if !dispatch_event(event_tx, &shared, event_result) {
                             debug!("Event channel closed, reader exiting");
-                            return;
+                            return None;
                         }
                     }
                     MessageType::CommandReply | MessageType::ApiResponse => {
@@ -228,34 +241,24 @@ async fn reader_loop_inner(
                             .get("Controlled-Session-UUID")
                             .cloned();
                         info!("Received disconnect notice from server");
-                        let _ = shared
-                            .status_tx
-                            .send(ConnectionStatus::Disconnected(
-                                DisconnectReason::ServerNotice {
-                                    controlled_session_uuid,
-                                    body: message.body,
-                                },
-                            ));
-                        return;
+                        return Some(DisconnectReason::ServerNotice {
+                            controlled_session_uuid,
+                            body: message.body,
+                        });
                     }
                     MessageType::RudeRejection => {
                         let reason = message
                             .body
                             .unwrap_or_else(|| "rude-rejection without body".to_string());
                         warn!("Rude rejection from server: {}", reason);
-                        let _ = dispatch_event(
-                            &event_tx,
+                        dispatch_event(
+                            event_tx,
                             &shared,
                             Err(EslError::AccessDenied {
                                 reason: reason.clone(),
                             }),
                         );
-                        let _ = shared
-                            .status_tx
-                            .send(ConnectionStatus::Disconnected(
-                                DisconnectReason::AccessDenied(reason),
-                            ));
-                        return;
+                        return Some(DisconnectReason::AccessDenied(reason));
                     }
                     MessageType::AuthRequest => {
                         // After authentication, an unsolicited auth/request
@@ -264,17 +267,12 @@ async fn reader_loop_inner(
                         let reason =
                             "unsolicited auth/request received after authentication".to_string();
                         warn!("{reason}");
-                        let _ = dispatch_event(
-                            &event_tx,
+                        dispatch_event(
+                            event_tx,
                             &shared,
                             Err(EslError::protocol_error(reason.clone())),
                         );
-                        let _ = shared
-                            .status_tx
-                            .send(ConnectionStatus::Disconnected(
-                                DisconnectReason::ProtocolError(reason),
-                            ));
-                        return;
+                        return Some(DisconnectReason::ProtocolError(reason));
                     }
                 }
                 continue;
@@ -284,12 +282,7 @@ async fn reader_loop_inner(
             }
             Err(e) => {
                 warn!("Parser error: {}", e);
-                let _ = shared
-                    .status_tx
-                    .send(ConnectionStatus::Disconnected(
-                        DisconnectReason::ProtocolError(e.to_string()),
-                    ));
-                return;
+                return Some(DisconnectReason::ProtocolError(e.to_string()));
             }
         }
 
@@ -300,22 +293,18 @@ async fn reader_loop_inner(
                 .remaining_bytes()
                 .to_vec();
             debug!("Re-exec drain complete, {} residual bytes", residual.len());
-            // Broadcast ReexecTeardown BEFORE returning so the status watch is
-            // updated before event_tx is dropped. Without this, consumers that
-            // see recv()→None and check events.status() would find stale
-            // Connected and treat it as an unexpected connection loss.
-            let _ = shared
-                .status_tx
-                .send(ConnectionStatus::Disconnected(
-                    DisconnectReason::ReexecTeardown,
-                ));
             if let Some(tx) = reexec
                 .result_tx
                 .take()
             {
-                let _ = tx.send(Ok(residual));
+                if tx
+                    .send(Ok(residual))
+                    .is_err()
+                {
+                    warn!("Re-exec caller gone before the residual bytes were delivered");
+                }
             }
-            return;
+            return Some(DisconnectReason::ReexecTeardown);
         }
 
         // Re-exec drain: WaitingForBody, need more socket data to finish the
@@ -335,7 +324,7 @@ async fn reader_loop_inner(
                             reason: "connection closed during drain".into(),
                         }));
                     }
-                    return;
+                    return None;
                 }
                 Ok(Ok(n)) => {
                     if let Err(e) = parser.add_data(&read_buffer[..n]) {
@@ -345,7 +334,7 @@ async fn reader_loop_inner(
                         {
                             let _ = tx.send(Err(e));
                         }
-                        return;
+                        return None;
                     }
                 }
                 Ok(Err(e)) => {
@@ -356,7 +345,7 @@ async fn reader_loop_inner(
                     {
                         let _ = tx.send(Err(EslError::Io(e)));
                     }
-                    return;
+                    return None;
                 }
                 Err(_) => {
                     warn!("Re-exec drain timeout waiting for message body");
@@ -368,7 +357,7 @@ async fn reader_loop_inner(
                             reason: "drain timeout waiting for message body".into(),
                         }));
                     }
-                    return;
+                    return None;
                 }
             }
             continue;
@@ -392,33 +381,18 @@ async fn reader_loop_inner(
         match read_result {
             Ok(Ok(0)) => {
                 info!("Connection closed (EOF)");
-                let _ = shared
-                    .status_tx
-                    .send(ConnectionStatus::Disconnected(
-                        DisconnectReason::ConnectionClosed,
-                    ));
-                return;
+                return Some(DisconnectReason::ConnectionClosed);
             }
             Ok(Ok(n)) => {
                 last_recv = Instant::now();
                 if let Err(e) = parser.add_data(&read_buffer[..n]) {
                     warn!("Buffer error: {}", e);
-                    let _ = shared
-                        .status_tx
-                        .send(ConnectionStatus::Disconnected(
-                            DisconnectReason::ProtocolError(e.to_string()),
-                        ));
-                    return;
+                    return Some(DisconnectReason::ProtocolError(e.to_string()));
                 }
             }
             Ok(Err(e)) => {
                 warn!("Read error: {}", e);
-                let _ = shared
-                    .status_tx
-                    .send(ConnectionStatus::Disconnected(DisconnectReason::IoError(
-                        e.to_string(),
-                    )));
-                return;
+                return Some(DisconnectReason::IoError(e.to_string()));
             }
             Err(_) => {
                 // Timeout -- check liveness
@@ -433,12 +407,7 @@ async fn reader_loop_inner(
                             elapsed.as_millis(),
                             threshold_ms
                         );
-                        let _ = shared
-                            .status_tx
-                            .send(ConnectionStatus::Disconnected(
-                                DisconnectReason::HeartbeatExpired,
-                            ));
-                        return;
+                        return Some(DisconnectReason::HeartbeatExpired);
                     }
                 }
             }
