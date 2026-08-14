@@ -1080,54 +1080,58 @@ fn parse_entry(
         entry = entry.with_fmtp(f)?;
     }
 
-    // Classify each qualifier part by substring scan — order: i, k/h, b, c.
-    // Unknown letter or overflow: strict (None) = Err, lenient (Some) = warn + skip.
     for part in &qualifiers {
-        let letter_found = part.contains('i')
-            || part.contains('h')
-            || part.contains('k')
-            || part.contains('b')
-            || part.contains('c');
-
-        if !letter_found {
-            let reason = format!("no recognised qualifier letter in {part:?}");
-            match warnings.as_deref_mut() {
-                None => {
-                    return Err(CodecStringError::qualifier_parse_error(
-                        part.to_string(),
-                        reason,
-                    ));
-                }
-                Some(acc) => {
-                    acc.push(SdpWarning::codec_string_qualifier(part.to_string(), reason));
-                    continue;
-                }
-            }
-        }
-
-        // Helper that returns None on overflow (no leading digits is also None).
-        let parsed = atoi_prefix(part);
-
-        if part.contains('i') {
-            if let Some(v) = apply_qualifier(part, parsed, warnings.as_deref_mut())? {
-                entry = entry.with_ptime(v)
-            }
-        } else if part.contains('h') || part.contains('k') {
-            if let Some(v) = apply_qualifier(part, parsed, warnings.as_deref_mut())? {
-                entry = entry.with_rate(v)
-            }
-        } else if part.contains('b') {
-            if let Some(v) = apply_qualifier(part, parsed, warnings.as_deref_mut())? {
-                entry = entry.with_bitrate(v)
-            }
-        } else if part.contains('c') {
-            if let Some(v) = apply_qualifier(part, parsed, warnings.as_deref_mut())? {
-                entry = entry.with_channels(v)
-            }
-        }
+        apply_qualifier_part(&mut entry, part, warnings.as_deref_mut())?;
     }
 
     Ok(entry)
+}
+
+/// Classify one `@`-delimited qualifier part by substring scan — order: i, k/h, b, c —
+/// and assign it. Unknown letter or overflow: strict (`None`) = `Err`, lenient = warn + skip.
+fn apply_qualifier_part(
+    entry: &mut CodecStringEntry,
+    part: &str,
+    mut warnings: Option<&mut Vec<SdpWarning>>,
+) -> Result<(), CodecStringError> {
+    let letter_found = part.contains('i')
+        || part.contains('h')
+        || part.contains('k')
+        || part.contains('b')
+        || part.contains('c');
+
+    if !letter_found {
+        let reason = format!("no recognised qualifier letter in {part:?}");
+        return match warnings.as_deref_mut() {
+            None => Err(CodecStringError::qualifier_parse_error(
+                part.to_string(),
+                reason,
+            )),
+            Some(acc) => {
+                acc.push(SdpWarning::codec_string_qualifier(part.to_string(), reason));
+                Ok(())
+            }
+        };
+    }
+
+    // Helper that returns None on overflow (no leading digits is also None).
+    let parsed = atoi_prefix(part);
+
+    let Some(value) = apply_qualifier(part, parsed, warnings)? else {
+        return Ok(());
+    };
+
+    if part.contains('i') {
+        *entry.ptime_mut() = Some(value);
+    } else if part.contains('h') || part.contains('k') {
+        *entry.rate_mut() = Some(value);
+    } else if part.contains('b') {
+        *entry.bitrate_mut() = Some(value);
+    } else if part.contains('c') {
+        *entry.channels_mut() = Some(value);
+    }
+
+    Ok(())
 }
 
 /// Handle the strict/lenient decision for a parsed qualifier value.
