@@ -2545,6 +2545,10 @@ fn escaping_block(pairs: &[(&str, &str)]) -> Variables {
     vars
 }
 
+/// Appears in none of [`ESCAPING_CASES`], which is what `with_separator`
+/// demands and what keeps a comma ordinary text inside the block.
+const ESCAPING_SEPARATOR: char = '~';
+
 /// The `originate` API splits its argument list before the block is parsed, so
 /// this carrier needs one escaping level more than a dialplan application.
 #[tokio::test]
@@ -2680,6 +2684,121 @@ async fn live_chosen_separator_carries_commas_unescaped() {
 
     assert_eq!(codecs.as_deref(), Some("PCMA,PCMU,G729"));
     assert_eq!(tenant.as_deref(), Some("acme"));
+
+    drop(permit);
+}
+
+/// A `^^` block reaches the switch's tokenizer the same number of times as the
+/// comma form, so every value that needed escaping there still needs it here.
+/// Only the comma stops being special.
+#[tokio::test]
+#[ignore]
+async fn live_separated_escaping_survives_the_api_carrier() {
+    let (client, _events, permit) = connect().await;
+
+    for (label, pairs) in ESCAPING_CASES {
+        let vars = escaping_block(pairs)
+            .with_separator(ESCAPING_SEPARATOR)
+            .unwrap_or_else(|e| panic!("{label}: {ESCAPING_SEPARATOR:?} rejected: {e}"));
+        let resp = client
+            .api(&format!("originate {vars}null/escaping &park()"))
+            .await
+            .unwrap_or_else(|e| panic!("{label}: originate transport error: {e}"));
+        let uuid = resp
+            .api_result()
+            .unwrap_or_else(|e| panic!("{label}: originate rejected {vars}: {e}"))
+            .to_string();
+
+        let mut reaper = Reaper::new(&client);
+        reaper.track(&uuid);
+        let mut results = Vec::new();
+        for (key, want) in *pairs {
+            results.push((*key, *want, getvar(&client, &uuid, key).await));
+        }
+        reaper
+            .reap()
+            .await;
+
+        for (key, want, got) in results {
+            assert_eq!(
+                got.as_deref(),
+                Some(want),
+                "{label}: {key} arrived wrong from {vars}"
+            );
+        }
+    }
+
+    drop(permit);
+}
+
+/// The dialplan half of the pair above: one escaping level less, same block
+/// shape, so a rule that only holds on one carrier shows up as a difference
+/// between these two tests rather than as a passing suite.
+#[tokio::test]
+#[ignore]
+async fn live_separated_escaping_survives_the_dialplan_carrier() {
+    let (client, _events, permit) = connect().await;
+
+    for (label, pairs) in ESCAPING_CASES {
+        let b_uuid = client
+            .api("create_uuid")
+            .await
+            .expect("create_uuid transport error")
+            .api_result()
+            .expect("create_uuid failed")
+            .to_string();
+        let a_uuid = client
+            .api("originate null/anchor &park()")
+            .await
+            .expect("anchor transport error")
+            .api_result()
+            .expect("anchor originate failed")
+            .to_string();
+
+        let mut vars = Variables::new(VariablesType::Default);
+        vars.insert("origination_uuid", &b_uuid);
+        for (k, v) in *pairs {
+            vars.insert(*k, *v);
+        }
+        let vars = vars
+            .with_separator(ESCAPING_SEPARATOR)
+            .unwrap_or_else(|e| panic!("{label}: {ESCAPING_SEPARATOR:?} rejected: {e}"));
+
+        let mut reaper = Reaper::new(&client);
+        reaper.track(&a_uuid);
+        reaper.track(&b_uuid);
+
+        let dial_string = format!(
+            "{}null/escaping",
+            vars.display_for(DialStringCarrier::Dialplan)
+        );
+        client
+            .execute_with_options(
+                "bridge",
+                Some(&dial_string),
+                Some(&a_uuid),
+                ExecuteOptions::new().with_async(),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{label}: execute bridge failed: {e}"));
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let mut results = Vec::new();
+        for (key, want) in *pairs {
+            results.push((*key, *want, getvar(&client, &b_uuid, key).await));
+        }
+        reaper
+            .reap()
+            .await;
+
+        for (key, want, got) in results {
+            assert_eq!(
+                got.as_deref(),
+                Some(want),
+                "{label}: {key} arrived wrong from {dial_string}"
+            );
+        }
+    }
 
     drop(permit);
 }

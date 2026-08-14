@@ -675,6 +675,32 @@ mod tests {
         }
     }
 
+    /// A chosen separator changes which character needs escaping, not whether
+    /// the block is escape-processed: the switch runs the same tokenizer over
+    /// it, so a value still comes back through the same undoing.
+    #[test]
+    fn separated_block_round_trips_at_either_carrier() {
+        for carrier in [DialStringCarrier::EslApi, DialStringCarrier::Dialplan] {
+            for value in ["it's", "a,b", r"C:\path", r"a\nb", "with space"] {
+                let mut vars = Variables::new(VariablesType::Default);
+                vars.insert("k", value);
+                vars.insert("after", "sentinel");
+                let vars = vars
+                    .with_separator('~')
+                    .expect("'~' appears in none of these values");
+                let rendered = vars
+                    .display_for(carrier)
+                    .to_string();
+
+                let back = Variables::parse_for(&rendered, carrier).unwrap_or_else(|e| {
+                    panic!("{value:?} for {carrier:?} rendered {rendered}: {e}")
+                });
+                assert_eq!(back.get("k"), Some(value), "rendered {rendered}");
+                assert_eq!(back.get("after"), Some("sentinel"), "rendered {rendered}");
+            }
+        }
+    }
+
     /// `split_unescaped_commas` reads a comma behind an even number of
     /// backslashes as a real separator, so a value ending in a backslash has to
     /// be written with its own backslash escaped or the writer contradicts the
