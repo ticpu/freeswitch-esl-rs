@@ -254,18 +254,18 @@ impl SdpCodecs {
 
     /// Iterator over audio RTP codecs only.
     pub fn audio(&self) -> impl Iterator<Item = &SdpCodec> {
-        self.entries()
-            .filter_map(|e| match e {
-                SdpCodecEntry::Rtp(c) if c.media() == &SdpMediaType::Audio => Some(c),
-                _ => None,
-            })
+        self.rtp_of(SdpMediaType::Audio)
     }
 
     /// Iterator over video RTP codecs only.
     pub fn video(&self) -> impl Iterator<Item = &SdpCodec> {
+        self.rtp_of(SdpMediaType::Video)
+    }
+
+    fn rtp_of(&self, media: SdpMediaType) -> impl Iterator<Item = &SdpCodec> {
         self.entries()
-            .filter_map(|e| match e {
-                SdpCodecEntry::Rtp(c) if c.media() == &SdpMediaType::Video => Some(c),
+            .filter_map(move |e| match e {
+                SdpCodecEntry::Rtp(c) if c.media() == &media => Some(c),
                 _ => None,
             })
     }
@@ -514,35 +514,7 @@ fn parse_media_section(
     let media_maxptime =
         ptime_from_attrs(&media.attributes, "maxptime", &mut section.warnings).or(session_maxptime);
 
-    // Build per-section rtpmap and fmtp lookup tables.
-    let mut rtpmap: HashMap<u8, (String, u32, Option<u8>)> = HashMap::new();
-    let mut fmtp_map: HashMap<u8, String> = HashMap::new();
-
-    // Attribute names are compared byte-exactly here and in ptime_from_attrs/
-    // direction_from_attrs below, unlike FreeSWITCH's own attribute walk, which uses
-    // strcasecmp (switch_core_media.c:13658). RFC 8866 makes attribute names
-    // case-sensitive, so byte-exact stays the intended behaviour here; this is a
-    // documented divergence, not an oversight.
-    for attr in &media.attributes {
-        match attr
-            .attribute
-            .as_str()
-        {
-            "rtpmap" => {
-                if let Some(val) = &attr.value {
-                    let (pt, name, rate, channels) = parse_rtpmap(val)?;
-                    rtpmap.insert(pt, (name, rate, channels));
-                }
-            }
-            "fmtp" => {
-                if let Some(val) = &attr.value {
-                    let (pt, params) = parse_fmtp_pt(val)?;
-                    fmtp_map.insert(pt, params);
-                }
-            }
-            _ => {}
-        }
-    }
+    let tables = attribute_tables(media)?;
 
     for pt_str in media
         .fmt
@@ -553,21 +525,24 @@ fn parse_media_section(
             .map_err(|_| SdpCodecError::NonNumericPayloadType(pt_str.to_string()))?;
 
         // Name, clock rate, and channel count from rtpmap or RFC 3551 static table.
-        let (name, clock_rate, rtpmap_channels, has_rtpmap) =
-            if let Some((n, r, c)) = rtpmap.get(&pt) {
-                (n.as_str(), *r, *c, true)
-            } else if let Some(st) = static_payload::rfc3551_payload_type(pt) {
-                (st.encoding_name, st.clock_rate, st.channels, false)
-            } else {
-                section
-                    .unmapped
-                    .push(UnmappedPayload::new(pt, media_type.clone()));
-                continue;
-            };
+        let (name, clock_rate, rtpmap_channels, has_rtpmap) = if let Some((n, r, c)) = tables
+            .rtpmap
+            .get(&pt)
+        {
+            (n.as_str(), *r, *c, true)
+        } else if let Some(st) = static_payload::rfc3551_payload_type(pt) {
+            (st.encoding_name, st.clock_rate, st.channels, false)
+        } else {
+            section
+                .unmapped
+                .push(UnmappedPayload::new(pt, media_type.clone()));
+            continue;
+        };
 
         let canonical = static_payload::canonical_iananame(name);
 
-        let fmtp = fmtp_map
+        let fmtp = tables
+            .fmtp
             .get(&pt)
             .cloned();
 
@@ -593,62 +568,13 @@ fn parse_media_section(
             _ => rtpmap_channels,
         };
 
-        // ptime/bitrate resolution — sequential overwrite; later steps beat earlier.
-
-        // Step 1: resolved a=ptime (media-level overrides session-level).
-        let mut ptime = media_ptime;
-
-        // Step 2: per-codec default when no a=ptime is present at all.
-        if ptime.is_none() {
-            ptime = Some(default_ptime_ms(canonical));
-        }
-
-        // Step 4: bitrate from the static payload type table.
-        let mut bitrate = static_payload::known_bitrate(pt);
-
-        // Step 5: no fmtp and iLBC/iSAC override even an explicit a=ptime.
-        if fmtp.is_none() {
-            if canonical.eq_ignore_ascii_case("ilbc") {
-                ptime = Some(30);
-                bitrate = Some(13330);
-            } else if canonical.eq_ignore_ascii_case("isac") {
-                ptime = Some(30);
-                bitrate = Some(32000);
-            }
-        }
-
-        // Step 6: fmtp present — apply codec-specific parameter parsers.
-        if let Some(ref fmtp_str) = fmtp {
-            if canonical.eq_ignore_ascii_case("opus") {
-                if let Some(p) = fmtp_param(fmtp_str, "ptime") {
-                    if let Some(v) = parse_ptime_value(p, &mut section.warnings, "fmtp ptime") {
-                        ptime = Some(v);
-                    }
-                }
-            } else if canonical.eq_ignore_ascii_case("ilbc") {
-                // mode= sets ptime; fmtp present but no mode= means 30 ms.
-                ptime = Some(match fmtp_param(fmtp_str, "mode") {
-                    Some(m) => {
-                        parse_ptime_value(m, &mut section.warnings, "fmtp mode").unwrap_or(30)
-                    }
-                    None => 30,
-                });
-            } else if canonical.eq_ignore_ascii_case("g7221") {
-                if let Some(br_str) = fmtp_param(fmtp_str, "bitrate") {
-                    match br_str.parse::<u32>() {
-                        Ok(br) => bitrate = Some(br),
-                        Err(_) => {
-                            section
-                                .warnings
-                                .push(SdpWarning::unparseable_numeric_attribute(
-                                    "g7221 fmtp bitrate",
-                                    br_str,
-                                ));
-                        }
-                    }
-                }
-            }
-        }
+        let (ptime, bitrate) = resolve_ptime_bitrate(
+            canonical,
+            pt,
+            fmtp.as_deref(),
+            media_ptime,
+            &mut section.warnings,
+        );
 
         section
             .entries
@@ -668,6 +594,115 @@ fn parse_media_section(
     }
 
     Ok(section)
+}
+
+/// One section's `a=rtpmap` and `a=fmtp` values, keyed by payload type.
+struct AttrTables {
+    rtpmap: HashMap<u8, (String, u32, Option<u8>)>,
+    fmtp: HashMap<u8, String>,
+}
+
+/// Collect a section's rtpmap and fmtp attributes into payload-type lookup tables.
+fn attribute_tables(media: &sdp_types::Media) -> Result<AttrTables, SdpCodecError> {
+    let mut tables = AttrTables {
+        rtpmap: HashMap::new(),
+        fmtp: HashMap::new(),
+    };
+
+    // Attribute names are compared byte-exactly here and in ptime_from_attrs/
+    // direction_from_attrs below, unlike FreeSWITCH's own attribute walk, which uses
+    // strcasecmp (switch_core_media.c:13658). RFC 8866 makes attribute names
+    // case-sensitive, so byte-exact stays the intended behaviour here; this is a
+    // documented divergence, not an oversight.
+    for attr in &media.attributes {
+        match attr
+            .attribute
+            .as_str()
+        {
+            "rtpmap" => {
+                if let Some(val) = &attr.value {
+                    let (pt, name, rate, channels) = parse_rtpmap(val)?;
+                    tables
+                        .rtpmap
+                        .insert(pt, (name, rate, channels));
+                }
+            }
+            "fmtp" => {
+                if let Some(val) = &attr.value {
+                    let (pt, params) = parse_fmtp_pt(val)?;
+                    tables
+                        .fmtp
+                        .insert(pt, params);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(tables)
+}
+
+/// Resolve one payload's ptime and bitrate as `add_audio_codec` does: a sequential
+/// overwrite where a later step beats an earlier one, not a first-match-wins chain.
+fn resolve_ptime_bitrate(
+    canonical: &str,
+    payload_type: u8,
+    fmtp: Option<&str>,
+    media_ptime: Option<u32>,
+    warnings: &mut Vec<SdpWarning>,
+) -> (Option<u32>, Option<u32>) {
+    // Step 1: resolved a=ptime (media-level overrides session-level).
+    let mut ptime = media_ptime;
+
+    // Step 2: per-codec default when no a=ptime is present at all.
+    if ptime.is_none() {
+        ptime = Some(default_ptime_ms(canonical));
+    }
+
+    // Step 4: bitrate from the static payload type table.
+    let mut bitrate = static_payload::known_bitrate(payload_type);
+
+    // Step 5: no fmtp and iLBC/iSAC override even an explicit a=ptime.
+    if fmtp.is_none() {
+        if canonical.eq_ignore_ascii_case("ilbc") {
+            ptime = Some(30);
+            bitrate = Some(13330);
+        } else if canonical.eq_ignore_ascii_case("isac") {
+            ptime = Some(30);
+            bitrate = Some(32000);
+        }
+    }
+
+    // Step 6: fmtp present — apply codec-specific parameter parsers.
+    if let Some(fmtp_str) = fmtp {
+        if canonical.eq_ignore_ascii_case("opus") {
+            if let Some(p) = fmtp_param(fmtp_str, "ptime") {
+                if let Some(v) = parse_ptime_value(p, warnings, "fmtp ptime") {
+                    ptime = Some(v);
+                }
+            }
+        } else if canonical.eq_ignore_ascii_case("ilbc") {
+            // mode= sets ptime; fmtp present but no mode= means 30 ms.
+            ptime = Some(match fmtp_param(fmtp_str, "mode") {
+                Some(m) => parse_ptime_value(m, warnings, "fmtp mode").unwrap_or(30),
+                None => 30,
+            });
+        } else if canonical.eq_ignore_ascii_case("g7221") {
+            if let Some(br_str) = fmtp_param(fmtp_str, "bitrate") {
+                match br_str.parse::<u32>() {
+                    Ok(br) => bitrate = Some(br),
+                    Err(_) => {
+                        warnings.push(SdpWarning::unparseable_numeric_attribute(
+                            "g7221 fmtp bitrate",
+                            br_str,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    (ptime, bitrate)
 }
 
 /// Cursor over an `a=rtpmap`/`a=fmtp` attribute value.
