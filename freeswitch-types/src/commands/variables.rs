@@ -135,26 +135,34 @@ fn check_representable(
     Ok(())
 }
 
-/// Escaping for a block whose separator is not the comma, so a comma in a value
-/// is ordinary text. Everything else is escaped as it would be otherwise.
-fn escape_value_keeping_commas(value: &str, carrier: DialStringCarrier) -> String {
-    let escaped = value
-        .replace('\\', BACKSLASH)
-        .replace('\'', carrier.quote_escape());
-    if escaped.contains(' ') {
-        format!("'{}'", escaped)
-    } else {
-        escaped
+/// Reject a separator that cannot delimit the block it was chosen for.
+///
+/// Either bracket moves the end the switch counts its way to, `=` splits the
+/// pair instead, and `^` leaves the `^^` prefix reading as its own separator.
+fn check_separator(sep: char, vars_type: VariablesType) -> Result<(), OriginateError> {
+    let (open, close) = vars_type.delimiters();
+    if sep == open || sep == close || sep == '=' || sep == '^' {
+        return Err(OriginateError::ParseError(format!(
+            "invalid ^^ separator: '{sep}'"
+        )));
     }
+    Ok(())
 }
 
-pub(super) fn escape_value(value: &str, carrier: DialStringCarrier) -> String {
+/// Escape a value for the wire, escaping the comma only when `commas_separate`
+/// says it is this block's separator; a `^^` block separates on something else
+/// and refuses a value carrying it, so a comma there is ordinary text.
+fn escape_value(value: &str, carrier: DialStringCarrier, commas_separate: bool) -> String {
     // The backslash goes first, or the ones the other rules introduce get
     // escaped in turn.
     let escaped = value
         .replace('\\', BACKSLASH)
-        .replace('\'', carrier.quote_escape())
-        .replace(',', "\\,");
+        .replace('\'', carrier.quote_escape());
+    let escaped = if commas_separate {
+        escaped.replace(',', "\\,")
+    } else {
+        escaped
+    };
     if escaped.contains(' ') {
         format!("'{}'", escaped)
     } else {
@@ -165,14 +173,18 @@ pub(super) fn escape_value(value: &str, carrier: DialStringCarrier) -> String {
 /// Inverts [`escape_value`], undoing each substitution in the reverse order it
 /// was applied so an escape introduced by a later rule is not read as input to
 /// an earlier one.
-fn unescape_value(value: &str, carrier: DialStringCarrier) -> String {
+fn unescape_value(value: &str, carrier: DialStringCarrier, commas_separate: bool) -> String {
     let s = value
         .strip_prefix('\'')
         .and_then(|s| s.strip_suffix('\''))
         .unwrap_or(value);
 
-    s.replace("\\,", ",")
-        .replace(carrier.quote_escape(), "'")
+    let s = if commas_separate {
+        s.replace("\\,", ",")
+    } else {
+        s.to_string()
+    };
+    s.replace(carrier.quote_escape(), "'")
         .replace(BACKSLASH, "\\")
 }
 
@@ -213,14 +225,7 @@ impl Variables {
     /// Fails if `sep` cannot delimit this block, or if a value already present
     /// contains it. Values inserted afterwards are not checked.
     pub fn with_separator(mut self, sep: char) -> Result<Self, OriginateError> {
-        let (_, close) = self
-            .vars_type
-            .delimiters();
-        if sep == close || sep == '=' || sep == '^' {
-            return Err(OriginateError::ParseError(format!(
-                "invalid ^^ separator: '{sep}'"
-            )));
-        }
+        check_separator(sep, self.vars_type)?;
         if let Some((key, _)) = self
             .inner
             .iter()
@@ -386,6 +391,9 @@ impl Variables {
         }
         // A chosen separator carries the values that a comma would have needed
         // escaping for, so only the comma form escapes them.
+        let commas_separate = self
+            .separator
+            .is_none();
         let sep = self
             .separator
             .unwrap_or(',');
@@ -397,10 +405,7 @@ impl Variables {
             if i > 0 {
                 write!(f, "{sep}")?;
             }
-            let value = match self.separator {
-                Some(_) => escape_value_keeping_commas(value, carrier),
-                None => escape_value(value, carrier),
-            };
+            let value = escape_value(value, carrier, commas_separate);
             write!(f, "{}={}", key, value)?;
         }
         f.write_fmt(format_args!("{}", close))
@@ -446,50 +451,35 @@ impl Variables {
             }
         };
 
-        let mut inner = IndexMap::new();
-        if !inner_str.is_empty() {
-            if let Some(rest) = inner_str.strip_prefix("^^") {
+        let (sep, var_str) = match inner_str.strip_prefix("^^") {
+            Some(rest) => {
                 let sep = rest
                     .chars()
                     .next()
                     .ok_or_else(|| {
                         OriginateError::ParseError("^^ without separator character".into())
                     })?;
-                let (_, close) = vars_type.delimiters();
-                if sep == close || sep == '=' {
-                    return Err(OriginateError::ParseError(format!(
-                        "invalid ^^ separator: '{sep}'"
-                    )));
-                }
-                let var_str = &rest[sep.len_utf8()..];
-                if !var_str.is_empty() {
-                    for (i, part) in var_str
-                        .split(sep)
-                        .enumerate()
-                    {
-                        let (key, value) = part
-                            .split_once('=')
-                            .ok_or_else(|| {
-                                OriginateError::ParseError(format!("missing = in variable {i}"))
-                            })?;
-                        check_representable(key, value, vars_type)?;
-                        inner.insert(key.to_string(), value.to_string());
-                    }
-                }
-            } else {
-                for (i, part) in split_unescaped_commas(inner_str)
-                    .into_iter()
-                    .enumerate()
-                {
-                    let (key, value) = part
-                        .split_once('=')
-                        .ok_or_else(|| {
-                            OriginateError::ParseError(format!("missing = in variable {i}"))
-                        })?;
-                    let value = unescape_value(value, carrier);
-                    check_representable(key, &value, vars_type)?;
-                    inner.insert(key.to_string(), value);
-                }
+                check_separator(sep, vars_type)?;
+                (sep, &rest[sep.len_utf8()..])
+            }
+            None => (',', inner_str),
+        };
+        let commas_separate = sep == ',';
+
+        let mut inner = IndexMap::new();
+        if !var_str.is_empty() {
+            for (i, part) in split_unescaped(var_str, sep)
+                .into_iter()
+                .enumerate()
+            {
+                let (key, value) = part
+                    .split_once('=')
+                    .ok_or_else(|| {
+                        OriginateError::ParseError(format!("missing = in variable {i}"))
+                    })?;
+                let value = unescape_value(value, carrier, commas_separate);
+                check_representable(key, &value, vars_type)?;
+                inner.insert(key.to_string(), value);
             }
         }
 
@@ -501,18 +491,18 @@ impl Variables {
     }
 }
 
-/// Split on commas that are not escaped by a backslash.
+/// Split on separators that are not escaped by a backslash.
 ///
-/// A comma preceded by an odd number of backslashes is escaped (e.g. `\,`).
-/// A comma preceded by an even number of backslashes is a real split point
-/// (e.g. `\\,` means escaped backslash followed by comma delimiter).
-pub(super) fn split_unescaped_commas(s: &str) -> Vec<&str> {
+/// A separator preceded by an odd number of backslashes is escaped (e.g. `\,`).
+/// One preceded by an even number is a real split point (e.g. `\\,` is an
+/// escaped backslash followed by the delimiter).
+fn split_unescaped(s: &str, sep: char) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
     let bytes = s.as_bytes();
 
-    for i in 0..bytes.len() {
-        if bytes[i] == b',' {
+    for (i, ch) in s.char_indices() {
+        if ch == sep {
             let mut backslashes = 0;
             let mut j = i;
             while j > 0 && bytes[j - 1] == b'\\' {
@@ -521,7 +511,7 @@ pub(super) fn split_unescaped_commas(s: &str) -> Vec<&str> {
             }
             if backslashes % 2 == 0 {
                 parts.push(&s[start..i]);
-                start = i + 1;
+                start = i + ch.len_utf8();
             }
         }
     }
@@ -592,12 +582,27 @@ mod tests {
     #[test]
     fn separator_that_cannot_delimit_the_block_is_refused() {
         let vars = Variables::new(VariablesType::Channel);
-        for sep in [']', '=', '^'] {
+        for sep in ['[', ']', '=', '^'] {
             assert!(
                 vars.clone()
                     .with_separator(sep)
                     .is_err(),
                 "accepted {sep:?}"
+            );
+        }
+    }
+
+    /// The parser has to refuse what the builder refuses, `^` included:
+    /// accepting a block no render of this crate can reproduce hands the caller
+    /// a value that changes when it is written back out.
+    #[test]
+    fn the_parser_refuses_every_separator_the_builder_does() {
+        for sep in ['[', ']', '=', '^'] {
+            assert!(
+                format!("[^^{sep}a=1{sep}b=2]")
+                    .parse::<Variables>()
+                    .is_err(),
+                "parser accepted {sep:?}"
             );
         }
     }
@@ -634,7 +639,29 @@ mod tests {
         ];
         for (carrier, value, want) in cases {
             assert_eq!(
-                escape_value(value, carrier),
+                escape_value(value, carrier, true),
+                want,
+                "{value:?} for {carrier:?}"
+            );
+        }
+    }
+
+    /// A `^^` block reaches the switch's tokenizer as often as the comma form,
+    /// so every rule above still holds there; only the comma stops being the
+    /// separator and so stops being escaped.
+    #[test]
+    fn a_chosen_separator_changes_only_the_comma() {
+        let cases = [
+            (DialStringCarrier::Dialplan, "it's", r"it\\'s"),
+            (DialStringCarrier::EslApi, "it's", r"it\\\'s"),
+            (DialStringCarrier::Dialplan, r"a\nb", r"a\\\\\\\\nb"),
+            (DialStringCarrier::EslApi, r"a\nb", r"a\\\\\\\\nb"),
+            (DialStringCarrier::Dialplan, "a,b", "a,b"),
+            (DialStringCarrier::EslApi, "a,b", "a,b"),
+        ];
+        for (carrier, value, want) in cases {
+            assert_eq!(
+                escape_value(value, carrier, false),
                 want,
                 "{value:?} for {carrier:?}"
             );
@@ -839,25 +866,26 @@ mod tests {
     }
 
     #[test]
-    fn split_unescaped_commas_basic() {
-        assert_eq!(split_unescaped_commas("a,b,c"), vec!["a", "b", "c"]);
+    fn split_unescaped_basic() {
+        assert_eq!(split_unescaped("a,b,c", ','), vec!["a", "b", "c"]);
+        assert_eq!(split_unescaped("a~b~c", '~'), vec!["a", "b", "c"]);
     }
 
     #[test]
-    fn split_unescaped_commas_escaped() {
-        assert_eq!(split_unescaped_commas(r"a\,b,c"), vec![r"a\,b", "c"]);
+    fn split_unescaped_escaped() {
+        assert_eq!(split_unescaped(r"a\,b,c", ','), vec![r"a\,b", "c"]);
     }
 
     #[test]
-    fn split_unescaped_commas_double_backslash() {
+    fn split_unescaped_double_backslash() {
         // \\, = escaped backslash + comma delimiter
-        assert_eq!(split_unescaped_commas(r"a\\,b"), vec![r"a\\", "b"]);
+        assert_eq!(split_unescaped(r"a\\,b", ','), vec![r"a\\", "b"]);
     }
 
     #[test]
-    fn split_unescaped_commas_triple_backslash() {
+    fn split_unescaped_triple_backslash() {
         // \\\, = escaped backslash + escaped comma (no split)
-        assert_eq!(split_unescaped_commas(r"a\\\,b"), vec![r"a\\\,b"]);
+        assert_eq!(split_unescaped(r"a\\\,b", ','), vec![r"a\\\,b"]);
     }
 
     #[test]
@@ -898,8 +926,11 @@ mod tests {
         assert_eq!(vars.get("a"), Some("1"));
     }
 
+    /// The switch consumes a backslash only before a quote, another backslash,
+    /// the separator in force, or a character it has an escape for -- so in a
+    /// block separated on something else, `\,` is two literal characters.
     #[test]
-    fn variables_caret_caret_no_unescape() {
+    fn variables_caret_caret_keeps_an_escaped_comma_literal() {
         let vars: Variables = r"[^^:key=val\,ue:other=x]"
             .parse()
             .unwrap();
