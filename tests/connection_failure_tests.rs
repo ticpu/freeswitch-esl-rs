@@ -8,7 +8,7 @@ mod mock_server;
 use freeswitch_esl_tokio::{
     ConnectionStatus, DisconnectReason, EslError, EslEventType, EventFormat, DEFAULT_ESL_PASSWORD,
 };
-use mock_server::{recv_event, setup_connected_pair};
+use mock_server::{inflight_command_woken_on, recv_event, setup_connected_pair};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -75,34 +75,20 @@ async fn test_command_after_disconnect() {
 }
 
 #[tokio::test]
-async fn test_inflight_command_woken_on_disconnect() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+async fn inflight_command_woken_on_disconnect() {
+    let (mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
 
     client.set_command_timeout(Duration::from_secs(5));
 
-    let api_task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .api("status")
-                .await
-        }
-    });
-
     // Server reads the command, then closes the socket without replying.
-    let _cmd = mock
-        .read_command()
-        .await;
-    mock.drop_connection()
-        .await;
-
     // The in-flight command must fail well under command_timeout_ms, with a
     // connection-class error -- not EslError::Timeout at the timeout boundary.
-    let err = tokio::time::timeout(Duration::from_secs(1), api_task)
-        .await
-        .expect("in-flight command still blocked after disconnect")
-        .expect("api task panicked")
-        .expect_err("command should fail on disconnect");
+    let err = inflight_command_woken_on(&client, mock, Duration::from_secs(1), |mock| async move {
+        mock.drop_connection()
+            .await;
+        None
+    })
+    .await;
     assert!(err.is_connection_error(), "got: {err}");
     match err {
         EslError::ConnectionClosed => {}
@@ -112,113 +98,76 @@ async fn test_inflight_command_woken_on_disconnect() {
 
 #[tokio::test]
 async fn inflight_command_woken_on_disconnect_notice() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    let (mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
     client.set_command_timeout(Duration::from_secs(5));
 
-    let api_task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .api("status")
-                .await
-        }
-    });
-    let _cmd = mock
-        .read_command()
-        .await;
-    mock.send_disconnect_notice("Disconnected, goodbye.\n")
-        .await;
-
-    let err = tokio::time::timeout(Duration::from_secs(1), api_task)
-        .await
-        .expect("in-flight command still blocked after disconnect notice")
-        .expect("api task panicked")
-        .expect_err("command should fail on disconnect notice");
+    let err = inflight_command_woken_on(
+        &client,
+        mock,
+        Duration::from_secs(1),
+        |mut mock| async move {
+            mock.send_disconnect_notice("Disconnected, goodbye.\n")
+                .await;
+            Some(mock)
+        },
+    )
+    .await;
     assert!(err.is_connection_error(), "got: {err}");
 }
 
 #[tokio::test]
 async fn inflight_command_woken_on_rude_rejection() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    let (mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
     client.set_command_timeout(Duration::from_secs(5));
 
-    let api_task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .api("status")
-                .await
-        }
-    });
-    let _cmd = mock
-        .read_command()
-        .await;
-    mock.send_raw("Content-Type: text/rude-rejection\n\n")
-        .await;
-
-    let err = tokio::time::timeout(Duration::from_secs(1), api_task)
-        .await
-        .expect("in-flight command still blocked after rude rejection")
-        .expect("api task panicked")
-        .expect_err("command should fail on rude rejection");
+    let err = inflight_command_woken_on(
+        &client,
+        mock,
+        Duration::from_secs(1),
+        |mut mock| async move {
+            mock.send_raw("Content-Type: text/rude-rejection\n\n")
+                .await;
+            Some(mock)
+        },
+    )
+    .await;
     assert!(err.is_connection_error(), "got: {err}");
 }
 
 #[tokio::test]
 async fn inflight_command_woken_on_protocol_desync() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    let (mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
     client.set_command_timeout(Duration::from_secs(5));
 
-    let api_task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .api("status")
-                .await
-        }
-    });
-    let _cmd = mock
-        .read_command()
-        .await;
     // Unrecognized Content-Type is a fatal parser error: reader exits.
-    mock.send_raw("Content-Type: text/garbage\n\n")
-        .await;
-
-    let err = tokio::time::timeout(Duration::from_secs(1), api_task)
-        .await
-        .expect("in-flight command still blocked after protocol desync")
-        .expect("api task panicked")
-        .expect_err("command should fail on protocol desync");
+    let err = inflight_command_woken_on(
+        &client,
+        mock,
+        Duration::from_secs(1),
+        |mut mock| async move {
+            mock.send_raw("Content-Type: text/garbage\n\n")
+                .await;
+            Some(mock)
+        },
+    )
+    .await;
     assert!(err.is_connection_error(), "got: {err}");
 }
 
 #[tokio::test]
 async fn inflight_command_woken_on_heartbeat_expiry() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    let (mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
     // Liveness must trip while the command is still waiting: the reader
     // checks expiry on its 2s read-timeout tick, so detection lands within
     // ~3s -- well under the 20s command timeout.
     client.set_command_timeout(Duration::from_secs(20));
     client.set_liveness_timeout(Duration::from_secs(1));
 
-    let api_task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .api("status")
-                .await
-        }
-    });
-    let _cmd = mock
-        .read_command()
-        .await;
     // No reply, no traffic: liveness expires.
-
-    let err = tokio::time::timeout(Duration::from_secs(8), api_task)
-        .await
-        .expect("in-flight command still blocked after liveness expiry")
-        .expect("api task panicked")
-        .expect_err("command should fail on liveness expiry");
+    let err = inflight_command_woken_on(&client, mock, Duration::from_secs(8), |mock| async move {
+        Some(mock)
+    })
+    .await;
     assert!(err.is_connection_error(), "got: {err}");
 
     match client.status() {

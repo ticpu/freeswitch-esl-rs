@@ -279,16 +279,8 @@ pub async fn setup_connected_pair(
     freeswitch_esl_tokio::EslClient,
     freeswitch_esl_tokio::EslEventStream,
 ) {
-    let server = MockEslServer::start(password).await;
-    let port = server.port();
-
-    let (mock_client, esl_result) = tokio::join!(
-        server.accept(),
-        freeswitch_esl_tokio::EslClient::connect("127.0.0.1", port, password)
-    );
-
-    let (esl_client, esl_events) = esl_result.unwrap();
-    (mock_client, esl_client, esl_events)
+    setup_connected_pair_with_options(password, freeswitch_esl_tokio::EslConnectOptions::default())
+        .await
 }
 
 /// Create a connected mock pair with custom options
@@ -323,4 +315,44 @@ pub async fn recv_event(
         .expect("timeout")
         .expect("channel closed")
         .expect("event error")
+}
+
+/// Shared scaffolding for the `inflight_command_woken_on_*` tests: spawn an
+/// `api("status")` call, let the mock read it, then run `action` (the
+/// differing disconnect/notice/rejection/desync trigger) and return the
+/// error the in-flight command failed with.
+///
+/// `action` takes ownership of `mock` and hands it back as `Some` unless it
+/// closed the connection itself (`drop_connection` consumes it) -- the
+/// returned value is held alive until the join completes, so a no-op or
+/// non-closing action doesn't drop the socket out from under a test that
+/// depends on the connection staying nominally open (e.g. liveness expiry).
+pub async fn inflight_command_woken_on<F, Fut>(
+    client: &freeswitch_esl_tokio::EslClient,
+    mut mock: MockClient,
+    join_timeout: Duration,
+    action: F,
+) -> freeswitch_esl_tokio::EslError
+where
+    F: FnOnce(MockClient) -> Fut,
+    Fut: std::future::Future<Output = Option<MockClient>>,
+{
+    let api_task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .api("status")
+                .await
+        }
+    });
+
+    mock.read_command()
+        .await;
+    let _mock = action(mock).await;
+
+    tokio::time::timeout(join_timeout, api_task)
+        .await
+        .expect("in-flight command still blocked after the triggering action")
+        .expect("api task panicked")
+        .expect_err("command should fail after the triggering action")
 }
