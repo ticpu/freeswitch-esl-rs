@@ -634,6 +634,21 @@ impl EslCommand {
         result
     }
 
+    /// Build a command carrying an event as its header block and body.
+    fn build_from_event(cmd: &str, event: &EslEvent) -> EslResult<String> {
+        let mut builder = CommandBuilder::new(cmd);
+
+        for (key, value) in event.headers() {
+            builder = builder.header(key, value)?;
+        }
+
+        if let Some(body) = event.body() {
+            builder = builder.body(body);
+        }
+
+        Ok(builder.build())
+    }
+
     /// Validate all user-supplied fields, then convert to wire format.
     pub fn to_wire_format(&self) -> EslResult<String> {
         match self {
@@ -677,17 +692,7 @@ impl EslCommand {
                         .map(|u| format!(" {}", u))
                         .unwrap_or_default()
                 );
-                let mut builder = CommandBuilder::new(&cmd_str);
-
-                for (key, value) in event.headers() {
-                    builder = builder.header(key, value)?;
-                }
-
-                if let Some(body) = event.body() {
-                    builder = builder.body(body);
-                }
-
-                Ok(builder.build())
+                Self::build_from_event(&cmd_str, event)
             }
             EslCommand::Execute {
                 app,
@@ -750,17 +755,7 @@ impl EslCommand {
                     })?;
                 validate_no_newlines(&event_name, "sendevent event name")?;
 
-                let mut builder = CommandBuilder::new(&format!("sendevent {}", event_name));
-
-                for (key, value) in event.headers() {
-                    builder = builder.header(key, value)?;
-                }
-
-                if let Some(body) = event.body() {
-                    builder = builder.body(body);
-                }
-
-                Ok(builder.build())
+                Self::build_from_event(&format!("sendevent {}", event_name), event)
             }
             EslCommand::MyEvents { format, uuid } => {
                 validate_no_newlines(format, "myevents format")?;
