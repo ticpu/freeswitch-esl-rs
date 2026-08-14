@@ -250,7 +250,17 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    repo = Path(__file__).resolve().parent.parent
+    # The script's physical path lands in the main checkout even when the hook
+    # runs for a worktree. Inherit the hook's cwd: git sets it to the worktree
+    # top, and with GIT_DIR set rev-parse would otherwise echo any cwd override.
+    repo = Path(
+        subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
     if args.commit and not (repo / INDEX).exists():
         commit, tag, indexed = args.commit, args.tag, {}
     else:
