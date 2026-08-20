@@ -1006,6 +1006,62 @@ mod tests {
     }
 
     #[test]
+    fn timetable_field_names_one_header() {
+        assert_eq!(
+            TimetableField::ProfileCreated.as_str(),
+            "Profile-Created-Time"
+        );
+        assert_eq!(
+            TimetableField::Created.header_name(TimetablePrefix::Caller),
+            "Caller-Channel-Created-Time"
+        );
+        // Raw prefixes too, for the dynamic `Call-<n>` form from_lookup accepts.
+        assert_eq!(
+            TimetableField::Hungup.header_name("Call-1"),
+            "Call-1-Channel-Hangup-Time"
+        );
+    }
+
+    #[test]
+    fn timetable_fields_and_suffixes_come_from_one_table() {
+        let fields = [
+            TimetableField::ProfileCreated,
+            TimetableField::Created,
+            TimetableField::Answered,
+            TimetableField::Progress,
+            TimetableField::ProgressMedia,
+            TimetableField::Hungup,
+            TimetableField::Transferred,
+            TimetableField::Resurrected,
+            TimetableField::Bridged,
+            TimetableField::LastHold,
+            TimetableField::HoldAccum,
+        ];
+        assert_eq!(fields.len(), ChannelTimetable::SUFFIXES.len());
+        for (field, suffix) in fields
+            .iter()
+            .zip(ChannelTimetable::SUFFIXES)
+        {
+            assert_eq!(field.as_str(), *suffix);
+        }
+    }
+
+    #[test]
+    fn timetable_field_header_name_is_what_from_lookup_reads() {
+        let mut event = EslEvent::new();
+        event.set_header(
+            TimetableField::Bridged.header_name(TimetablePrefix::OtherLeg),
+            "1700000006000000",
+        );
+
+        let tt = event
+            .other_leg_timetable()
+            .unwrap()
+            .expect("should have timetable");
+        assert_eq!(tt.bridged, Some(1700000006000000));
+    }
+
+    #[test]
     fn timetable_custom_prefix() {
         let mut event = EslEvent::new();
         event.set_header("Channel-Channel-Created-Time", "1700000001000000");
