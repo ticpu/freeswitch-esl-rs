@@ -353,6 +353,27 @@ mod tests {
         assert_eq!(event.raw_body(), Some(&b"caf\xE9"[..]));
     }
 
+    // switch_event_serialize writes _undef_ for an empty value on the
+    // text/event-plain path too. Only a read-back (a channel dump) reads it
+    // as absent; the pushed stream must keep the header it was sent.
+    #[test]
+    fn plain_event_keeps_undef_values() {
+        let parser = EslParser::new();
+        let msg = EslMessage::new(
+            MessageType::Event,
+            {
+                let mut h = IndexMap::new();
+                h.insert("Content-Type".to_string(), "text/event-plain".to_string());
+                h
+            },
+            Some("Event-Name: HEARTBEAT\nvariable_empty: _undef_\n\n".to_string()),
+        );
+        let event = parser
+            .parse_event(msg, EventFormat::Plain)
+            .unwrap();
+        assert_eq!(event.variable_str("empty"), Some("_undef_"));
+    }
+
     #[test]
     fn test_parse_json_event_body_key() {
         let parser = EslParser::new();

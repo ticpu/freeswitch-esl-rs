@@ -677,6 +677,136 @@ mod tests {
         );
     }
 
+    // --- parse_channel_dump() tests ---
+
+    /// A `uuid_dump <uuid>` body as `switch_event_serialize(encode=TRUE)`
+    /// writes it: percent-encoded values, `_undef_` for an empty one, and the
+    /// bare `\n` that closes a dump carrying no inner body.
+    const DUMP: &str = "Event-Name: CHANNEL_DATA\n\
+         Core-UUID: 2bde6598-0f10-4b90-b70e-d21f4c9e270f\n\
+         FreeSWITCH-Hostname: fs01%2Eexample%2Ecom\n\
+         Channel-Name: sofia%2Finternal%2F1000%40example%2Ecom\n\
+         Unique-ID: a1b2c3d4-5678-9abc-def0-123456789abc\n\
+         Channel-State: CS_EXECUTE\n\
+         Caller-Callee-ID-Name: _undef_\n\
+         variable_sip_call_id: call-456\n\
+         variable_rtp_use_codec_string: _undef_\n\
+         \n";
+
+    #[test]
+    fn channel_dump_is_a_serialized_channel_data_event() {
+        let event = parse_channel_dump(DUMP).unwrap();
+        assert_eq!(
+            event.event_type(),
+            Some(freeswitch_types::EslEventType::ChannelData)
+        );
+        assert_eq!(
+            event.unique_id(),
+            Some("a1b2c3d4-5678-9abc-def0-123456789abc")
+        );
+        assert_eq!(
+            event.header(EventHeader::ChannelName),
+            Some("sofia/internal/1000@example.com")
+        );
+        assert_eq!(event.variable_str("sip_call_id"), Some("call-456"));
+    }
+
+    // A dump is a read-back, so the sentinel for "no value" must read as
+    // absent rather than as a header whose value is the sentinel.
+    #[test]
+    fn channel_dump_skips_undef_values() {
+        let event = parse_channel_dump(DUMP).unwrap();
+        assert_eq!(event.header_str("Caller-Callee-ID-Name"), None);
+        assert_eq!(event.variable_str("rtp_use_codec_string"), None);
+        assert!(event
+            .headers()
+            .values()
+            .all(|v| v != "_undef_"));
+    }
+
+    // The crate's own normalisation, which is the whole point of routing the
+    // dump through the event decoder rather than an inline splitter.
+    #[test]
+    fn channel_dump_normalizes_header_keys() {
+        let event = parse_channel_dump("unique-id: abc\nchannel-state: CS_EXECUTE\n\n").unwrap();
+        assert_eq!(event.header_str("Unique-ID"), Some("abc"));
+        assert_eq!(event.header_str("unique-id"), Some("abc"));
+        assert_eq!(
+            event
+                .headers()
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["Unique-ID", "Channel-State"]
+        );
+    }
+
+    #[test]
+    fn channel_dump_carries_inner_body() {
+        let event =
+            parse_channel_dump("Event-Name: CHANNEL_DATA\nContent-Length: 5\n\nhello\n").unwrap();
+        assert_eq!(event.body(), Some("hello"));
+    }
+
+    // The race the connect-time rebuild loop hits: the channel hung up between
+    // the listing and the dump. It must arrive as a failure the loop can skip,
+    // not as an InvalidHeader from a line with no colon.
+    #[test]
+    fn channel_dump_of_a_dead_channel_is_a_command_failure() {
+        let err = parse_channel_dump("-ERR No such channel!\n").unwrap_err();
+        assert_eq!(
+            err.command_failure(),
+            Some(crate::error::CommandFailure::Err("No such channel!"))
+        );
+    }
+
+    #[test]
+    fn channel_dump_empty_body_is_a_protocol_error() {
+        assert!(matches!(
+            parse_channel_dump("").unwrap_err(),
+            EslError::ProtocolError { .. }
+        ));
+    }
+
+    #[test]
+    fn channel_dump_rejects_json_and_xml_formats() {
+        for (body, expected) in [
+            (r#"{"Event-Name":"CHANNEL_DATA"}"#, "json"),
+            ("  <event>\n  <headers/>\n</event>", "xml"),
+        ] {
+            let err = parse_channel_dump(body).unwrap_err();
+            assert!(
+                matches!(err, EslError::InvalidEventFormat { format: ref f } if f == expected),
+                "body {body:?} should name the {expected} format, got: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_dump_lossy_value_rides_as_data_without_raw_body() {
+        let event = parse_channel_dump("Event-Name: CHANNEL_DATA\nX-Bad: %E9foo\n\n").unwrap();
+        let lossy = event.lossy_values();
+        assert_eq!(
+            lossy
+                .iter()
+                .map(|v| v.key())
+                .collect::<Vec<_>>(),
+            vec!["X-Bad"]
+        );
+        // The dump reached us as an already-decoded &str, so there are no
+        // exact wire bytes to hand back.
+        assert_eq!(event.raw_body(), None);
+    }
+
+    #[test]
+    fn channel_dump_strict_option_rejects_invalid_utf8() {
+        let options = ChannelDumpOptions::new().with_strict_header_utf8(true);
+        assert!(options.strict_header_utf8());
+        let err =
+            parse_channel_dump_with_options("Event-Name: CHANNEL_DATA\nX-Bad: %E9\n\n", &options)
+                .unwrap_err();
+        assert!(matches!(err, EslError::InvalidUtf8InHeader { .. }));
+    }
+
     #[test]
     fn esl_response_alert_info_array_encoding() {
         use freeswitch_types::sip_header::SipHeaderLookup;

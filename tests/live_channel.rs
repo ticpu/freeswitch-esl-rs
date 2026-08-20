@@ -13,9 +13,12 @@ use freeswitch_esl_tokio::commands::{
 };
 use freeswitch_esl_tokio::ExecuteOptions;
 use freeswitch_esl_tokio::{
-    Application, DialplanType, Endpoint, EslEventType, EventFormat, HeaderLookup, Originate,
+    parse_channel_dump, Application, CommandFailure, DialplanType, Endpoint, EslEventType,
+    EventFormat, HeaderLookup, Originate,
 };
-use live_common::{bgapi_originate_ok, connect, getvar, kill_channel, ChannelReaper};
+use live_common::{
+    bgapi_originate_ok, channel_exists, connect, getvar, kill_channel, ChannelReaper,
+};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -626,4 +629,201 @@ async fn live_empty_value_still_never_reaches_the_channel() {
     );
 
     drop(permit);
+}
+
+// --- Channel dump parsing: the connect-time state rebuild loop ---
+
+/// Headers that identify the channel and so must read the same from a dump as
+/// from the event stream; anything time-varying (state, timestamps) will not.
+const DUMP_IDENTITY_HEADERS: &[&str] = &[
+    "Unique-ID",
+    "Channel-Name",
+    "Core-UUID",
+    "FreeSWITCH-Hostname",
+    "Call-Direction",
+    "Caller-Destination-Number",
+];
+
+#[tokio::test]
+#[ignore]
+async fn live_channel_dump_rebuild_loop() {
+    let (client, mut events, _permit) = connect().await;
+
+    client
+        .subscribe_events(
+            EventFormat::Plain,
+            &[EslEventType::BackgroundJob, EslEventType::ChannelCreate],
+        )
+        .await
+        .unwrap();
+
+    // Two channels, so the loop below is a loop and not a single dump.
+    let mut reaper = ChannelReaper::new(&client);
+    let mut uuids = Vec::new();
+    for _ in 0..2 {
+        let cmd = Originate::application(
+            Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
+            Application::simple("park"),
+        );
+        let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
+        reaper.track(&uuid);
+        uuids.push(uuid);
+    }
+
+    // Every CHANNEL_CREATE is correlated to one of our own UUIDs; the switch is
+    // shared, so anything else on the stream belongs to another test.
+    let mut created: Vec<(String, freeswitch_esl_tokio::EslEvent)> = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while created.len() < uuids.len() && Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => {
+                if evt.event_type() != Some(EslEventType::ChannelCreate) {
+                    continue;
+                }
+                if let Some(uuid) = evt
+                    .unique_id()
+                    .filter(|u| {
+                        uuids
+                            .iter()
+                            .any(|ours| ours == u)
+                    })
+                    .map(|u| u.to_string())
+                {
+                    created.push((uuid, evt));
+                }
+            }
+            Ok(Some(Err(e))) => panic!("event error: {}", e),
+            Ok(None) => panic!("event stream closed"),
+            Err(_) => break,
+        }
+    }
+
+    // The listing half of the rebuild loop.
+    let listing = client
+        .api("show channels as json")
+        .await
+        .expect("show channels: transport error")
+        .api_result()
+        .expect("show channels rejected -- the ESL user needs it in esl-allowed-api")
+        .to_string();
+
+    // Collect everything before reaping; the assertions run after.
+    let mut dumps = Vec::new();
+    for uuid in &uuids {
+        let body = client
+            .api(&format!("uuid_dump {}", uuid))
+            .await
+            .expect("uuid_dump: transport error")
+            .body()
+            .expect("uuid_dump must return a body")
+            .to_string();
+        let parsed = parse_channel_dump(&body);
+        dumps.push((uuid.clone(), body, parsed));
+    }
+
+    reaper
+        .reap()
+        .await;
+
+    assert_eq!(
+        created.len(),
+        uuids.len(),
+        "did not observe CHANNEL_CREATE for every originated channel"
+    );
+    for uuid in &uuids {
+        assert!(
+            listing.contains(uuid.as_str()),
+            "show channels did not list {}",
+            uuid
+        );
+    }
+
+    for (uuid, body, parsed) in dumps {
+        let dump = parsed.unwrap_or_else(|e| panic!("uuid_dump {} did not parse: {}", uuid, e));
+
+        assert_eq!(
+            dump.event_type(),
+            Some(EslEventType::ChannelData),
+            "a dump is a serialized CHANNEL_DATA event"
+        );
+        assert_eq!(dump.raw_body(), None, "a dump arrives already decoded");
+
+        let event = &created
+            .iter()
+            .find(|(u, _)| *u == uuid)
+            .expect("every uuid has a CHANNEL_CREATE")
+            .1;
+        for name in DUMP_IDENTITY_HEADERS {
+            assert_eq!(
+                dump.header_str(name),
+                event.header_str(name),
+                "{} disagrees between the dump and the event for {}",
+                name,
+                uuid
+            );
+        }
+
+        assert!(
+            body.contains("_undef_"),
+            "the switch wrote no empty value for {}, so the skip is untested",
+            uuid
+        );
+        assert!(
+            dump.headers()
+                .values()
+                .all(|v| v != "_undef_"),
+            "an empty value must read as absent, not as the sentinel, for {}",
+            uuid
+        );
+    }
+}
+
+/// The race the rebuild loop hits in production: the channel hung up between
+/// the listing and its dump.
+#[tokio::test]
+#[ignore]
+async fn live_channel_dump_of_reaped_uuid_is_skippable() {
+    let (client, mut events, _permit) = connect().await;
+
+    client
+        .subscribe_events(EventFormat::Plain, &[EslEventType::BackgroundJob])
+        .await
+        .unwrap();
+
+    let cmd = Originate::application(
+        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
+        Application::simple("park"),
+    );
+    let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
+    kill_channel(&client, &uuid).await;
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while channel_exists(&client, &uuid).await {
+        assert!(Instant::now() < deadline, "{} never went away", uuid);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let body = client
+        .api(&format!("uuid_dump {}", uuid))
+        .await
+        .expect("uuid_dump: transport error")
+        .body()
+        .expect("uuid_dump must return a body")
+        .to_string();
+
+    let err =
+        parse_channel_dump(&body).expect_err("a dump of a dead channel must not parse as an event");
+    let failure = err
+        .command_failure()
+        .expect("the loop has to recognise this as a command failure");
+    let payload = match failure {
+        CommandFailure::Err(payload) => payload,
+        other => panic!("expected an -ERR reply, got {:?}", other),
+    };
+    assert!(
+        payload.contains("No such channel"),
+        "unexpected -ERR payload: {:?}",
+        payload
+    );
+    assert!(err.is_recoverable(), "the loop skips this and carries on");
 }
