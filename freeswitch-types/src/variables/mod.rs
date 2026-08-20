@@ -19,8 +19,8 @@ pub use esl_array::{EslArray, EslArrayError, MAX_ARRAY_ITEMS};
 #[cfg(feature = "esl")]
 pub use esl_headers::EslHeaders;
 pub use loopback::{
-    LoopbackHangupCause, LoopbackResignation, LoopbackVariable, ParseLoopbackHangupCauseError,
-    ParseLoopbackVariableError,
+    LoopbackChannelName, LoopbackHangupCause, LoopbackLeg, LoopbackResignation, LoopbackVariable,
+    ParseLoopbackHangupCauseError, ParseLoopbackLegError, ParseLoopbackVariableError,
 };
 pub use sip_multipart::{MultipartBody, MultipartBodyError, MultipartItem};
 pub use sip_passthrough::{

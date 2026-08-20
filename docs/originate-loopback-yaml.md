@@ -281,12 +281,21 @@ resigned loopback/bridge-b    -> real channel e6455adc-...
 bridged  null/nearend = null/farend
 ```
 
-`HeaderLookup::loopback_resignation()` reads both variables:
+`HeaderLookup::loopback_resignation()` reads both variables, and the channel's
+own name says whether they describe it:
 
 ```rust,ignore
+let is_loopback = evt
+    .channel_name()
+    .and_then(LoopbackChannelName::parse)
+    .is_some();
+
 match evt.loopback_resignation() {
     // The leg is gone but its call is not. Track other_uuid instead.
-    Some(r) => reanchor(r.other_uuid()),
+    Some(r) if is_loopback => reanchor(r.other_uuid()),
+    // A real channel carrying the marker inherited it from the leg that
+    // resigned onto it. It is up, and tearing it down ends a live call.
+    Some(_) => {}
     None => teardown(),
 }
 ```

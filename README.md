@@ -104,7 +104,9 @@ tokio = { version = "1.0", features = ["full"] }
   key-value store, not just `EslEvent`.
 - **Loopback bowout detection** -- `loopback_resignation()` tells a leg that
   mod_loopback removed from a live call apart from a real teardown, keyed on
-  the marker's presence so neither of its two paths is missed.
+  the marker's presence so neither of its two paths is missed. Qualify it with
+  `LoopbackChannelName::parse()` over the channel's own name: the marker is
+  copied onto the real channel that continues the call.
 - **Command builders** -- `Originate`, `BridgeDialString`, `UuidKill`,
   `ConferenceDtmf`, dptools -- all `Display`/`FromStr`, no transport coupling.
 - **Serde** -- all builder types implement `Serialize`/`Deserialize`.

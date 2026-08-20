@@ -15,8 +15,8 @@
 
 use freeswitch_esl_tokio::commands::UuidKill;
 use freeswitch_esl_tokio::{
-    EslClient, EslEventType, EventFormat, EventHeader, HeaderLookup, Originate,
-    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    EslClient, EslEventType, EventFormat, EventHeader, HeaderLookup, LoopbackChannelName,
+    Originate, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
 use std::time::Duration;
 
@@ -83,12 +83,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let Some(resignation) = evt.loopback_resignation() else {
                     continue;
                 };
-                let name = evt
-                    .header(EventHeader::ChannelName)
-                    .unwrap_or("?");
+                // The marker alone does not say the emitting channel is the one
+                // that resigned: it gets copied onto whatever real channel
+                // continues the call. Only the channel's own name answers that,
+                // and never Caller-Channel-Name, which reports the leg's.
+                let Some(name) = evt.channel_name() else {
+                    continue;
+                };
+                let Some(leg) = LoopbackChannelName::parse(name) else {
+                    continue;
+                };
                 println!(
-                    "resigned {:<20} -> real channel {}",
+                    "resigned {:<20} (leg {}) -> real channel {}",
                     name,
+                    leg.leg(),
                     resignation
                         .other_uuid()
                         .unwrap_or("?")
@@ -106,7 +114,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ) else {
                     continue;
                 };
-                if this.starts_with("loopback/") || other.starts_with("loopback/") {
+                if LoopbackChannelName::parse(this).is_some()
+                    || LoopbackChannelName::parse(other).is_some()
+                {
                     continue;
                 }
                 let (Some(a), Some(b)) =

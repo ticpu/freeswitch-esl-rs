@@ -12,7 +12,7 @@ use freeswitch_esl_tokio::commands::{LoopbackEndpoint, UuidSetVar, UuidTransfer}
 use freeswitch_esl_tokio::variables::LoopbackVariable;
 use freeswitch_esl_tokio::{
     Application, ChannelState, DialplanType, Endpoint, EslEventType, EventFormat, EventHeader,
-    HeaderLookup, LoopbackHangupCause, Originate,
+    HeaderLookup, LoopbackChannelName, LoopbackHangupCause, Originate,
 };
 use live_common::{channel_exists, connect, getvar, kill_channel, ChannelReaper};
 use std::time::Duration;
@@ -390,6 +390,20 @@ async fn live_originate_loopback_bowout_from_yaml() {
                     };
                     // This YAML drives the frame-count path specifically.
                     assert_eq!(r.cause(), Ok(LoopbackHangupCause::Bridge));
+                    // The marker is also copied onto the channel that continues
+                    // the call, so only the emitter's own name says a loopback
+                    // leg sent this.
+                    let name = evt
+                        .channel_name()
+                        .expect("a channel event names its channel");
+                    let parsed = LoopbackChannelName::parse(name)
+                        .expect("a resigning leg's own name is a loopback name");
+                    assert_eq!(evt.channel_driver(), Some("loopback"));
+                    assert_eq!(
+                        Some(parsed.leg()),
+                        evt.loopback_leg()
+                            .expect("loopback_leg parses")
+                    );
                     let survivor = r
                         .other_uuid()
                         .expect("a resigning leg must name the real channel it hands over to");
@@ -413,7 +427,9 @@ async fn live_originate_loopback_bowout_from_yaml() {
                     ) else {
                         continue;
                     };
-                    if this.starts_with("loopback/") || other.starts_with("loopback/") {
+                    if LoopbackChannelName::parse(this).is_some()
+                        || LoopbackChannelName::parse(other).is_some()
+                    {
                         continue;
                     }
                     if let (Some(a), Some(b)) =
@@ -583,7 +599,7 @@ async fn live_originate_loopback_bowout_on_execute() {
             .expect("uuid_transfer rejected");
     }
 
-    let mut resignation: Option<(String, Option<String>)> = None;
+    let mut resignation: Option<(String, Option<String>, Option<String>)> = None;
     while bonded && resignation.is_none() && Instant::now() < deadline {
         match tokio::time::timeout_at(deadline, events.recv()).await {
             Ok(Some(Ok(evt))) => {
@@ -601,6 +617,8 @@ async fn live_originate_loopback_bowout_on_execute() {
                             .to_string(),
                         r.other_uuid()
                             .map(str::to_string),
+                        evt.channel_name()
+                            .map(str::to_string),
                     ));
                 }
             }
@@ -610,7 +628,7 @@ async fn live_originate_loopback_bowout_on_execute() {
         }
     }
 
-    if let Some((_, Some(ref survivor))) = resignation {
+    if let Some((_, Some(ref survivor), _)) = resignation {
         reaper.track(survivor);
     }
     reaper
@@ -622,7 +640,7 @@ async fn live_originate_loopback_bowout_on_execute() {
         "the partner leg never bonded to a real channel, so the execute path \
          could not be reached"
     );
-    let (cause_raw, other_uuid) =
+    let (cause_raw, other_uuid, channel_name) =
         resignation.expect("the execute path must report a resignation on the leg that bowed out");
     assert_eq!(
         cause_raw.parse::<LoopbackHangupCause>(),
@@ -633,5 +651,12 @@ async fn live_originate_loopback_bowout_on_execute() {
     assert!(
         other_uuid.is_some(),
         "a resigning leg must name the real channel it hands over to"
+    );
+    // This path masquerades the leg onto the survivor, so the marker reaches a
+    // real channel too. What stays true is the emitter's own name.
+    let name = channel_name.expect("a channel event names its channel");
+    assert!(
+        LoopbackChannelName::parse(&name).is_some(),
+        "the resignation came from a channel that is not a loopback leg: {name}"
     );
 }

@@ -1,4 +1,5 @@
-//! Typed mod_loopback channel variable names and the bowout marker.
+//! Typed mod_loopback channel variable names, channel names, and the bowout
+//! marker.
 
 sip_header::define_header_enum! {
     tests_mod: loopback_variable_generated_tests,
@@ -55,6 +56,79 @@ wire_enum! {
     }
     error ParseLoopbackHangupCauseError("loopback hangup cause");
     tests: loopback_hangup_cause_generated_tests;
+}
+
+wire_enum! {
+    /// Which half of a loopback pair, from the `loopback_leg` variable.
+    ///
+    /// The A leg is the one an `originate` returns; the B leg is routed into the
+    /// dialplan. Each carries the partner's UUID in `other_loopback_leg_uuid`.
+    ///
+    /// The wire form is the variable's uppercase spelling. The lowercase suffix
+    /// a channel name carries is [`LoopbackChannelName`]'s business.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum LoopbackLeg {
+        /// The leg an `originate` returns.
+        A => "A",
+        /// The leg routed into the dialplan.
+        B => "B",
+    }
+    error ParseLoopbackLegError("loopback leg");
+    tests: loopback_leg_generated_tests;
+}
+
+/// Borrowed view of a parsed loopback channel name. No allocation.
+///
+/// mod_loopback names its pair `loopback/<extension>-a` and `-b`, from the
+/// destination with the `/context/dialplan` tail stripped and an `app=` form
+/// reduced to the bare application token. `Some` only for names carrying a leg
+/// suffix; other drivers return `None`.
+///
+/// This is the only field that answers whether a loopback leg emitted an event.
+/// The execute-time resignation copies every channel variable onto the real
+/// channel that continues the call and clones the resigning leg's caller
+/// profile onto it, so `is_loopback`, `loopback_leg` and every `Caller-*` header
+/// -- `Caller-Channel-Name` included -- then describe a channel that is gone.
+/// Feed this parser
+/// [`HeaderLookup::channel_name()`](crate::HeaderLookup::channel_name), which
+/// reads `Channel-Name`, and nothing else. Mechanics are in
+/// `docs/loopback-bowout.md`.
+///
+/// A name is what a channel calls itself, not proof of its driver: a SIP peer
+/// can rename a sofia channel through the `X-FS-Channel-Name` header, which
+/// mod_sofia records as the `push_channel_name` variable. So a name answers what
+/// kind of channel this is, and never carries an authorization decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoopbackChannelName<'a> {
+    extension: &'a str,
+    leg: LoopbackLeg,
+}
+
+impl<'a> LoopbackChannelName<'a> {
+    /// Parses a channel name; `Some` only for `loopback/<extension>-a|-b`.
+    pub fn parse(name: &'a str) -> Option<Self> {
+        let rest = name.strip_prefix("loopback/")?;
+        // The suffix is always present, and an extension may itself end in one,
+        // so exactly one is stripped from the end.
+        let (extension, leg) = match rest.strip_suffix("-a") {
+            Some(extension) => (extension, LoopbackLeg::A),
+            None => (rest.strip_suffix("-b")?, LoopbackLeg::B),
+        };
+        if extension.is_empty() {
+            return None;
+        }
+        Some(Self { extension, leg })
+    }
+
+    /// Dialled extension, or the application token of an `app=` destination.
+    pub fn extension(&self) -> &'a str {
+        self.extension
+    }
+
+    /// Which half of the pair this is.
+    pub fn leg(&self) -> LoopbackLeg {
+        self.leg
+    }
 }
 
 /// A loopback leg that resigned from a call which is still up.

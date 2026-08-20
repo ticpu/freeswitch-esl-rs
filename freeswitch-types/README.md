@@ -26,11 +26,11 @@ which re-exports everything from this crate.
 | `sip_header_addr` | `SipHeaderAddr` — RFC 3261 `name-addr` parser with header-level parameters |
 | `sip_message` | `extract_header` — extract header values from raw SIP message text (RFC 3261 §7.3.1: folding, case-insensitive, multi-occurrence) |
 | `sip_header` | `SipHeader` enum, `SipHeaderLookup` trait, `extract_from()` for raw messages |
-| `channel` | `ChannelState`, `CallState`, `AnswerState`, `CallDirection`, `HangupCause`, `ChannelTimetable` (+ `TimetableField`, one named header at a time) |
+| `channel` | `ChannelState`, `CallState`, `AnswerState`, `CallDirection`, `HangupCause`, `ChannelTimetable` (+ `TimetableField`, one named header at a time), `channel_driver()` |
 | `headers` | `EventHeader` enum (typed event header names) |
 | `lookup` | `HeaderLookup` trait (typed accessors for any key-value store) |
 | `sofia` | `SofiaChannelName` (borrow-based `sofia/<profile>/<user>@<host>` parser), `SofiaEventSubclass`, `GatewayRegState`, `SipUserPingStatus` |
-| `variables` | `ChannelVariable`, `CoreMediaVariable` (`unit()` → `RtpStatUnit`), `SofiaVariable`, `LoopbackVariable` (+ `LoopbackResignation`, the bowout marker), `ConferenceVariable`, `SipPassthroughHeader` (unified `sip_h_*`/`sip_i_*`/etc. with `extract_from()`), `EslArray`, `MultipartBody` |
+| `variables` | `ChannelVariable`, `CoreMediaVariable` (`unit()` → `RtpStatUnit`), `SofiaVariable`, `LoopbackVariable` (+ `LoopbackResignation`, the bowout marker, and `LoopbackChannelName`/`LoopbackLeg` — the name is the one field a resignation does not copy onto the surviving channel), `ConferenceVariable`, `SipPassthroughHeader` (unified `sip_h_*`/`sip_i_*`/etc. with `extract_from()`), `EslArray`, `MultipartBody` |
 | `event` | `EslEvent`, `EslEventType`, `EventFormat`, `EslEventPriority`, `LossyValues`/`LossyValue` (non-UTF-8 header-value signal) *(requires `esl` feature)* |
 | `commands` | `Originate`, `BridgeDialString`, `UuidKill`, `UuidBridge`, endpoint types *(requires `esl` feature)* |
 | `sdp` | `CodecString`/`CodecStringEntry` (the FreeSWITCH codec-string grammar, parse and emit, with `dedup`/`simplify` ported from the switch), `SdpCodecs` (SDP offer → typed codec list, plus `SdpMediaSection` for every `m=` line the offer carried — held streams included — and `NonCodecPayload` for what the switch negotiates outside the string), `CodecImplementation` (filter a codec string against what a switch has loaded) *(requires `sdp` feature)* |

@@ -55,9 +55,10 @@ pub const DEFAULT_ESL_PASSWORD: &str = "ClueCon";
 pub const VARIABLE_PREFIX: &str = "variable_";
 
 pub use channel::{
-    AnswerState, CallDirection, CallState, ChannelState, ChannelTimetable, HangupCause,
-    ParseAnswerStateError, ParseCallDirectionError, ParseCallStateError, ParseChannelStateError,
-    ParseHangupCauseError, ParseTimetableError, TimetableField, TimetablePrefix,
+    channel_driver, AnswerState, CallDirection, CallState, ChannelState, ChannelTimetable,
+    HangupCause, ParseAnswerStateError, ParseCallDirectionError, ParseCallStateError,
+    ParseChannelStateError, ParseHangupCauseError, ParseTimetableError, TimetableField,
+    TimetablePrefix,
 };
 #[cfg(feature = "esl")]
 pub use commands::{
@@ -89,8 +90,9 @@ pub use sofia::{
 #[cfg(feature = "esl")]
 pub use variables::EslHeaders;
 pub use variables::{
-    ChannelVariable, CoreMediaVariable, EslArray, EslArrayError, LoopbackHangupCause,
-    LoopbackResignation, MultipartBody, MultipartBodyError, MultipartItem,
-    ParseChannelVariableError, ParseCoreMediaVariableError, ParseLoopbackHangupCauseError,
-    RtpStatUnit, SipHeaderPrefix, SipPassthroughHeader, VariableName, MAX_ARRAY_ITEMS,
+    ChannelVariable, CoreMediaVariable, EslArray, EslArrayError, LoopbackChannelName,
+    LoopbackHangupCause, LoopbackLeg, LoopbackResignation, MultipartBody, MultipartBodyError,
+    MultipartItem, ParseChannelVariableError, ParseCoreMediaVariableError,
+    ParseLoopbackHangupCauseError, ParseLoopbackLegError, RtpStatUnit, SipHeaderPrefix,
+    SipPassthroughHeader, VariableName, MAX_ARRAY_ITEMS,
 };

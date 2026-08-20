@@ -6,9 +6,9 @@
 //! everything else for free.
 
 use crate::channel::{
-    AnswerState, CallDirection, CallState, ChannelState, ChannelTimetable, HangupCause,
-    ParseAnswerStateError, ParseCallDirectionError, ParseCallStateError, ParseChannelStateError,
-    ParseHangupCauseError, ParseTimetableError,
+    channel_driver, AnswerState, CallDirection, CallState, ChannelState, ChannelTimetable,
+    HangupCause, ParseAnswerStateError, ParseCallDirectionError, ParseCallStateError,
+    ParseChannelStateError, ParseHangupCauseError, ParseTimetableError,
 };
 #[cfg(feature = "esl")]
 use crate::event::{EslEventPriority, ParsePriorityError};
@@ -18,7 +18,9 @@ use crate::sofia::{
     ParseSipUserPingStatusError, ParseSofiaEventSubclassError, SipUserPingStatus,
     SofiaEventSubclass,
 };
-use crate::variables::{LoopbackResignation, LoopbackVariable, VariableName};
+use crate::variables::{
+    LoopbackLeg, LoopbackResignation, LoopbackVariable, ParseLoopbackLegError, VariableName,
+};
 use sip_header::SipHeaderLookup;
 use std::str::FromStr;
 
@@ -136,6 +138,28 @@ pub trait HeaderLookup: SipHeaderLookup {
         self.header(EventHeader::ChannelName)
     }
 
+    /// Endpoint module the emitting channel belongs to, from its own
+    /// `Channel-Name`.
+    ///
+    /// Never from `Caller-Channel-Name`, which after a loopback resignation
+    /// names the leg that left. See
+    /// [`channel_driver()`](crate::channel::channel_driver) and
+    /// [`LoopbackChannelName`](crate::variables::LoopbackChannelName).
+    fn channel_driver(&self) -> Option<&str> {
+        self.channel_name()
+            .and_then(channel_driver)
+    }
+
+    /// `loopback_leg` variable, for a channel already known to be a loopback.
+    ///
+    /// Not an answer to "is this a loopback channel": the execute-time
+    /// resignation copies every variable onto the real channel that continues
+    /// the call, so this reads `Some` on a survivor that never was one. That
+    /// question is [`LoopbackChannelName`](crate::variables::LoopbackChannelName)'s.
+    fn loopback_leg(&self) -> Result<Option<LoopbackLeg>, ParseLoopbackLegError> {
+        parse_opt(self.variable(LoopbackVariable::LoopbackLeg))
+    }
+
     /// `Caller-Caller-ID-Number` header.
     fn caller_id_number(&self) -> Option<&str> {
         self.header(EventHeader::CallerCallerIdNumber)
@@ -200,10 +224,16 @@ pub trait HeaderLookup: SipHeaderLookup {
 
     /// Detect a mod_loopback bowout on a `CHANNEL_HANGUP_COMPLETE`.
     ///
-    /// `Some` means the loopback leg resigned and the call it carried is still
-    /// up on [`other_uuid()`](LoopbackResignation::other_uuid) -- re-anchor
+    /// `Some` means a loopback leg resigned and the call it carried is still up
+    /// on [`other_uuid()`](LoopbackResignation::other_uuid) -- re-anchor
     /// tracking there rather than treating the hangup as a teardown. `None` is
     /// a genuine teardown.
+    ///
+    /// `Some` is conclusive only once the emitting channel is known to be a
+    /// loopback: the marker is copied onto the real channel that continues the
+    /// call, so acting on it unqualified tears down a live one. Qualify with
+    /// [`LoopbackChannelName::parse()`](crate::variables::LoopbackChannelName::parse)
+    /// over [`channel_name()`](Self::channel_name).
     ///
     /// Keyed on the presence of `loopback_hangup_cause`, never its value:
     /// mod_loopback writes a different token depending on which internal path

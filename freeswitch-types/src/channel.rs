@@ -70,6 +70,21 @@ impl ChannelState {
     }
 }
 
+/// Endpoint module a channel name belongs to: the segment before the first `/`
+/// (`sofia`, `loopback`, `null`, ...).
+///
+/// No enum, because any module can register an endpoint. A channel name is also
+/// what the channel calls itself rather than proof of its driver -- see
+/// [`LoopbackChannelName`](crate::variables::LoopbackChannelName) for what that
+/// costs after a loopback resignation.
+pub fn channel_driver(name: &str) -> Option<&str> {
+    let (driver, _) = name.split_once('/')?;
+    if driver.is_empty() {
+        return None;
+    }
+    Some(driver)
+}
+
 wire_enum! {
     /// Call state from `switch_channel_callstate_t` -- carried in the `Channel-Call-State` header.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
