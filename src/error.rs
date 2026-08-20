@@ -321,6 +321,7 @@ impl EslError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use freeswitch_types::HangupCause;
 
     #[test]
     fn access_denied_not_recoverable() {
@@ -406,5 +407,102 @@ mod tests {
             reason: "ACL".into()
         }
         .is_permission_denied());
+    }
+
+    fn failed(reply_text: &str) -> EslError {
+        EslError::CommandFailed {
+            reply_text: reply_text.into(),
+        }
+    }
+
+    // The consumer case: a hangup cause arrives as an -ERR payload and has to
+    // reach HangupCause::from_str without the caller peeling the prefix.
+    #[test]
+    fn err_payload_round_trips_through_hangup_cause() {
+        let err = failed("-ERR USER_BUSY");
+        let failure = err
+            .command_failure()
+            .expect("CommandFailed must classify");
+        assert_eq!(failure, CommandFailure::Err("USER_BUSY"));
+        assert_eq!(
+            failure
+                .payload()
+                .expect("Err carries a payload")
+                .parse::<HangupCause>(),
+            Ok(HangupCause::UserBusy)
+        );
+    }
+
+    #[test]
+    fn usage_reply_classifies_as_usage() {
+        let err = failed("-USAGE: originate <call_url> <exten>");
+        assert_eq!(
+            err.command_failure(),
+            Some(CommandFailure::Usage("originate <call_url> <exten>"))
+        );
+    }
+
+    // A usage synopsis's leading indentation is wire content: exactly one
+    // space is consumed after the optional colon, never a trim.
+    #[test]
+    fn usage_payload_keeps_synopsis_indentation() {
+        let err = failed("-USAGE:   sched_api [+@]<time>");
+        assert_eq!(
+            err.command_failure(),
+            Some(CommandFailure::Usage("  sched_api [+@]<time>"))
+        );
+    }
+
+    #[test]
+    fn bare_err_yields_empty_payload() {
+        assert_eq!(
+            failed("-ERR").command_failure(),
+            Some(CommandFailure::Err(""))
+        );
+    }
+
+    // Neither prefix found: the whole text rides along under a discriminant
+    // that says so, rather than masquerading as a peeled -ERR payload.
+    #[test]
+    fn unprefixed_reply_carries_whole_text_and_no_payload() {
+        let err = failed("sip_from_user");
+        let failure = err
+            .command_failure()
+            .expect("CommandFailed must classify");
+        assert_eq!(failure, CommandFailure::Unprefixed("sip_from_user"));
+        assert_eq!(failure.payload(), None);
+    }
+
+    #[test]
+    fn leading_wire_whitespace_is_tolerated() {
+        assert_eq!(
+            failed("  -ERR USER_BUSY").command_failure(),
+            Some(CommandFailure::Err("USER_BUSY"))
+        );
+    }
+
+    #[test]
+    fn non_command_failed_variants_do_not_classify() {
+        assert_eq!(EslError::QueueFull.command_failure(), None);
+        assert_eq!(EslError::Timeout { timeout_ms: 10 }.command_failure(), None);
+        assert_eq!(
+            EslError::UnexpectedReply {
+                reply_text: "-ERR nope".into()
+            }
+            .command_failure(),
+            None
+        );
+    }
+
+    // A -USAGE synopsis merely quoting the phrase is not the denial reply,
+    // and the Err-only pattern is what excludes it.
+    #[test]
+    fn usage_mentioning_the_phrase_is_not_permission_denied() {
+        let err = failed("-USAGE: sched_api [+@]<time> <group_name> <command> (permission denied)");
+        assert!(matches!(
+            err.command_failure(),
+            Some(CommandFailure::Usage(_))
+        ));
+        assert!(!err.is_permission_denied());
     }
 }
