@@ -9,14 +9,15 @@
 //!   but the connection is still usable (e.g., timeout, command rejected).
 
 use crate::commands::OriginateError;
+use crate::constants::{REPLY_PREFIX_ERR, REPLY_PREFIX_USAGE};
 use thiserror::Error;
 
 /// Result type alias for ESL operations
 pub type EslResult<T> = Result<T, EslError>;
 
-/// Every `mod_event_socket` denial (`api`, `bgapi`, `log`, `event`) replies
-/// with exactly this and nothing more.
-const PERMISSION_DENIED_REPLY: &str = "-ERR permission denied";
+/// Payload of every `mod_event_socket` denial (`api`, `bgapi`, `log`, `event`);
+/// the reply carries this and nothing more.
+const PERMISSION_DENIED_PAYLOAD: &str = "permission denied";
 
 /// Comprehensive error types for ESL operations
 #[derive(Error, Debug)]
@@ -187,6 +188,51 @@ impl From<serde_json::Error> for EslError {
     }
 }
 
+/// The failure text of an [`EslError::CommandFailed`], split by the prefix
+/// FreeSWITCH wrote in front of it.
+///
+/// A sum rather than a `(kind, payload)` pair because the payload only means
+/// something once the prefix is known: a `-USAGE` synopsis handed to
+/// [`HangupCause::from_str`](freeswitch_types::HangupCause) is not a hangup
+/// cause, and a product type lets a caller read one without the other.
+///
+/// The prefix test is `starts_with` with no delimiter requirement, matching
+/// how [`parse_api_body`](crate::parse_api_body) classifies the same bodies —
+/// so `-ERRORS: 3` peels as [`Err`](Self::Err), and the two agree rather than
+/// diverging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CommandFailure<'a> {
+    /// `-ERR <text>`, with the text after an optional `:` and one space.
+    /// Empty for a bare `-ERR`.
+    Err(&'a str),
+    /// `-USAGE: <text>`. Only one space is consumed after the colon: the rest
+    /// of a synopsis's indentation is wire content.
+    Usage(&'a str),
+    /// Neither prefix was found, so the whole reply text rides here rather
+    /// than posing as a peeled payload.
+    Unprefixed(&'a str),
+}
+
+impl<'a> CommandFailure<'a> {
+    /// The text behind the prefix, or `None` when there was no prefix to peel.
+    pub fn payload(self) -> Option<&'a str> {
+        match self {
+            CommandFailure::Err(text) | CommandFailure::Usage(text) => Some(text),
+            CommandFailure::Unprefixed(_) => None,
+        }
+    }
+}
+
+/// Drop the separator FreeSWITCH writes between a reply prefix and its text.
+fn peel_separator(rest: &str) -> &str {
+    let rest = rest
+        .strip_prefix(':')
+        .unwrap_or(rest);
+    rest.strip_prefix(' ')
+        .unwrap_or(rest)
+}
+
 impl EslError {
     /// Construct a generic error with a custom message.
     pub fn generic(message: impl Into<String>) -> Self {
@@ -310,11 +356,33 @@ impl EslError {
     /// own whole reply, so a different failure that merely mentions the phrase
     /// is not one.
     pub fn is_permission_denied(&self) -> bool {
-        matches!(self, EslError::CommandFailed { reply_text }
-            if reply_text
-                .trim_start()
-                .get(..PERMISSION_DENIED_REPLY.len())
-                .is_some_and(|head| head.eq_ignore_ascii_case(PERMISSION_DENIED_REPLY)))
+        matches!(self.command_failure(), Some(CommandFailure::Err(payload))
+            if payload
+                .get(..PERMISSION_DENIED_PAYLOAD.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(PERMISSION_DENIED_PAYLOAD)))
+    }
+
+    /// Split the failure text of a [`CommandFailed`](Self::CommandFailed) by
+    /// its wire prefix, so a caller can feed the payload to a typed parser
+    /// (`-ERR USER_BUSY` to
+    /// [`HangupCause`](freeswitch_types::HangupCause)) without stripping it
+    /// by hand.
+    ///
+    /// `None` for every other variant, including
+    /// [`UnexpectedReply`](Self::UnexpectedReply) — whose documented normal
+    /// case is a `getvar` value, which is not a failure at all.
+    pub fn command_failure(&self) -> Option<CommandFailure<'_>> {
+        let EslError::CommandFailed { reply_text } = self else {
+            return None;
+        };
+        let text = reply_text.trim_start();
+        if let Some(rest) = text.strip_prefix(REPLY_PREFIX_ERR) {
+            Some(CommandFailure::Err(peel_separator(rest)))
+        } else if let Some(rest) = text.strip_prefix(REPLY_PREFIX_USAGE) {
+            Some(CommandFailure::Usage(peel_separator(rest)))
+        } else {
+            Some(CommandFailure::Unprefixed(text))
+        }
     }
 }
 

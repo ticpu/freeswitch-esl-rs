@@ -180,4 +180,4 @@ pub use connection::{
     ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions,
     EslEventStream,
 };
-pub use error::{EslError, EslResult};
+pub use error::{CommandFailure, EslError, EslResult};

@@ -35,6 +35,14 @@ pub const CONTENT_TYPE_TEXT_EVENT_XML: &str = "text/event-xml";
 /// Content-Type for log/data messages (FreeSWITCH log forwarding).
 pub const CONTENT_TYPE_LOG_DATA: &str = "log/data";
 
+/// Success prefix on a `Reply-Text` value or an api response body.
+pub const REPLY_PREFIX_OK: &str = "+OK";
+/// Failure prefix on a `Reply-Text` value or an api response body.
+pub const REPLY_PREFIX_ERR: &str = "-ERR";
+/// Usage-synopsis prefix on an api response body. Stored without the trailing
+/// `:` so a `starts_with` test matches whatever separator the command wrote.
+pub const REPLY_PREFIX_USAGE: &str = "-USAGE";
+
 /// Protocol framing header names (not event payload -- these stay as constants).
 pub const HEADER_CONTENT_TYPE: &str = "Content-Type";
 /// Protocol framing header: body length.

@@ -1,7 +1,7 @@
 //! FreeSWITCH API body parsing and the ESL command response type.
 
 use crate::{
-    constants::HEADER_REPLY_TEXT,
+    constants::{HEADER_REPLY_TEXT, REPLY_PREFIX_ERR, REPLY_PREFIX_OK, REPLY_PREFIX_USAGE},
     error::{EslError, EslResult},
     headers::{case_alias_key, normalize_header_key, EventHeader},
     lookup::HeaderLookup,
@@ -50,11 +50,11 @@ pub fn parse_api_body(body: &str) -> EslResult<&str> {
     if body.is_empty() {
         return Err(EslError::protocol_error("api response body is empty"));
     }
-    if let Some(rest) = body.strip_prefix("+OK") {
+    if let Some(rest) = body.strip_prefix(REPLY_PREFIX_OK) {
         Ok(rest
             .strip_prefix(' ')
             .unwrap_or(rest))
-    } else if body.starts_with("-ERR") || body.starts_with("-USAGE") {
+    } else if body.starts_with(REPLY_PREFIX_ERR) || body.starts_with(REPLY_PREFIX_USAGE) {
         Err(EslError::CommandFailed {
             reply_text: body.to_string(),
         })
@@ -77,6 +77,11 @@ pub enum ReplyStatus {
     /// Reply-Text present but matches neither `+OK` nor `-ERR`.
     /// This is normal for `getvar` (which returns the bare variable value)
     /// but unexpected for most other commands.
+    ///
+    /// A `-USAGE` lands here and so becomes
+    /// [`EslError::UnexpectedReply`], while the same text in an api body is a
+    /// [`CommandFailed`](EslError::CommandFailed) — read either through
+    /// [`EslError::command_failure`].
     Other,
 }
 
@@ -126,8 +131,8 @@ impl EslResponse {
             .map(|s| s.as_str())
         {
             None | Some("") => ReplyStatus::Ok,
-            Some(t) if t.starts_with("+OK") => ReplyStatus::Ok,
-            Some(t) if t.starts_with("-ERR") => ReplyStatus::Err,
+            Some(t) if t.starts_with(REPLY_PREFIX_OK) => ReplyStatus::Ok,
+            Some(t) if t.starts_with(REPLY_PREFIX_ERR) => ReplyStatus::Err,
             Some(_) => ReplyStatus::Other,
         };
         Self {
@@ -238,7 +243,8 @@ impl EslResponse {
     /// contain a UUID after `+OK `.
     pub fn event_uuid(&self) -> Option<&str> {
         self.reply_text()
-            .and_then(|t| t.strip_prefix("+OK "))
+            .and_then(|t| t.strip_prefix(REPLY_PREFIX_OK))
+            .and_then(|rest| rest.strip_prefix(' '))
             .filter(|s| !s.is_empty())
     }
 
@@ -302,7 +308,7 @@ impl EslResponse {
             ReplyStatus::Err => {
                 let reply_text = self
                     .reply_text()
-                    .unwrap_or("-ERR")
+                    .unwrap_or(REPLY_PREFIX_ERR)
                     .to_string();
                 Err(EslError::CommandFailed { reply_text })
             }
