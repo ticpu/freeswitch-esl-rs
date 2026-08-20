@@ -13,12 +13,14 @@ use freeswitch_esl_tokio::commands::{
 };
 use freeswitch_esl_tokio::ExecuteOptions;
 use freeswitch_esl_tokio::{
-    parse_channel_dump, Application, CommandFailure, DialplanType, Endpoint, EslEventType,
-    EventFormat, HeaderLookup, Originate,
+    parse_channel_dump, Application, ChannelTimetable, CommandFailure, DialplanType, Endpoint,
+    EslEventType, EventFormat, EventHeader, HeaderLookup, Originate, TimetableField,
+    TimetablePrefix,
 };
 use live_common::{
     bgapi_originate_ok, channel_exists, connect, getvar, kill_channel, ChannelReaper,
 };
+use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -822,4 +824,206 @@ async fn live_channel_dump_of_reaped_uuid_is_skippable() {
         payload
     );
     assert!(err.is_recoverable(), "the loop skips this and carries on");
+}
+
+/// `switch_event_serialize` writes this for an empty value. `parse_channel_dump`
+/// reads it back as absent while the live decoder keeps it, so a create-side
+/// sentinel is not a header the dump lost.
+const UNDEF_VALUE: &str = "_undef_";
+
+/// Headers the switch moves on between a channel's CHANNEL_CREATE and a dump
+/// taken later: `originate` returns on answer, so the dump is past the state
+/// the create reported.
+const VOLATILE_HEADERS: &[&str] = &[
+    "Channel-State",
+    "Channel-State-Number",
+    "Channel-Call-State",
+    "Answer-State",
+    // Reads back as the session UUID until something sets `call_uuid`.
+    "Channel-Call-UUID",
+    // Flips once the channel reaches the dialplan.
+    "Channel-HIT-Dialplan",
+    // An originate stamps a placeholder callee id and clears it once the call
+    // is up; the dialplan rewrites the caller id it routes on.
+    "Caller-Callee-ID-Name",
+    "Caller-Callee-ID-Number",
+    "Caller-Caller-ID-Name",
+    "Caller-Caller-ID-Number",
+];
+
+/// [`VOLATILE_HEADERS`] plus the timetable, which fills in as the call
+/// progresses. The two creation stamps are fixed by the time the channel is
+/// announced, so they stay in the comparison.
+fn volatile_headers() -> HashSet<String> {
+    let mut set: HashSet<String> = VOLATILE_HEADERS
+        .iter()
+        .map(|h| h.to_string())
+        .collect();
+    let fixed = [
+        TimetableField::ProfileCreated.as_str(),
+        TimetableField::Created.as_str(),
+    ];
+    for prefix in [TimetablePrefix::Caller, TimetablePrefix::OtherLeg] {
+        for suffix in ChannelTimetable::SUFFIXES {
+            if fixed.contains(suffix) {
+                continue;
+            }
+            set.insert(format!("{}-{}", prefix.as_str(), suffix));
+        }
+    }
+    set
+}
+
+/// Every row's `uuid` -- the one field a bootstrap reads out of the listing.
+/// A row without it is a broken contract, not a row to skip.
+fn show_channel_uuids(body: &str) -> Vec<String> {
+    let json: serde_json::Value =
+        serde_json::from_str(body).expect("show channels as json must answer JSON");
+    let Some(rows) = json
+        .get("rows")
+        .and_then(|v| v.as_array())
+    else {
+        // An empty result carries a row count and no rows key at all.
+        return Vec::new();
+    };
+    rows.iter()
+        .map(|row| {
+            row.get("uuid")
+                .and_then(|v| v.as_str())
+                .expect("every listed channel must carry a uuid")
+                .to_string()
+        })
+        .collect()
+}
+
+/// The bootstrap the `channel_tracker` example runs: the listing hands over a
+/// UUID, the dump hands over the channel. What that rebuilds has to be the
+/// CHANNEL_CREATE the switch already sent, or the example is inventing state
+/// no consumer could have got from the wire.
+#[tokio::test]
+#[ignore]
+async fn live_show_bootstrap_rebuilds_channel_create() {
+    let (client, mut events, _permit) = connect().await;
+
+    client
+        .subscribe_events(EventFormat::Plain, &[EslEventType::ChannelCreate])
+        .await
+        .unwrap();
+
+    // `api`, not `bgapi_originate_ok`: waiting on a BACKGROUND_JOB drains the
+    // stream this test reads its CHANNEL_CREATE off.
+    let mut reaper = ChannelReaper::new(&client);
+    let cmd = Originate::application(
+        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
+        Application::simple("park"),
+    );
+    let uuid = client
+        .api(&cmd.to_string())
+        .await
+        .expect("originate: transport error")
+        .api_result()
+        .expect("originate rejected")
+        .to_string();
+    reaper.track(&uuid);
+
+    let mut created = None;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while created.is_none() && Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => {
+                if evt.event_type() == Some(EslEventType::ChannelCreate)
+                    && evt.unique_id() == Some(uuid.as_str())
+                {
+                    created = Some(evt);
+                }
+            }
+            Ok(Some(Err(e))) => panic!("event error: {}", e),
+            Ok(None) => panic!("event stream closed"),
+            Err(_) => break,
+        }
+    }
+
+    // The core writes its channel row through an async queue, so the listing
+    // trails the event by however long that queue takes to drain.
+    let mut listed = false;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !listed && Instant::now() < deadline {
+        let body = client
+            .api("show channels as json")
+            .await
+            .expect("show channels: transport error")
+            .api_result()
+            .expect("show channels rejected")
+            .to_string();
+        listed = show_channel_uuids(&body).contains(&uuid);
+        if !listed {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    let dump = client
+        .api(&format!("uuid_dump {}", uuid))
+        .await
+        .expect("uuid_dump: transport error")
+        .body()
+        .expect("uuid_dump must return a body")
+        .to_string();
+
+    reaper
+        .reap()
+        .await;
+
+    let created = created.unwrap_or_else(|| panic!("no CHANNEL_CREATE for {}", uuid));
+    assert!(listed, "{} never reached the channel listing", uuid);
+
+    let mut rebuilt = parse_channel_dump(&dump)
+        .unwrap_or_else(|e| panic!("uuid_dump {} did not parse: {}", uuid, e));
+    rebuilt.set_header(
+        EventHeader::EventName.as_str(),
+        EslEventType::ChannelCreate.as_str(),
+    );
+    assert_eq!(
+        rebuilt.event_type(),
+        Some(EslEventType::ChannelCreate),
+        "renaming the dump is the whole translation a bootstrap performs"
+    );
+
+    let volatile = volatile_headers();
+    // A comparison that skipped its way past the channel's identity would pass
+    // on an empty dump.
+    for name in DUMP_IDENTITY_HEADERS {
+        assert!(
+            !volatile.contains(*name)
+                && created
+                    .header_str(name)
+                    .is_some(),
+            "{} has to be inside the comparison",
+            name
+        );
+    }
+
+    let mut absent = Vec::new();
+    let mut differs = Vec::new();
+    for (key, value) in created.headers() {
+        if key.starts_with("Event-") || volatile.contains(key.as_str()) || value == UNDEF_VALUE {
+            continue;
+        }
+        match rebuilt.header_str(key) {
+            None => absent.push(format!("{key}={value:?}")),
+            Some(dumped) if dumped != value => {
+                differs.push(format!("{key} create={value:?} dump={dumped:?}"))
+            }
+            Some(_) => {}
+        }
+    }
+    assert!(
+        absent.is_empty(),
+        "the rebuilt channel is missing {:?}",
+        absent
+    );
+    assert!(
+        differs.is_empty(),
+        "the rebuilt channel disagrees: {:?}",
+        differs
+    );
 }
