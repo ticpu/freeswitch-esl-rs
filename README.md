@@ -703,6 +703,16 @@ are tracking channel lifecycle, use `CHANNEL_STATE` (CS_INIT) as the
 start-of-life trigger and `CHANNEL_STATE` (CS_DESTROY) as end-of-life rather
 than relying on `CHANNEL_CREATE`/`CHANNEL_DESTROY`.
 
+Start-of-life is two steps, though: `switch_channel_event_set_extended_data()`
+adds the `variable_*` block only for the event ids on its whitelist, and
+`CHANNEL_STATE` is not one of them (unless the switch runs with
+`verbose-events`, the channel carries `CF_VERBOSE_EVENTS`, or the event was
+given a `presence-data-cols` header). So CS_INIT names a channel without
+describing one, and `CHANNEL_CREATE` -- which is whitelisted, and fires after
+the endpoint's `on_init` chain -- is the first event carrying channel
+variables. `CHANNEL_DESTROY` is whitelisted too, so the final variable block
+arrives there rather than on the CS_DESTROY state event that ends the life.
+
 ## Benchmarks
 
 bgapi throughput on localhost (N=10000, `bgapi status`, single connection):
