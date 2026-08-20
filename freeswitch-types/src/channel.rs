@@ -53,6 +53,21 @@ impl ChannelState {
     pub fn as_number(&self) -> u8 {
         *self as u8
     }
+
+    /// Whether the channel is gone: `CS_DESTROY`, and nothing else.
+    ///
+    /// The session's run loop exits on `CS_DESTROY`; `CS_NONE` is a
+    /// `running_state` sentinel the state machine aborts on if it ever reaches
+    /// it, so it ends nothing despite sorting above `CS_DESTROY`.
+    ///
+    /// `CHANNEL_STATE` events carry no `variable_*` headers, so end-of-life
+    /// detected here cannot be paired with any channel variable from the same
+    /// event. The variable-bearing terminal event is `CHANNEL_HANGUP_COMPLETE`,
+    /// which is also where `variable_hangup_cause` first appears --
+    /// `CHANNEL_HANGUP` carries only the `Hangup-Cause` header.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::CsDestroy)
+    }
 }
 
 wire_enum! {
