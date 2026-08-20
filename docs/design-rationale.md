@@ -138,7 +138,10 @@ translation table between the two vocabularies, hand-curated and silently wrong
 wherever nobody checked — refused here for the reason a channel variable's SIP header
 is curated exhaustively rather than derived from its name. A caller wanting rows parses
 them; the channel state this crate speaks for is what the event stream and a channel
-dump report.
+dump report. Which channels exist is the one question only that store answers, so the
+listing is read for the set of live UUIDs and for no other field: a channel listed and
+not yet dumped is a key with nothing behind it, which a consumer waits out rather than
+seeds.
 
 ## Correct wire format
 
@@ -806,10 +809,11 @@ from the C source is visible in diff.
 
 FreeSWITCH fires `CHANNEL_STATE(CS_INIT)` *before* `CHANNEL_CREATE` and
 `CHANNEL_STATE(CS_DESTROY)` *after* `CHANNEL_DESTROY`, so the intuitive
-`CREATE → DESTROY` window misses state at both ends. The typed accessors
-and the `channel_tracker` example use `CS_INIT` and `CS_DESTROY` from
-`CHANNEL_STATE` as the start- and end-of-life triggers. Full ordering
-notes live in the README — they belong with usage docs, not here.
+`CREATE → DESTROY` window misses state at both ends. A state event bounds the
+life: the first one sighted establishes the key, `CS_DESTROY` retires it. What
+the key holds arrives only with a `CHANNEL_CREATE`, off the wire or rebuilt from
+a dump. Full ordering notes live in the README — they belong with usage docs,
+not here.
 
 ## Which driver a channel belongs to is answered from its name
 
