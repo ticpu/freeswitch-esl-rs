@@ -6,28 +6,41 @@
 //! `channel_state()`, `call_state()`, `call_direction()`, `hangup_cause()`,
 //! `timetable()`, etc.
 //!
-//! Tracks all active channels as flat data maps storing event headers and
-//! uuid_dump variables. Typed state accessors parse on demand from the stored
-//! headers -- no separate fields to sync.
+//! A channel is sighted before it is readable. A row in `show channels as
+//! json`, or an event naming a channel this connection has not seen, gives up a
+//! UUID and nothing else; the channel becomes readable at its CHANNEL_CREATE,
+//! either the one on the wire or the one rebuilt from a `uuid_dump`. So
+//! `uuids()` answers from the first moment and `get()` answers `None` until the
+//! data lands.
 //!
-//! Bootstrap flow: subscribe -> `show channels as json` -> fake CHANNEL_CREATE
-//! events -> bgapi uuid_dump per channel. Single code path for bootstrap and
-//! live events.
+//! That listing is the only way to enumerate live channels, and this reads one
+//! field out of it. Everything else comes from the dump, which is a serialized
+//! event and needs no column-to-header translation.
 //!
-//! uuid_dump uses bgapi so it doesn't block event processing -- results arrive
-//! as BACKGROUND_JOB events matched by Job-UUID.
+//! uuid_dump goes out over bgapi so it never blocks event processing -- results
+//! arrive as BACKGROUND_JOB events matched by Job-UUID.
 //!
-//! Usage: RUST_LOG=info cargo run --example channel_tracker [-- [host[:port]] [password]]
+//! Usage: RUST_LOG=info cargo run --example channel_tracker
 
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::time::{Duration, Instant};
 
 use freeswitch_esl_tokio::{
-    parse_channel_dump, BgJobTracker, CallState, EslClient, EslError, EslEvent, EslEventType,
-    EventFormat, EventHeader, HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
-    VARIABLE_PREFIX,
+    parse_channel_dump, BgJobResult, BgJobTracker, CallState, ChannelState, EslClient, EslError,
+    EslEvent, EslEventType, EventFormat, EventHeader, HeaderLookup, DEFAULT_ESL_PASSWORD,
+    DEFAULT_ESL_PORT, VARIABLE_PREFIX,
 };
 use tracing::{debug, error, info, warn};
+
+/// How long a dump may stay in flight before it is asked for again. A
+/// BACKGROUND_JOB rides the connection that issued its bgapi, so a result lost
+/// with that connection never arrives and never times out on its own.
+const DUMP_DEADLINE: Duration = Duration::from_secs(30);
+
+/// The previous key a CHANNEL_UUID event renames away from. Not an
+/// [`EventHeader`] variant, so it is read by name.
+const OLD_UNIQUE_ID: &str = "Old-Unique-ID";
 
 fn short_uuid(uuid: &str) -> &str {
     &uuid[..8.min(uuid.len())]
@@ -44,44 +57,44 @@ fn display_or<T: Display, E: Display>(result: Result<Option<T>, E>) -> String {
     }
 }
 
-/// Mapping from `show channels as json` field names to ESL event headers.
-/// Used to build fake CHANNEL_CREATE events from bootstrap data so that
-/// bootstrap and live events share the same processing path.
-const DB_TO_EVENT: &[(&str, EventHeader)] = &[
-    ("uuid", EventHeader::UniqueId),
-    ("name", EventHeader::ChannelName),
-    ("state", EventHeader::ChannelState),
-    ("callstate", EventHeader::ChannelCallState),
-    ("direction", EventHeader::CallDirection),
-    ("cid_name", EventHeader::CallerCallerIdName),
-    ("cid_num", EventHeader::CallerCallerIdNumber),
-    ("initial_cid_name", EventHeader::CallerOrigCallerIdName),
-    ("initial_cid_num", EventHeader::CallerOrigCallerIdNumber),
-    ("callee_name", EventHeader::CallerCalleeIdName),
-    ("callee_num", EventHeader::CallerCalleeIdNumber),
-    ("dest", EventHeader::CallerDestinationNumber),
-    ("call_uuid", EventHeader::ChannelCallUuid),
-];
+/// The live UUIDs, which is all this listing is read for. A row without that
+/// field is a broken contract, not a row to skip past.
+fn bootstrap_uuids(body: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let json: serde_json::Value = serde_json::from_str(body)?;
+    let Some(rows) = json
+        .get("rows")
+        .and_then(|v| v.as_array())
+    else {
+        // An empty result carries a row count and no rows key at all.
+        return Ok(Vec::new());
+    };
+    rows.iter()
+        .map(|row| {
+            row.get("uuid")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| "a listed channel carried no uuid".into())
+        })
+        .collect()
+}
 
-/// Build a fake CHANNEL_CREATE event from a `show channels as json` row,
-/// mapping DB field names to event header names. Feeds through the normal
-/// process_event path -- no separate constructor to keep in sync.
-fn fake_channel_create(row: &serde_json::Value) -> Option<EslEvent> {
-    row.get("uuid")?
-        .as_str()?;
-
-    let mut event = EslEvent::with_type(EslEventType::ChannelCreate);
-    for (json_key, header) in DB_TO_EVENT {
-        if let Some(val) = row
-            .get(json_key)
-            .and_then(|v| v.as_str())
-        {
-            if !val.is_empty() {
-                event.set_header(header.as_ref(), val);
-            }
+/// Whether this event carries the channel's data, or promises the event that
+/// will: the state machine fires CS_INIT in the same iteration that goes on to
+/// fire CHANNEL_CREATE.
+fn describes_channel(event: &EslEvent, event_type: EslEventType) -> bool {
+    match event_type {
+        EslEventType::ChannelCreate | EslEventType::ChannelUuid => true,
+        EslEventType::ChannelState => {
+            matches!(event.channel_state(), Ok(Some(ChannelState::CsInit)))
         }
+        _ => false,
     }
-    Some(event)
+}
+
+/// bgapi context for a `uuid_dump`: whose dump it is, and when it was asked for.
+struct PendingDump {
+    uuid: String,
+    sent: Instant,
 }
 
 /// Flat data map -- all event headers and uuid_dump variables accumulated over
@@ -132,31 +145,6 @@ impl TrackedChannel {
         }
     }
 
-    /// Merge a uuid_dump body into the data map.
-    ///
-    /// A dump is a serialized CHANNEL_DATA event, so parse_channel_dump hands
-    /// back an EslEvent whose keys went through the same normalisation as the
-    /// live events merged above. Splitting the lines here instead would leave
-    /// the map holding two key conventions.
-    fn update_from_dump(&mut self, body: &str) {
-        let event = match parse_channel_dump(body) {
-            Ok(event) => event,
-            // A channel that hung up between the listing and its dump answers
-            // `-ERR No such channel!`, which is routine, not a fault.
-            Err(e) => {
-                debug!("uuid_dump did not parse: {}", e);
-                return;
-            }
-        };
-        // Values that did not decode as UTF-8 are still merged (lossily); the
-        // signal names which keys, so it must not be dropped silently.
-        let lossy = event.lossy_values();
-        if !lossy.is_empty() {
-            warn!("uuid_dump values decoded lossily: {}", lossy);
-        }
-        self.update_from_event(&event);
-    }
-
     fn format_fields(&self) -> (String, String, String, &str, &str) {
         (
             display_or(self.channel_state()),
@@ -170,8 +158,13 @@ impl TrackedChannel {
     }
 }
 
+/// Channels by UUID. A `None` entry is a sighting: a state event or a listing
+/// row named the channel and its CHANNEL_CREATE, live or rebuilt from a dump,
+/// has not arrived.
+type Channels = HashMap<String, Option<TrackedChannel>>;
+
 struct ChannelTracker {
-    channels: HashMap<String, TrackedChannel>,
+    channels: Channels,
 }
 
 impl ChannelTracker {
@@ -181,75 +174,170 @@ impl ChannelTracker {
         }
     }
 
-    /// Bootstrap from `show channels as json` -- builds fake CHANNEL_CREATE
-    /// events and feeds them through the normal process_event path.
-    /// Returns UUIDs of bootstrapped channels (for uuid_dump follow-up).
-    fn bootstrap(&mut self, body: &str) -> Vec<String> {
-        let json: serde_json::Value = match serde_json::from_str(body) {
-            Ok(v) => v,
-            Err(e) => {
-                warn!("Failed to parse show channels JSON: {}", e);
-                return Vec::new();
-            }
-        };
-
-        let rows = match json
-            .get("rows")
-            .and_then(|v| v.as_array())
-        {
-            Some(rows) => rows,
-            None => {
-                info!("No active channels at bootstrap");
-                return Vec::new();
-            }
-        };
-
-        let mut uuids = Vec::new();
-        for row in rows {
-            if let Some(event) = fake_channel_create(row) {
-                if let Some(uuid) = event.unique_id() {
-                    uuids.push(uuid.to_string());
-                }
-                self.process_event(&event);
-            }
-        }
-        info!("Bootstrap loaded {} channels", uuids.len());
-        uuids
+    /// Every channel key, readable or not. A consumer iterating channels has
+    /// this from the moment the listing lands.
+    fn uuids(&self) -> impl Iterator<Item = &str> {
+        self.channels
+            .keys()
+            .map(|k| k.as_str())
     }
 
-    fn apply_dump(&mut self, uuid: &str, body: &str) {
-        if let Some(ch) = self
+    /// The channel's data, or `None` while it is still awaiting its dump. A
+    /// consumer wanting an attribute of a channel it just saw listed waits for
+    /// that dump rather than reading a half-populated one.
+    fn get(&self, uuid: &str) -> Option<&TrackedChannel> {
+        self.channels
+            .get(uuid)?
+            .as_ref()
+    }
+
+    fn is_awaiting(&self, uuid: &str) -> bool {
+        matches!(
+            self.channels
+                .get(uuid),
+            Some(None)
+        )
+    }
+
+    /// Record a UUID with nothing behind it yet.
+    fn sight(&mut self, uuid: &str) {
+        self.channels
+            .entry(uuid.to_string())
+            .or_default();
+    }
+
+    fn forget(&mut self, uuid: &str) {
+        self.channels
+            .remove(uuid);
+    }
+
+    /// The channel's data, promoting a sighting and creating a key that was
+    /// never sighted. Merging rather than replacing: a CHANNEL_CREATE can
+    /// arrive after events that already named the channel.
+    fn tracked_mut(&mut self, uuid: &str) -> &mut TrackedChannel {
+        self.channels
+            .entry(uuid.to_string())
+            .or_default()
+            .get_or_insert_with(TrackedChannel::new)
+    }
+
+    /// Merge into a readable channel. An event for one still awaiting its dump
+    /// is dropped: that dump is a snapshot of the channel as of the moment its
+    /// job ran, so anything fired before it is already in there.
+    fn update_channel(&mut self, uuid: &str, event: &EslEvent) {
+        if let Some(Some(ch)) = self
             .channels
             .get_mut(uuid)
         {
-            ch.update_from_dump(body);
-            debug!("uuid_dump applied for {}", short_uuid(uuid));
+            ch.update_from_event(event);
         }
     }
 
-    fn process_event(&mut self, event: &EslEvent) {
-        let event_type = match event.event_type() {
-            Some(t) => t,
-            None => return,
+    /// Feed a `uuid_dump` result in as the CHANNEL_CREATE it stands for.
+    ///
+    /// Returns a UUID whose dump the caller should request, as
+    /// [`process_event`](Self::process_event) does.
+    fn apply_dump(&mut self, uuid: &str, result: &BgJobResult<'_>) -> Option<String> {
+        if !self
+            .channels
+            .contains_key(uuid)
+        {
+            // Retired while its dump was in flight.
+            return None;
+        }
+
+        let Some(body) = result.body() else {
+            warn!("uuid_dump {} answered with no body", short_uuid(uuid));
+            self.forget(uuid);
+            return None;
         };
-        let uuid = match event.unique_id() {
-            Some(u) => u.to_string(),
-            None => return,
+
+        let mut event = match parse_channel_dump(body) {
+            Ok(event) => event,
+            // A channel that hung up between the listing and its dump answers
+            // `-ERR No such channel!`, which is routine, not a fault.
+            Err(e) => {
+                debug!("uuid_dump {} did not parse: {}", short_uuid(uuid), e);
+                self.forget(uuid);
+                return None;
+            }
         };
+
+        // Values that did not decode as UTF-8 are still merged (lossily); the
+        // signal names which keys, so it must not be dropped silently.
+        let lossy = event.lossy_values();
+        if !lossy.is_empty() {
+            warn!("uuid_dump {} decoded lossily: {}", short_uuid(uuid), lossy);
+        }
+
+        if event.unique_id() != Some(uuid) {
+            warn!(
+                "uuid_dump {} answered for another channel",
+                short_uuid(uuid)
+            );
+            self.forget(uuid);
+            return None;
+        }
+
+        // A dump is a serialized CHANNEL_DATA event, so its keys went through
+        // the same normalisation as the live events merged elsewhere and the
+        // rename below is the whole translation a rebuild needs.
+        event.set_header(
+            EventHeader::EventName.as_str(),
+            EslEventType::ChannelCreate.as_str(),
+        );
+        self.process_event(&event)
+    }
+
+    /// Returns a UUID whose dump the caller should request.
+    fn process_event(&mut self, event: &EslEvent) -> Option<String> {
+        let event_type = event.event_type()?;
+        let uuid = event
+            .unique_id()?
+            .to_string();
+
+        if event_type == EslEventType::ChannelState && self.retire_if_terminal(event, &uuid) {
+            return None;
+        }
+
+        // A UUID this connection has never seen named. Where its own
+        // CHANNEL_CREATE is still to come, that describes it; otherwise the
+        // create is behind us and the listing missed it too -- the core writes
+        // that row through a queue, so a channel is live before it is listed --
+        // which leaves the dump.
+        let mut dump = None;
+        if !self
+            .channels
+            .contains_key(&uuid)
+        {
+            self.sight(&uuid);
+            if !describes_channel(event, event_type) {
+                dump = Some(uuid.clone());
+            }
+        }
 
         match event_type {
             EslEventType::ChannelCreate => {
-                let mut ch = TrackedChannel::new();
-                ch.update_from_event(event);
-                self.channels
-                    .insert(uuid.clone(), ch);
+                self.tracked_mut(&uuid)
+                    .update_from_event(event);
+                self.print_channel_event(&uuid, event_type);
+            }
+            EslEventType::ChannelUuid => {
+                // The session was rehashed under a new key; nothing will ever
+                // name the old one again.
+                if let Some(old) = event.header_str(OLD_UNIQUE_ID) {
+                    self.forget(old);
+                }
+                self.tracked_mut(&uuid)
+                    .update_from_event(event);
+                self.print_channel_event(&uuid, event_type);
             }
             EslEventType::ChannelDestroy => {
-                if let Some(ch) = self
-                    .channels
-                    .get_mut(&uuid)
-                {
-                    ch.update_from_event(event);
+                // Not the end of life: CHANNEL_STATE(CS_DESTROY) follows it and
+                // is the last event the channel ever sends. This one carries the
+                // final variable block, so it is merged, not acted on.
+                self.update_channel(&uuid, event);
+                if let Some(ch) = self.get(&uuid) {
                     info!(
                         "{} {} cause={} name={}",
                         event_type,
@@ -258,67 +346,96 @@ impl ChannelTracker {
                         ch.channel_name()
                             .unwrap_or("-"),
                     );
-                    self.channels
-                        .remove(&uuid);
-                } else {
-                    info!("{} {} (untracked)", event_type, short_uuid(&uuid));
                 }
-                return;
             }
             EslEventType::ChannelHangup | EslEventType::ChannelHangupComplete => {
                 self.update_channel(&uuid, event);
                 let cause = self
-                    .channels
                     .get(&uuid)
                     .map(|ch| display_or(ch.hangup_cause()))
                     .unwrap_or_else(|| "-".into());
                 info!("{} {} cause={}", event_type, short_uuid(&uuid), cause);
-                return;
             }
             EslEventType::ChannelUnbridge => {
-                if let Some(ch) = self
+                self.update_channel(&uuid, event);
+                if let Some(Some(ch)) = self
                     .channels
                     .get_mut(&uuid)
                 {
-                    ch.update_from_event(event);
                     ch.data
                         .remove(EventHeader::OtherLegUniqueId.as_ref());
                 }
+                self.print_channel_event(&uuid, event_type);
             }
             _ => {
                 self.update_channel(&uuid, event);
+                self.print_channel_event(&uuid, event_type);
             }
         }
-        self.print_channel_event(&uuid, event_type);
+        dump
     }
 
-    fn update_channel(&mut self, uuid: &str, event: &EslEvent) {
-        if let Some(ch) = self
+    /// Whether this state event is the channel's last. `CS_DESTROY` closes the
+    /// life: it fires after CHANNEL_DESTROY, so retiring on the earlier one
+    /// would drop the events between them.
+    fn retire_if_terminal(&mut self, event: &EslEvent, uuid: &str) -> bool {
+        let terminal = match event.channel_state() {
+            Ok(Some(state)) => state.is_terminal(),
+            Ok(None) => false,
+            Err(e) => {
+                warn!("{} carried an unreadable state: {}", short_uuid(uuid), e);
+                false
+            }
+        };
+        if terminal {
+            self.retire(uuid, EslEventType::ChannelState);
+        }
+        terminal
+    }
+
+    fn retire(&mut self, uuid: &str, event_type: EslEventType) {
+        match self
             .channels
-            .get_mut(uuid)
+            .remove(uuid)
         {
-            ch.update_from_event(event);
+            Some(Some(ch)) => info!(
+                "{:<9} {} retired name={}",
+                event_type,
+                short_uuid(uuid),
+                ch.channel_name()
+                    .unwrap_or("-"),
+            ),
+            Some(None) => info!(
+                "{:<9} {} retired, never dumped",
+                event_type,
+                short_uuid(uuid)
+            ),
+            None => info!("{:<9} {} (untracked)", event_type, short_uuid(uuid)),
         }
     }
 
+    /// A channel awaiting its dump prints nothing: the line would be identical
+    /// every time and carry no state, and the summary already lists it.
     fn print_channel_event(&self, uuid: &str, event_type: EslEventType) {
-        if let Some(ch) = self
+        match self
             .channels
             .get(uuid)
         {
-            let (state, call_state, dir, cid, name) = ch.format_fields();
-            info!(
-                "{:<9} {} state={} callstate={} dir={} cid={} name={}",
-                event_type,
-                short_uuid(uuid),
-                state,
-                call_state,
-                dir,
-                cid,
-                name,
-            );
-        } else {
-            info!("{:<9} {} (untracked)", event_type, short_uuid(uuid));
+            Some(Some(ch)) => {
+                let (state, call_state, dir, cid, name) = ch.format_fields();
+                info!(
+                    "{:<9} {} state={} callstate={} dir={} cid={} name={}",
+                    event_type,
+                    short_uuid(uuid),
+                    state,
+                    call_state,
+                    dir,
+                    cid,
+                    name,
+                );
+            }
+            Some(None) => {}
+            None => info!("{:<9} {} (untracked)", event_type, short_uuid(uuid)),
         }
     }
 
@@ -339,13 +456,15 @@ impl ChannelTracker {
             "{:<36}  {:<14} {:<10} {:<8} {:<16} {:<16} NAME",
             "UUID", "STATE", "CALLSTATE", "DIR", "CID-NUM", "DEST",
         );
-        let mut sorted: Vec<(&str, &TrackedChannel)> = self
-            .channels
-            .iter()
-            .map(|(k, v)| (k.as_str(), v))
+        let mut sorted: Vec<&str> = self
+            .uuids()
             .collect();
-        sorted.sort_by_key(|(uuid, _)| *uuid);
-        for (uuid, ch) in sorted {
+        sorted.sort_unstable();
+        for uuid in sorted {
+            let Some(ch) = self.get(uuid) else {
+                println!("{:<36}  awaiting dump", uuid);
+                continue;
+            };
             let (state, call_state, dir, cid, name) = ch.format_fields();
             let dest = ch
                 .header(EventHeader::CallerDestinationNumber)
@@ -385,16 +504,49 @@ impl ChannelTracker {
     }
 }
 
-/// Request a uuid_dump via bgapi (non-blocking). The result arrives as a
-/// BACKGROUND_JOB event, tracked by `bg` and correlated in the event loop
-/// via [`BgJobTracker::try_complete`].
-async fn request_dump(client: &EslClient, bg: &mut BgJobTracker<String>, uuid: &str) {
+/// Ask for a dump without waiting on it. The result arrives as a BACKGROUND_JOB
+/// and is correlated in the event loop via [`BgJobTracker::try_complete`].
+async fn request_dump(
+    client: &EslClient,
+    bg: &mut BgJobTracker<PendingDump>,
+    tracker: &mut ChannelTracker,
+    uuid: &str,
+) {
+    let pending = PendingDump {
+        uuid: uuid.to_string(),
+        sent: Instant::now(),
+    };
     if let Err(e) = bg
-        .bgapi(client, &format!("uuid_dump {}", uuid), uuid.to_string())
+        .bgapi(client, &format!("uuid_dump {}", uuid), pending)
         .await
     {
-        debug!("bgapi uuid_dump {} failed: {}", short_uuid(uuid), e);
+        // That dump was the channel's only route to being readable.
+        warn!("bgapi uuid_dump {} failed: {}", short_uuid(uuid), e);
+        tracker.forget(uuid);
     }
+}
+
+/// Drop dumps that outlived [`DUMP_DEADLINE`] and hand their UUIDs back to be
+/// asked for again -- a tracked job whose BACKGROUND_JOB never arrives is
+/// reclaimed here or not at all.
+fn sweep_stale_dumps(bg: &mut BgJobTracker<PendingDump>) -> Vec<String> {
+    let mut stale = Vec::new();
+    bg.retain(|_, pending| {
+        if pending
+            .sent
+            .elapsed()
+            < DUMP_DEADLINE
+        {
+            return true;
+        }
+        stale.push(
+            pending
+                .uuid
+                .clone(),
+        );
+        false
+    });
+    stale
 }
 
 #[tokio::main]
@@ -466,25 +618,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Subscribed to channel events + heartbeat");
 
     let mut tracker = ChannelTracker::new();
-    let mut bg: BgJobTracker<String> = BgJobTracker::new();
+    let mut bg: BgJobTracker<PendingDump> = BgJobTracker::new();
 
-    // Bootstrap: show channels -> fake events -> bgapi uuid_dump per channel.
-    // Subscribe first so we don't miss channels created during bootstrap.
-    // Dump results arrive as BACKGROUND_JOB events in the event loop.
-    match client
+    // Subscribe first, so a channel created while this runs arrives as an event
+    // rather than being missed by both paths. Blocking here is the point: the
+    // UUID set is what the tracker starts from, and the dumps that fill it in
+    // land later, on the event loop below.
+    let listing = client
         .api("show channels as json")
-        .await
-    {
-        Ok(response) => {
-            // show channels as json returns raw JSON (no +OK prefix)
-            if let Ok(body) = response.api_result() {
-                let uuids = tracker.bootstrap(body);
-                for uuid in &uuids {
-                    request_dump(&client, &mut bg, uuid).await;
-                }
-            }
-        }
-        Err(e) => warn!("Failed to bootstrap channels: {}", e),
+        .await?;
+    let uuids = bootstrap_uuids(listing.api_result()?)?;
+    info!("Bootstrap listed {} channel(s)", uuids.len());
+    for uuid in &uuids {
+        tracker.sight(uuid);
+        request_dump(&client, &mut bg, &mut tracker, uuid).await;
     }
 
     info!("Listening for events... Press Ctrl+C to exit");
@@ -501,25 +648,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        if let Some((channel_uuid, result)) = bg.try_complete(&event) {
-            if let Some(body) = result.body() {
-                tracker.apply_dump(&channel_uuid, body);
+        if let Some((pending, result)) = bg.try_complete(&event) {
+            if let Some(uuid) = tracker.apply_dump(&pending.uuid, &result) {
+                request_dump(&client, &mut bg, &mut tracker, &uuid).await;
             }
             continue;
         }
 
-        match event.event_type() {
-            Some(EslEventType::Heartbeat) => tracker.print_summary(),
-            Some(EslEventType::ChannelCreate) => {
-                let uuid = event
-                    .unique_id()
-                    .map(|s| s.to_string());
-                tracker.process_event(&event);
-                if let Some(uuid) = uuid {
-                    request_dump(&client, &mut bg, &uuid).await;
+        if event.is_event_type(EslEventType::Heartbeat) {
+            tracker.print_summary();
+            for uuid in sweep_stale_dumps(&mut bg) {
+                if tracker.is_awaiting(&uuid) {
+                    warn!(
+                        "uuid_dump {} never came back, asking again",
+                        short_uuid(&uuid)
+                    );
+                    request_dump(&client, &mut bg, &mut tracker, &uuid).await;
                 }
             }
-            _ => tracker.process_event(&event),
+            continue;
+        }
+
+        if let Some(uuid) = tracker.process_event(&event) {
+            request_dump(&client, &mut bg, &mut tracker, &uuid).await;
         }
     }
 
