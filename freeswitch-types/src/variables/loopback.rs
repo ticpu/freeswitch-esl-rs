@@ -104,3 +104,63 @@ impl<'a> LoopbackResignation<'a> {
         self.other_uuid
     }
 }
+
+#[cfg(test)]
+mod channel_name_tests {
+    use super::*;
+
+    #[test]
+    fn both_legs_of_a_dialled_extension() {
+        let a = LoopbackChannelName::parse("loopback/9199-a").expect("loopback name parses");
+        assert_eq!(a.extension(), "9199");
+        assert_eq!(a.leg(), LoopbackLeg::A);
+
+        let b = LoopbackChannelName::parse("loopback/9199-b").expect("loopback name parses");
+        assert_eq!(b.extension(), "9199");
+        assert_eq!(b.leg(), LoopbackLeg::B);
+    }
+
+    // `loopback/app=bridge:x/y` is reduced to the bare application token before
+    // the name is built.
+    #[test]
+    fn app_form_carries_the_application_token() {
+        let n = LoopbackChannelName::parse("loopback/bridge-a").expect("loopback name parses");
+        assert_eq!(n.extension(), "bridge");
+    }
+
+    // The suffix is always present, so exactly one is stripped.
+    #[test]
+    fn an_extension_may_itself_end_in_a_leg_suffix() {
+        let n = LoopbackChannelName::parse("loopback/park-a-b").expect("loopback name parses");
+        assert_eq!(n.extension(), "park-a");
+        assert_eq!(n.leg(), LoopbackLeg::B);
+    }
+
+    #[test]
+    fn non_loopback_and_malformed_are_none() {
+        for name in [
+            "loopback/9199",
+            "loopback/9199-A",
+            "loopback/9199-c",
+            "loopback/-a",
+            "loopback/",
+            "loopback",
+            "sofia/internal/1000@example.com",
+            "Loopback/9199-a",
+            "",
+        ] {
+            assert_eq!(LoopbackChannelName::parse(name), None, "{name:?}");
+        }
+    }
+
+    // The variable is uppercase; the name suffix is lowercase and never parses
+    // through FromStr.
+    #[test]
+    fn leg_wire_form_is_the_variable_spelling() {
+        assert_eq!(LoopbackLeg::A.as_str(), "A");
+        assert_eq!("B".parse(), Ok(LoopbackLeg::B));
+        assert!("a"
+            .parse::<LoopbackLeg>()
+            .is_err());
+    }
+}

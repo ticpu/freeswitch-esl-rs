@@ -396,7 +396,9 @@ impl HeaderLookup for std::collections::HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::variables::{ChannelVariable, LoopbackHangupCause};
+    use crate::variables::{
+        ChannelVariable, LoopbackChannelName, LoopbackHangupCause, LoopbackLeg,
+    };
     use std::collections::HashMap;
 
     struct TestStore(HashMap<String, String>);
@@ -786,6 +788,79 @@ mod tests {
             .loopback_resignation()
             .expect("marker present");
         assert_eq!(r.other_uuid(), None);
+    }
+
+    // --- channel kind ---
+
+    #[test]
+    fn the_resigning_leg_names_itself() {
+        let leg = store_with(&[
+            ("Channel-Name", "loopback/9199-a"),
+            ("variable_loopback_hangup_cause", "bowout"),
+            ("variable_loopback_leg", "A"),
+        ]);
+        assert_eq!(leg.channel_driver(), Some("loopback"));
+        let name = leg
+            .channel_name()
+            .and_then(LoopbackChannelName::parse)
+            .expect("a loopback name");
+        assert_eq!(name.extension(), "9199");
+        assert_eq!(name.leg(), LoopbackLeg::A);
+        assert_eq!(
+            leg.loopback_leg()
+                .unwrap(),
+            Some(LoopbackLeg::A)
+        );
+    }
+
+    // The execute-time masquerade copies every variable and clones the caller
+    // profile onto the survivor, so only its own Channel-Name still answers
+    // which driver it belongs to.
+    #[test]
+    fn a_survivor_that_inherited_the_marker_is_not_a_loopback() {
+        let survivor = store_with(&[
+            ("Channel-Name", "sofia/internal/1000@example.com"),
+            ("Caller-Channel-Name", "loopback/9199-a"),
+            ("variable_loopback_hangup_cause", "bowout"),
+            ("variable_is_loopback", "true"),
+            ("variable_loopback_leg", "A"),
+        ]);
+        assert!(survivor
+            .loopback_resignation()
+            .is_some());
+        assert_eq!(
+            survivor
+                .loopback_leg()
+                .unwrap(),
+            Some(LoopbackLeg::A)
+        );
+
+        assert_eq!(survivor.channel_driver(), Some("sofia"));
+        assert_eq!(
+            survivor
+                .channel_name()
+                .and_then(LoopbackChannelName::parse),
+            None
+        );
+    }
+
+    #[test]
+    fn channel_kind_accessors_absent() {
+        let s = store_with(&[]);
+        assert_eq!(s.channel_driver(), None);
+        assert_eq!(
+            s.loopback_leg()
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn loopback_leg_invalid_is_error() {
+        let s = store_with(&[("variable_loopback_leg", "a")]);
+        assert!(s
+            .loopback_leg()
+            .is_err());
     }
 
     #[test]

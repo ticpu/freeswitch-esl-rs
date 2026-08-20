@@ -531,6 +531,23 @@ mod tests {
     //     on the wire_enum! invocation above). ---
 
     #[test]
+    fn channel_driver_is_the_segment_before_the_first_slash() {
+        assert_eq!(
+            channel_driver("sofia/internal/1000@example.com"),
+            Some("sofia")
+        );
+        assert_eq!(channel_driver("loopback/9199-a"), Some("loopback"));
+        assert_eq!(channel_driver("null/9199"), Some("null"));
+    }
+
+    #[test]
+    fn channel_driver_none_without_a_segment() {
+        for name in ["", "sofia", "/internal/1000"] {
+            assert_eq!(channel_driver(name), None, "{name:?}");
+        }
+    }
+
+    #[test]
     fn timetable_error_display_omits_the_value() {
         let err = ParseTimetableError::new("Caller-Channel-Created-Time", "5551234567");
         let msg = err.to_string();
