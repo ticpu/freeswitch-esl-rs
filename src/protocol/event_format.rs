@@ -2,11 +2,63 @@
 
 use super::{EslMessage, EslParser, MessageType};
 use crate::{
+    constants::{HEADER_TERMINATOR, UNDEF_VALUE},
     error::{EslError, EslResult},
     event::{EslEvent, EslEventType},
     headers::EventHeader,
     LossyValues,
 };
+
+/// Decode a `switch_event_serialize(encode=TRUE)` payload: percent-encoded
+/// `Name: value` lines, then either nothing or `Content-Length` and a `\n\n`
+/// followed by the inner body.
+///
+/// `skip_undef` drops a header whose value is the empty-value sentinel before
+/// it is stored, which suits a read-back (a channel dump) and not the pushed
+/// event stream, where the sentinel is what the switch sent.
+///
+/// The returned event carries no `raw_body`: the payload is already a decoded
+/// `&str`, so there are no exact wire bytes left to hand back.
+pub(crate) fn decode_serialized_event(
+    payload: &str,
+    strict_utf8: bool,
+    skip_undef: bool,
+) -> EslResult<EslEvent> {
+    let mut event = EslEvent::new();
+    let mut lossy = LossyValues::default();
+
+    // Headers are terminated by \n\n; anything after is the inner body.
+    let (header_section, inner_body) = match payload.find(HEADER_TERMINATOR) {
+        Some(pos) => (
+            &payload[..pos],
+            Some(&payload[pos + HEADER_TERMINATOR.len()..]),
+        ),
+        None => (payload, None),
+    };
+
+    for line in header_section.lines() {
+        if let Some((key, raw_value)) = EslParser::parse_header_line(line)? {
+            let value = EslParser::decode_value(
+                &key,
+                &raw_value,
+                "event header",
+                EslParser::lossy_sink(strict_utf8, &mut lossy),
+            )?;
+            if skip_undef && value == UNDEF_VALUE {
+                continue;
+            }
+            event.set_header(key, value);
+        }
+    }
+
+    event.set_lossy_values(lossy);
+
+    if let Some(body) = inner_body.filter(|b| !b.is_empty()) {
+        event.set_body(body.to_string());
+    }
+
+    Ok(event)
+}
 
 impl EslParser {
     /// Parse log/data message.
@@ -48,53 +100,27 @@ impl EslParser {
             .as_deref()
             .ok_or_else(|| EslError::protocol_error("Plain event missing body"))?;
 
-        let mut event = EslEvent::new();
-        let mut lossy = LossyValues::default();
+        let mut event = decode_serialized_event(body, self.strict_header_utf8, false)?;
 
-        // Split event body into headers and optional inner body.
-        // Event headers are terminated by \n\n; anything after is the inner body.
-        let (header_section, inner_body) = if let Some(pos) = body.find("\n\n") {
-            (&body[..pos], Some(&body[pos + 2..]))
-        } else {
-            (body, None)
-        };
-
-        // Parse and decode event-body headers
-        for line in header_section.lines() {
-            if let Some((key, raw_value)) = Self::parse_header_line(line)? {
-                let value = Self::decode_value(
-                    &key,
-                    &raw_value,
-                    "event header",
-                    self.lossy_sink(&mut lossy),
-                )?;
-                event.set_header(key, value);
-            }
-        }
-
-        event.set_lossy_values(lossy);
-
-        // If the event headers contain their own Content-Length, the inner body
-        // is that many bytes after the header section
+        // The inner body's wire bytes are the tail of raw_body: event headers
+        // are percent-encoded ASCII and U+FFFD substitution never touches
+        // newline bytes, so the first \n\n falls at the same offset in bytes
+        // as in the decoded string.
         let mut inner_raw = None;
-        if let Some(ib) = inner_body {
-            if !ib.is_empty() {
-                event.set_body(ib.to_string());
-                if let Some(mut raw) = message
-                    .raw_body
-                    .take()
+        if event
+            .body()
+            .is_some()
+        {
+            if let Some(mut raw) = message
+                .raw_body
+                .take()
+            {
+                if let Some(pos) = raw
+                    .windows(2)
+                    .position(|w| w == b"\n\n")
                 {
-                    // Event headers are percent-encoded ASCII and U+FFFD
-                    // substitution never touches newline bytes, so the first
-                    // \n\n falls at the same logical spot in bytes as in the
-                    // decoded string: the tail is exactly the inner body.
-                    if let Some(pos) = raw
-                        .windows(2)
-                        .position(|w| w == b"\n\n")
-                    {
-                        raw.drain(..pos + 2);
-                        inner_raw = Some(raw);
-                    }
+                    raw.drain(..pos + 2);
+                    inner_raw = Some(raw);
                 }
             }
         }

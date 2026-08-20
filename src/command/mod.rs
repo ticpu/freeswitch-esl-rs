@@ -14,7 +14,10 @@ use std::time::Duration;
 use tracing::warn;
 
 mod response;
-pub use response::{parse_api_body, EslResponse, ReplyStatus};
+pub use response::{
+    parse_api_body, parse_channel_dump, parse_channel_dump_with_options, ChannelDumpOptions,
+    EslResponse, ReplyStatus,
+};
 
 /// Wraps a string so `Debug` prints `[REDACTED]` instead of the value.
 ///

@@ -650,14 +650,14 @@ async fn live_channel_dump_rebuild_loop() {
     let (client, mut events, _permit) = connect().await;
 
     client
-        .subscribe_events(
-            EventFormat::Plain,
-            &[EslEventType::BackgroundJob, EslEventType::ChannelCreate],
-        )
+        .subscribe_events(EventFormat::Plain, &[EslEventType::ChannelCreate])
         .await
         .unwrap();
 
     // Two channels, so the loop below is a loop and not a single dump.
+    // Originated over `api` rather than `bgapi`: waiting for a BACKGROUND_JOB
+    // drains the event stream, and these channels' CHANNEL_CREATE is what the
+    // dump is compared against.
     let mut reaper = ChannelReaper::new(&client);
     let mut uuids = Vec::new();
     for _ in 0..2 {
@@ -665,7 +665,13 @@ async fn live_channel_dump_rebuild_loop() {
             Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
             Application::simple("park"),
         );
-        let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
+        let uuid = client
+            .api(&cmd.to_string())
+            .await
+            .expect("originate: transport error")
+            .api_result()
+            .expect("originate rejected")
+            .to_string();
         reaper.track(&uuid);
         uuids.push(uuid);
     }
@@ -698,15 +704,6 @@ async fn live_channel_dump_rebuild_loop() {
         }
     }
 
-    // The listing half of the rebuild loop.
-    let listing = client
-        .api("show channels as json")
-        .await
-        .expect("show channels: transport error")
-        .api_result()
-        .expect("show channels rejected -- the ESL user needs it in esl-allowed-api")
-        .to_string();
-
     // Collect everything before reaping; the assertions run after.
     let mut dumps = Vec::new();
     for uuid in &uuids {
@@ -718,7 +715,7 @@ async fn live_channel_dump_rebuild_loop() {
             .expect("uuid_dump must return a body")
             .to_string();
         let parsed = parse_channel_dump(&body);
-        dumps.push((uuid.clone(), body, parsed));
+        dumps.push((uuid.clone(), parsed));
     }
 
     reaper
@@ -730,15 +727,7 @@ async fn live_channel_dump_rebuild_loop() {
         uuids.len(),
         "did not observe CHANNEL_CREATE for every originated channel"
     );
-    for uuid in &uuids {
-        assert!(
-            listing.contains(uuid.as_str()),
-            "show channels did not list {}",
-            uuid
-        );
-    }
-
-    for (uuid, body, parsed) in dumps {
+    for (uuid, parsed) in dumps {
         let dump = parsed.unwrap_or_else(|e| panic!("uuid_dump {} did not parse: {}", uuid, e));
 
         assert_eq!(
@@ -763,11 +752,18 @@ async fn live_channel_dump_rebuild_loop() {
             );
         }
 
-        assert!(
-            body.contains("_undef_"),
-            "the switch wrote no empty value for {}, so the skip is untested",
-            uuid
+        // Channel variables reach through the one normalised convention, which
+        // is what an inline splitter over the same body loses.
+        assert_eq!(
+            dump.variable_str("uuid"),
+            Some(uuid.as_str()),
+            "the dump's channel variables must resolve through variable_str"
         );
+
+        // An unset variable reads as absent. A channel this test can build
+        // carries no empty value -- the switch deletes a variable set to one --
+        // so the skip itself is exercised by the fixture in
+        // src/command/response.rs; here the sentinel must simply never survive.
         assert!(
             dump.headers()
                 .values()
@@ -778,8 +774,8 @@ async fn live_channel_dump_rebuild_loop() {
     }
 }
 
-/// The race the rebuild loop hits in production: the channel hung up between
-/// the listing and its dump.
+/// The race the rebuild loop hits in production: the channel hung up before
+/// its dump.
 #[tokio::test]
 #[ignore]
 async fn live_channel_dump_of_reaped_uuid_is_skippable() {

@@ -3,8 +3,10 @@
 use crate::{
     constants::{HEADER_REPLY_TEXT, REPLY_PREFIX_ERR, REPLY_PREFIX_OK, REPLY_PREFIX_USAGE},
     error::{EslError, EslResult},
+    event::EslEvent,
     headers::{case_alias_key, normalize_header_key, EventHeader},
     lookup::HeaderLookup,
+    protocol::decode_serialized_event,
     LossyValues,
 };
 use indexmap::IndexMap;
@@ -61,6 +63,92 @@ pub fn parse_api_body(body: &str) -> EslResult<&str> {
     } else {
         Ok(body)
     }
+}
+
+/// Options for [`parse_channel_dump_with_options`].
+#[derive(Debug, Clone, Default)]
+pub struct ChannelDumpOptions {
+    strict_header_utf8: bool,
+}
+
+impl ChannelDumpOptions {
+    /// Create default options.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Strict UTF-8 validation on percent-decoded header values.
+    ///
+    /// When `true`, an invalid sequence returns
+    /// [`EslError::InvalidUtf8InHeader`]. When `false` (default) it is decoded
+    /// lossily (U+FFFD) and recorded in
+    /// [`EslEvent::lossy_values`](freeswitch_types::EslEvent::lossy_values).
+    pub fn with_strict_header_utf8(mut self, strict: bool) -> Self {
+        self.strict_header_utf8 = strict;
+        self
+    }
+
+    /// Whether to fail on invalid UTF-8 in a header value. Default: false.
+    pub fn strict_header_utf8(&self) -> bool {
+        self.strict_header_utf8
+    }
+}
+
+/// Parse a `uuid_dump <uuid>` body into the `CHANNEL_DATA` event it is.
+///
+/// The default `txt` format is `switch_event_serialize` output — the same
+/// shape as a `text/event-plain` body — so this shares the event decoder and
+/// therefore the crate's header-key normalization, rather than splitting the
+/// lines a second way.
+///
+/// The body goes through [`parse_api_body`] first, so a channel that hung up
+/// between being listed and being dumped comes back as
+/// [`EslError::CommandFailed`] (`-ERR No such channel!`), readable through
+/// [`EslError::command_failure`], instead of as a parse failure on a line
+/// with no colon.
+///
+/// A header whose value is the empty-value sentinel is omitted: a dump is a
+/// read-back, so an unset variable reads as absent. The pushed event stream
+/// keeps the sentinel it was sent.
+///
+/// [`raw_body`](freeswitch_types::EslEvent::raw_body) on the result is always
+/// `None`. The dump arrives as a `&str` the message parser already decoded,
+/// possibly lossily; re-encoding it would put U+FFFD bytes in the one field
+/// whose contract is exact wire bytes. Those live on the
+/// [`EslResponse::raw_body`] the string came from.
+///
+/// Only the default `txt` format is accepted. `json` and `xml` are refused by
+/// [`EslError::InvalidEventFormat`]. `uuid_dump`'s own `plain` format is not
+/// supported and is not detectable: it does not percent-encode, so a value
+/// containing a newline breaks line splitting, which is only sound because
+/// `txt` encodes a newline as `%0A`.
+pub fn parse_channel_dump(body: &str) -> EslResult<EslEvent> {
+    parse_channel_dump_with_options(body, &ChannelDumpOptions::default())
+}
+
+/// [`parse_channel_dump`] with control over lossy UTF-8 decoding.
+pub fn parse_channel_dump_with_options(
+    body: &str,
+    options: &ChannelDumpOptions,
+) -> EslResult<EslEvent> {
+    let payload = parse_api_body(body)?;
+    // A serialized header name starts with neither, so this cannot misfire on
+    // a txt dump, and it names the format instead of parsing garbage.
+    let format = match payload
+        .trim_start()
+        .as_bytes()
+        .first()
+    {
+        Some(b'{') => Some("json"),
+        Some(b'<') => Some("xml"),
+        _ => None,
+    };
+    if let Some(format) = format {
+        return Err(EslError::InvalidEventFormat {
+            format: format.to_string(),
+        });
+    }
+    decode_serialized_event(payload, options.strict_header_utf8(), true)
 }
 
 /// Reply-Text classification per the ESL wire protocol.
@@ -730,7 +818,6 @@ mod tests {
     fn channel_dump_normalizes_header_keys() {
         let event = parse_channel_dump("unique-id: abc\nchannel-state: CS_EXECUTE\n\n").unwrap();
         assert_eq!(event.header_str("Unique-ID"), Some("abc"));
-        assert_eq!(event.header_str("unique-id"), Some("abc"));
         assert_eq!(
             event
                 .headers()

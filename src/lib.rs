@@ -174,7 +174,8 @@ pub use freeswitch_types::{
 pub use app::dptools::AppCommand;
 pub use bgjob::{BgJobResult, BgJobTracker};
 pub use command::{
-    parse_api_body, CommandBuilder, EslCommand, EslResponse, ExecuteOptions, ReplyStatus,
+    parse_api_body, parse_channel_dump, parse_channel_dump_with_options, ChannelDumpOptions,
+    CommandBuilder, EslCommand, EslResponse, ExecuteOptions, ReplyStatus,
 };
 pub use connection::{
     ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions,

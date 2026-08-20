@@ -35,6 +35,10 @@ pub const CONTENT_TYPE_TEXT_EVENT_XML: &str = "text/event-xml";
 /// Content-Type for log/data messages (FreeSWITCH log forwarding).
 pub const CONTENT_TYPE_LOG_DATA: &str = "log/data";
 
+/// What `switch_event_serialize` writes in place of an empty value, and what
+/// `uuid_getvar` answers for a variable that is not set.
+pub const UNDEF_VALUE: &str = "_undef_";
+
 /// Success prefix on a `Reply-Text` value or an api response body.
 pub const REPLY_PREFIX_OK: &str = "+OK";
 /// Failure prefix on a `Reply-Text` value or an api response body.

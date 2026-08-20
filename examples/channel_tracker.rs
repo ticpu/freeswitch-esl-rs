@@ -23,10 +23,9 @@ use std::collections::HashMap;
 use std::fmt::Display;
 
 use freeswitch_esl_tokio::{
-    BgJobTracker, CallState, EslClient, EslError, EslEvent, EslEventType, EventFormat, EventHeader,
-    HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    parse_channel_dump, BgJobTracker, CallState, EslClient, EslError, EslEvent, EslEventType,
+    EventFormat, EventHeader, HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
-use percent_encoding::percent_decode_str;
 use tracing::{debug, error, info, warn};
 
 fn short_uuid(uuid: &str) -> &str {
@@ -132,18 +131,29 @@ impl TrackedChannel {
         }
     }
 
-    /// Parse uuid_dump response body (Key: Value lines, percent-encoded values)
-    /// and merge into the data map.
+    /// Merge a uuid_dump body into the data map.
+    ///
+    /// A dump is a serialized CHANNEL_DATA event, so parse_channel_dump hands
+    /// back an EslEvent whose keys went through the same normalisation as the
+    /// live events merged above. Splitting the lines here instead would leave
+    /// the map holding two key conventions.
     fn update_from_dump(&mut self, body: &str) {
-        for line in body.lines() {
-            if let Some((key, value)) = line.split_once(": ") {
-                let decoded = percent_decode_str(value)
-                    .decode_utf8_lossy()
-                    .into_owned();
-                self.data
-                    .insert(key.to_string(), decoded);
+        let event = match parse_channel_dump(body) {
+            Ok(event) => event,
+            // A channel that hung up between the listing and its dump answers
+            // `-ERR No such channel!`, which is routine, not a fault.
+            Err(e) => {
+                debug!("uuid_dump did not parse: {}", e);
+                return;
             }
+        };
+        // Values that did not decode as UTF-8 are still merged (lossily); the
+        // signal names which keys, so it must not be dropped silently.
+        let lossy = event.lossy_values();
+        if !lossy.is_empty() {
+            warn!("uuid_dump values decoded lossily: {}", lossy);
         }
+        self.update_from_event(&event);
     }
 
     fn format_fields(&self) -> (String, String, String, &str, &str) {

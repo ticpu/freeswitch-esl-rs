@@ -20,6 +20,8 @@ use percent_encoding::percent_decode_str;
 mod event_format;
 mod xml;
 
+pub(crate) use event_format::decode_serialized_event;
+
 /// ESL message types.
 ///
 /// Marked `#[non_exhaustive]` because new ESL `Content-Type` values added
@@ -378,8 +380,12 @@ impl EslParser {
         let mut lossy = LossyValues::default();
         for line in headers_str.lines() {
             if let Some((key, raw_value)) = Self::parse_header_line(line)? {
-                let value =
-                    Self::decode_value(&key, &raw_value, "header", self.lossy_sink(&mut lossy))?;
+                let value = Self::decode_value(
+                    &key,
+                    &raw_value,
+                    "header",
+                    Self::lossy_sink(self.strict_header_utf8, &mut lossy),
+                )?;
                 headers.insert(key, value);
             }
         }
@@ -387,9 +393,12 @@ impl EslParser {
     }
 
     /// The accumulator [`decode_value`](Self::decode_value) records into, or
-    /// `None` under `strict_header_utf8` to select the hard-fail path.
-    fn lossy_sink<'a>(&self, acc: &'a mut LossyValues) -> Option<&'a mut LossyValues> {
-        if self.strict_header_utf8 {
+    /// `None` under `strict` to select the hard-fail path.
+    ///
+    /// Takes no `self`: [`decode_serialized_event`] runs without a parser
+    /// instance, whose construction would allocate the read buffer.
+    fn lossy_sink(strict: bool, acc: &mut LossyValues) -> Option<&mut LossyValues> {
+        if strict {
             None
         } else {
             Some(acc)
