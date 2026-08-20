@@ -37,6 +37,16 @@ pub use sofia::{CarriedHeader, ParseSofiaVariableError, SofiaVariable};
 pub trait VariableName {
     /// Wire-format variable name (e.g. `"sip_call_id"`).
     fn as_str(&self) -> &str;
+
+    /// Full event header name, prefixed (e.g. `"variable_sip_call_id"`).
+    ///
+    /// For callers naming a variable with no event in hand -- a config entry, a
+    /// filter, a request field. Reading one out of a store is
+    /// [`HeaderLookup::variable()`](crate::HeaderLookup::variable), which takes
+    /// the bare name.
+    fn header_name(&self) -> String {
+        format!("{}{}", crate::VARIABLE_PREFIX, self.as_str())
+    }
 }
 
 impl VariableName for ChannelVariable {
@@ -96,7 +106,7 @@ mod tests {
     #[test]
     fn header_name_covers_a_borrowed_as_str() {
         let h = SipPassthroughHeader::invite(SipHeader::CallInfo);
-        assert_eq!(h.header_name(), "variable_sip_h_Call-Info");
+        assert_eq!(h.header_name(), "variable_sip_i_call_info");
     }
 
     // What a downstream crate defining its own variable enum gets for free.

@@ -241,7 +241,7 @@ impl HeaderLookup for EslHeaders {
 
     fn variable_str(&self, name: &str) -> Option<&str> {
         self.0
-            .get(&format!("variable_{name}"))
+            .get(&format!("{}{name}", crate::VARIABLE_PREFIX))
             .map(|s| s.as_str())
     }
 }

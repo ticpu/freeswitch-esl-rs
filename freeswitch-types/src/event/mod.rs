@@ -130,7 +130,7 @@ impl EslEvent {
     /// Equivalent to [`variable()`](Self::variable) but matches the
     /// [`HeaderLookup`] trait signature.
     pub fn variable_str(&self, name: &str) -> Option<&str> {
-        let key = format!("variable_{}", name);
+        let key = format!("{}{name}", crate::VARIABLE_PREFIX);
         self.header_str(&key)
     }
 
@@ -359,7 +359,7 @@ impl HeaderLookup for EslEvent {
     }
 
     fn variable_str(&self, name: &str) -> Option<&str> {
-        let key = format!("variable_{}", name);
+        let key = format!("{}{name}", crate::VARIABLE_PREFIX);
         self.header_str(&key)
     }
 }

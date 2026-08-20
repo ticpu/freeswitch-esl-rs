@@ -62,7 +62,7 @@ fn parse_opt<T: FromStr>(raw: Option<&str>) -> Result<Option<T>, T::Err> {
 ///
 /// ```
 /// use std::collections::HashMap;
-/// use freeswitch_types::{HeaderLookup, EventHeader, ChannelVariable};
+/// use freeswitch_types::{HeaderLookup, EventHeader, ChannelVariable, VARIABLE_PREFIX};
 /// use freeswitch_types::sip_header::SipHeaderLookup;
 ///
 /// struct MyStore(HashMap<String, String>);
@@ -81,7 +81,7 @@ fn parse_opt<T: FromStr>(raw: Option<&str>) -> Result<Option<T>, T::Err> {
 ///         self.0.get(name).map(|s| s.as_str())
 ///     }
 ///     fn variable_str(&self, name: &str) -> Option<&str> {
-///         self.0.get(&format!("variable_{}", name)).map(|s| s.as_str())
+///         self.0.get(&format!("{VARIABLE_PREFIX}{name}")).map(|s| s.as_str())
 ///     }
 /// }
 ///
@@ -382,7 +382,7 @@ impl HeaderLookup for std::collections::HashMap<String, String> {
     }
 
     fn variable_str(&self, name: &str) -> Option<&str> {
-        self.get(&format!("variable_{name}"))
+        self.get(&format!("{}{name}", crate::VARIABLE_PREFIX))
             .map(|s| s.as_str())
     }
 }
@@ -417,7 +417,7 @@ mod tests {
         }
         fn variable_str(&self, name: &str) -> Option<&str> {
             self.0
-                .get(&format!("variable_{}", name))
+                .get(&format!("{}{name}", crate::VARIABLE_PREFIX))
                 .map(|s| s.as_str())
         }
     }

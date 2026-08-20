@@ -48,6 +48,12 @@ pub const DEFAULT_ESL_PORT: u16 = 8021;
 /// Default FreeSWITCH ESL password (`ClueCon`).
 pub const DEFAULT_ESL_PASSWORD: &str = "ClueCon";
 
+/// Header-name prefix a channel variable carries in an event.
+///
+/// Compose with [`VariableName::header_name()`](crate::VariableName::header_name)
+/// rather than by hand.
+pub const VARIABLE_PREFIX: &str = "variable_";
+
 pub use channel::{
     AnswerState, CallDirection, CallState, ChannelState, ChannelTimetable, HangupCause,
     ParseAnswerStateError, ParseCallDirectionError, ParseCallStateError, ParseChannelStateError,

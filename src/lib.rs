@@ -167,7 +167,7 @@ pub use freeswitch_types::{
     SipPassthroughHeader, SipUserPingStatus, SofiaChannelName, SofiaEventSubclass, TimetableField,
     TimetablePrefix, UuidAnswer, UuidBridge, UuidDeflect, UuidGetVar, UuidHold, UuidKill,
     UuidSendDtmf, UuidSetVar, UuidTransfer, VariableName, Variables, VariablesDisplay,
-    VariablesType, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT, MAX_ARRAY_ITEMS,
+    VariablesType, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT, MAX_ARRAY_ITEMS, VARIABLE_PREFIX,
 };
 
 pub use app::dptools::AppCommand;
