@@ -68,3 +68,55 @@ impl VariableName for ConferenceVariable {
         ConferenceVariable::as_str(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{HeaderLookup, VARIABLE_PREFIX};
+    use sip_header::SipHeader;
+    use std::collections::HashMap;
+
+    #[test]
+    fn header_name_composes_the_wire_key() {
+        assert_eq!(
+            ChannelVariable::ReadCodec.header_name(),
+            "variable_read_codec"
+        );
+        assert_eq!(
+            LoopbackVariable::LoopbackLeg.header_name(),
+            "variable_loopback_leg"
+        );
+        assert!(ChannelVariable::ReadCodec
+            .header_name()
+            .starts_with(VARIABLE_PREFIX));
+    }
+
+    // SipPassthroughHeader's as_str borrows from self, so the provided method
+    // must stay &self-borrowing to cover it.
+    #[test]
+    fn header_name_covers_a_borrowed_as_str() {
+        let h = SipPassthroughHeader::invite(SipHeader::CallInfo);
+        assert_eq!(h.header_name(), "variable_sip_h_Call-Info");
+    }
+
+    // What a downstream crate defining its own variable enum gets for free.
+    #[test]
+    fn an_external_implementor_supplies_only_as_str() {
+        struct TenantVariable;
+
+        impl VariableName for TenantVariable {
+            fn as_str(&self) -> &str {
+                "tenant_id"
+            }
+        }
+
+        assert_eq!(TenantVariable.header_name(), "variable_tenant_id");
+    }
+
+    #[test]
+    fn header_name_is_the_key_a_header_store_holds() {
+        let mut map: HashMap<String, String> = HashMap::new();
+        map.insert(ChannelVariable::ReadCodec.header_name(), "PCMU".into());
+        assert_eq!(map.variable(ChannelVariable::ReadCodec), Some("PCMU"));
+    }
+}
