@@ -382,11 +382,59 @@ impl ParseTimetableError {
     }
 }
 
-/// Generate `ChannelTimetable::SUFFIXES` and `ChannelTimetable::from_lookup` from
-/// a single `(field => "Suffix")` table, eliminating the risk of drift between the
-/// advertised suffix list and the fields actually extracted.
+/// Generate [`TimetableField`], `ChannelTimetable::SUFFIXES` and
+/// `ChannelTimetable::from_lookup` from a single
+/// `(field => Variant => "Suffix")` table, eliminating the risk of drift between
+/// the named fields, the advertised suffix list and the headers actually
+/// extracted.
 macro_rules! channel_timetable_fields {
-    ($($field:ident => $suffix:literal),+ $(,)?) => {
+    ($($field:ident => $Variant:ident => $suffix:literal),+ $(,)?) => {
+        /// One timetable header, named rather than positional.
+        ///
+        /// [`header_name()`](Self::header_name) composes the wire header a
+        /// consumer wanting a single timestamp has to subscribe to, filter on or
+        /// look up. The alternative is indexing
+        /// [`ChannelTimetable::SUFFIXES`](ChannelTimetable::SUFFIXES) by
+        /// position, which changes meaning if the table is ever reordered.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[non_exhaustive]
+        pub enum TimetableField {
+            $(
+                #[doc = concat!("`", $suffix, "`, into [`ChannelTimetable::", stringify!($field), "`].")]
+                $Variant,
+            )+
+        }
+
+        impl TimetableField {
+            /// Header suffix, without any prefix.
+            pub fn as_str(&self) -> &'static str {
+                match self {
+                    $(Self::$Variant => $suffix,)+
+                }
+            }
+
+            /// Full wire header name for a call leg.
+            ///
+            /// Takes the same prefix forms as
+            /// [`ChannelTimetable::from_lookup`](ChannelTimetable::from_lookup):
+            /// a [`TimetablePrefix`] or a raw string for the dynamic `Call-<n>`
+            /// prefixes.
+            ///
+            /// ```
+            /// use freeswitch_types::{TimetableField, TimetablePrefix};
+            ///
+            /// assert_eq!(
+            ///     TimetableField::Answered.header_name(TimetablePrefix::OtherLeg),
+            ///     "Other-Leg-Channel-Answered-Time"
+            /// );
+            /// ```
+            pub fn header_name(&self, prefix: impl AsRef<str>) -> String {
+                format!("{}-{}", prefix.as_ref(), self.as_str())
+            }
+        }
+
+        impl ChannelTimetable {
         /// Header suffixes extracted by `from_lookup()`.
         ///
         /// Combine with a `TimetablePrefix` to build full header names for event
@@ -437,7 +485,7 @@ macro_rules! channel_timetable_fields {
             let mut found = false;
             $(
                 {
-                    let header = format!("{}-{}", prefix, $suffix);
+                    let header = TimetableField::$Variant.header_name(prefix);
                     if let Some(raw) = lookup(&header) {
                         let v: i64 = raw.parse().map_err(|_| ParseTimetableError {
                             header: header.clone(),
@@ -454,23 +502,22 @@ macro_rules! channel_timetable_fields {
                 Ok(None)
             }
         }
+        }
     };
 }
 
-impl ChannelTimetable {
-    channel_timetable_fields! {
-        profile_created => "Profile-Created-Time",
-        created         => "Channel-Created-Time",
-        answered        => "Channel-Answered-Time",
-        progress        => "Channel-Progress-Time",
-        progress_media  => "Channel-Progress-Media-Time",
-        hungup          => "Channel-Hangup-Time",
-        transferred     => "Channel-Transfer-Time",
-        resurrected     => "Channel-Resurrect-Time",
-        bridged         => "Channel-Bridged-Time",
-        last_hold       => "Channel-Last-Hold",
-        hold_accum      => "Channel-Hold-Accum",
-    }
+channel_timetable_fields! {
+    profile_created => ProfileCreated => "Profile-Created-Time",
+    created         => Created        => "Channel-Created-Time",
+    answered        => Answered       => "Channel-Answered-Time",
+    progress        => Progress       => "Channel-Progress-Time",
+    progress_media  => ProgressMedia  => "Channel-Progress-Media-Time",
+    hungup          => Hungup         => "Channel-Hangup-Time",
+    transferred     => Transferred    => "Channel-Transfer-Time",
+    resurrected     => Resurrected    => "Channel-Resurrect-Time",
+    bridged         => Bridged        => "Channel-Bridged-Time",
+    last_hold       => LastHold       => "Channel-Last-Hold",
+    hold_accum      => HoldAccum      => "Channel-Hold-Accum",
 }
 
 #[cfg(test)]

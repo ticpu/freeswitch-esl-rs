@@ -51,7 +51,7 @@ pub const DEFAULT_ESL_PASSWORD: &str = "ClueCon";
 pub use channel::{
     AnswerState, CallDirection, CallState, ChannelState, ChannelTimetable, HangupCause,
     ParseAnswerStateError, ParseCallDirectionError, ParseCallStateError, ParseChannelStateError,
-    ParseHangupCauseError, ParseTimetableError, TimetablePrefix,
+    ParseHangupCauseError, ParseTimetableError, TimetableField, TimetablePrefix,
 };
 #[cfg(feature = "esl")]
 pub use commands::{

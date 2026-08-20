@@ -26,7 +26,7 @@ which re-exports everything from this crate.
 | `sip_header_addr` | `SipHeaderAddr` — RFC 3261 `name-addr` parser with header-level parameters |
 | `sip_message` | `extract_header` — extract header values from raw SIP message text (RFC 3261 §7.3.1: folding, case-insensitive, multi-occurrence) |
 | `sip_header` | `SipHeader` enum, `SipHeaderLookup` trait, `extract_from()` for raw messages |
-| `channel` | `ChannelState`, `CallState`, `AnswerState`, `CallDirection`, `HangupCause`, `ChannelTimetable` |
+| `channel` | `ChannelState`, `CallState`, `AnswerState`, `CallDirection`, `HangupCause`, `ChannelTimetable` (+ `TimetableField`, one named header at a time) |
 | `headers` | `EventHeader` enum (typed event header names) |
 | `lookup` | `HeaderLookup` trait (typed accessors for any key-value store) |
 | `sofia` | `SofiaChannelName` (borrow-based `sofia/<profile>/<user>@<host>` parser), `SofiaEventSubclass`, `GatewayRegState`, `SipUserPingStatus` |
