@@ -7,7 +7,7 @@ use crate::{
     headers::{case_alias_key, normalize_header_key, EventHeader},
     lookup::HeaderLookup,
     protocol::decode_serialized_event,
-    LossyValues,
+    LossyValues, VARIABLE_PREFIX,
 };
 use indexmap::IndexMap;
 
@@ -425,7 +425,7 @@ impl HeaderLookup for EslResponse {
     }
 
     fn variable_str(&self, name: &str) -> Option<&str> {
-        let key = format!("variable_{}", name);
+        let key = format!("{VARIABLE_PREFIX}{name}");
         self.header_str(&key)
     }
 }

@@ -25,6 +25,7 @@ use std::fmt::Display;
 use freeswitch_esl_tokio::{
     parse_channel_dump, BgJobTracker, CallState, EslClient, EslError, EslEvent, EslEventType,
     EventFormat, EventHeader, HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    VARIABLE_PREFIX,
 };
 use tracing::{debug, error, info, warn};
 
@@ -111,7 +112,7 @@ impl HeaderLookup for TrackedChannel {
 
     fn variable_str(&self, name: &str) -> Option<&str> {
         self.data
-            .get(&format!("variable_{}", name))
+            .get(&format!("{VARIABLE_PREFIX}{name}"))
             .map(|s| s.as_str())
     }
 }

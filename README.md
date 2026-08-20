@@ -107,6 +107,12 @@ tokio = { version = "1.0", features = ["full"] }
   the marker's presence so neither of its two paths is missed. Qualify it with
   `LoopbackChannelName::parse()` over the channel's own name: the marker is
   copied onto the real channel that continues the call.
+- **Failed replies read as data** -- `EslError::command_failure()` hands back the
+  text behind the `-ERR` / `-USAGE` marker, so `-ERR USER_BUSY` parses straight
+  into a `HangupCause` without the caller knowing the prefix spellings.
+- **Channel dumps** -- `parse_channel_dump()` decodes a `uuid_dump` body through
+  the same parser as an event, so a rebuilt state map gets the crate's header-key
+  normalization instead of a second convention.
 - **Command builders** -- `Originate`, `BridgeDialString`, `UuidKill`,
   `ConferenceDtmf`, dptools -- all `Display`/`FromStr`, no transport coupling.
 - **Serde** -- all builder types implement `Serialize`/`Deserialize`.
