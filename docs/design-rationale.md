@@ -128,6 +128,18 @@ the authenticated TCP socket across binary upgrades so the event stream is
 never interrupted, because reconnecting and rebuilding is not good enough
 when you are the system of record for active calls.
 
+## `show` output is not modelled
+
+`show` answers from the switch's core database, whose schema this crate does not own,
+and that store names its columns in a vocabulary used nowhere else in the switch: some
+name an event header spelled differently, some a header only another event carries,
+some nothing the typed names cover. Modelling the rows means carrying an approximate
+translation table between the two vocabularies, hand-curated and silently wrong
+wherever nobody checked — refused here for the reason a channel variable's SIP header
+is curated exhaustively rather than derived from its name. A caller wanting rows parses
+them; the channel state this crate speaks for is what the event stream and a channel
+dump report.
+
 ## Correct wire format
 
 The ESL `text/event-plain` format uses two-part framing: an outer envelope
@@ -798,6 +810,18 @@ FreeSWITCH fires `CHANNEL_STATE(CS_INIT)` *before* `CHANNEL_CREATE` and
 and the `channel_tracker` example use `CS_INIT` and `CS_DESTROY` from
 `CHANNEL_STATE` as the start- and end-of-life triggers. Full ordering
 notes live in the README — they belong with usage docs, not here.
+
+## Which driver a channel belongs to is answered from its name
+
+No channel variable and no caller-profile field answers it. Where a loopback leg resigns
+by handing its remaining work to the real channel that continues the call, that channel
+inherits the leg's variables and its caller profile, so both then describe a channel that
+is gone — the resignation marker among them. The name a channel reports for itself is
+what stays true, and the accessors here read only that.
+
+The name is not authority, though. A SIP peer can set it, so it answers what kind of
+channel this is and never whether the far side may be trusted; no authorization decision
+may key on it. Mechanics are in [loopback-bowout.md](loopback-bowout.md).
 
 ## The codec-string grammar as a type
 

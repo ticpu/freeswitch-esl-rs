@@ -224,6 +224,12 @@ changes anything on the wire's receiving end.
 
 ## Bowout
 
+This section covers the frame-count path, which is what the example below exercises.
+For the other resignation path, what each one leaves behind on the surviving channel,
+and which fields lie afterwards, see
+[loopback-bowout.md](loopback-bowout.md) — read it before writing any consumer that
+acts on a resignation.
+
 A loopback pair that finds itself in the middle of a call can splice its two
 neighbours together and get out of the audio path. mod_loopback calls
 `switch_ivr_uuid_bridge()` on the two real channels and both loopback legs
