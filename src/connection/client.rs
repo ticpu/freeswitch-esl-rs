@@ -208,15 +208,22 @@ impl EslClient {
     /// To subscribe to all events, use
     /// [`subscribe_all_events`](Self::subscribe_all_events).
     ///
-    /// For `CUSTOM` event subclasses (e.g., `sofia::register`), use
-    /// [`subscribe_events_raw`](Self::subscribe_events_raw) instead -- this method
-    /// sends bare `CUSTOM` which subscribes to **all** custom events:
+    /// The order of `events` is not load-bearing: `CUSTOM` is emitted last
+    /// whatever position it was given in.
+    ///
+    /// `EslEventType::Custom` on its own delivers **nothing**: FreeSWITCH gates
+    /// custom events on the listener's subclass hash, and only `All` populates
+    /// that wholesale. Name the subclasses you want on an
+    /// [`EventSubscription`](freeswitch_types::EventSubscription) and pass it to
+    /// [`apply_subscription`](Self::apply_subscription):
     ///
     /// ```rust,no_run
-    /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), freeswitch_esl_tokio::EslError> {
-    /// use freeswitch_esl_tokio::EventFormat;
-    /// // Subscribe to specific CUSTOM subclasses:
-    /// client.subscribe_events_raw(EventFormat::Plain, "CUSTOM sofia::register sofia::unregister").await?;
+    /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), Box<dyn std::error::Error>> {
+    /// use freeswitch_esl_tokio::{EventFormat, EventSubscription};
+    /// let sub = EventSubscription::new(EventFormat::Plain)
+    ///     .custom_subclass("sofia::register")?
+    ///     .custom_subclass("sofia::unregister")?;
+    /// client.apply_subscription(&sub).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -290,18 +297,24 @@ impl EslClient {
         Ok(())
     }
 
-    /// Subscribe to events using raw event name strings.
+    /// Subscribe to events using a raw event name string, sent verbatim.
     ///
-    /// Use this for `CUSTOM` subclasses or event types not yet covered by
-    /// [`EslEventType`]. For typed events, prefer
-    /// [`subscribe_events`](Self::subscribe_events) or
-    /// [`subscribe_all_events`](Self::subscribe_all_events).
+    /// Prefer [`EventSubscription`](freeswitch_types::EventSubscription): its
+    /// `custom_subclass()` covers `CUSTOM` subclasses and its `event_raw()`
+    /// covers event types not yet in [`EslEventType`], and it orders the token
+    /// list correctly. This method exists for a list neither can express.
+    ///
+    /// `CUSTOM` must come last: FreeSWITCH reads every token after it as a
+    /// subclass name, so an event type placed after it is never subscribed and
+    /// the command still returns `+OK`. Nothing here checks that — the
+    /// event-type/subclass distinction is gone once the list is one flat
+    /// string. [`swallowed_event_types`](freeswitch_types::event::swallowed_event_types)
+    /// reports the detectable case.
     ///
     /// ```rust,no_run
     /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), freeswitch_esl_tokio::EslError> {
     /// use freeswitch_esl_tokio::EventFormat;
-    /// // CUSTOM subclasses require raw strings -- the typed API sends bare CUSTOM
-    /// client.subscribe_events_raw(EventFormat::Plain, "CUSTOM sofia::register sofia::unregister").await?;
+    /// client.subscribe_events_raw(EventFormat::Plain, "HEARTBEAT CUSTOM sofia::register").await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -595,7 +608,8 @@ impl EslClient {
     /// Unsubscribe from specific events by typed enum variants.
     ///
     /// The inverse of [`subscribe_events`](Self::subscribe_events). Accepts
-    /// multiple event types to unsubscribe from at once.
+    /// multiple event types to unsubscribe from at once. As with subscribing,
+    /// the order of `events` is not load-bearing.
     pub async fn nixevent<T: Borrow<EslEventType>>(
         &self,
         events: impl IntoIterator<Item = T>,
@@ -612,11 +626,14 @@ impl EslClient {
             .await
     }
 
-    /// Unsubscribe from events using raw event name strings.
+    /// Unsubscribe from events using a raw event name string, sent verbatim.
     ///
     /// Prefer [`nixevent`](Self::nixevent) when all event types have
     /// [`EslEventType`] variants. Use this only for `CUSTOM` subclasses or
     /// event types not yet covered by the typed enum.
+    ///
+    /// Carries the same terminal-`CUSTOM` rule and the same absence of a check
+    /// as [`subscribe_events_raw`](Self::subscribe_events_raw).
     pub async fn nixevent_raw(&self, events: &str) -> EslResult<()> {
         let cmd = EslCommand::NixEvent {
             events: events.to_string(),

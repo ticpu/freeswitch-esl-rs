@@ -887,3 +887,41 @@ async fn live_custom_first_does_not_swallow_later_event_types() {
         "HEARTBEAT never arrived -- swallowed as a CUSTOM subclass name"
     );
 }
+
+/// A bare `CUSTOM` subscribes to nothing, contrary to the obvious reading.
+/// mod_event_socket delivers a CUSTOM event only when its subclass is in the
+/// listener's subclass hash, and only `ALL` (via `set_all_custom`) populates
+/// that hash wholesale. Subscribing `CUSTOM` with no subclass leaves it empty.
+#[tokio::test]
+#[ignore]
+async fn live_bare_custom_delivers_no_subclassed_events() {
+    let (client, mut events, _permit) = connect().await;
+    let subclass = format!("esl_test::bare_{}", std::process::id());
+
+    client
+        .subscribe_events(EventFormat::Plain, &[EslEventType::Custom])
+        .await
+        .unwrap();
+
+    let mut event = EslEvent::with_type(EslEventType::Custom);
+    event.set_header("Event-Name", "CUSTOM");
+    event.set_header("Event-Subclass", subclass.clone());
+    client
+        .sendevent(event)
+        .await
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => assert_ne!(
+                evt.header(EventHeader::EventSubclass),
+                Some(subclass.as_str()),
+                "bare CUSTOM delivered a subclassed event"
+            ),
+            Ok(Some(Err(e))) => panic!("event error: {}", e),
+            Ok(None) => panic!("event stream closed"),
+            Err(_) => break,
+        }
+    }
+}

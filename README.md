@@ -420,6 +420,12 @@ filters:
 - [Call-Direction, inbound]
 ```
 
+The order of `events` does not matter: `CUSTOM` is terminal on the wire and the
+serializer always emits it last. See
+[docs/event-command-grammar.md](docs/event-command-grammar.md) for the grammar,
+what the raw string commands do not guarantee, and why a bare `CUSTOM`
+subscribes to nothing.
+
 `Variables` deserializes ergonomically -- a flat map defaults to `Default` scope:
 
 ```yaml
