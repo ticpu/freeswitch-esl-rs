@@ -779,6 +779,17 @@ defeating the whole config-driven story. Raw events appear on the wire
 alongside typed events in the same `event` command, and
 `resubscribe_from` diffs them the same way.
 
+## The event token list is ordered by the serialiser, not the caller
+
+Every path that puts an event-name list on the wire goes through
+`order_event_tokens`; nothing builds one by joining names itself.
+
+The raw-string pair is the exception it cannot cover: it holds one flat token
+list with the event-type/subclass distinction already gone, so a check there
+would guess at intent, and guess wrong on the subclass lists this crate builds
+for `nixevent` itself. It stays permissive, and `swallowed_event_types` offers
+the one detectable case as a value instead.
+
 ## HangupCause::from_sip_response mapping
 
 FreeSWITCH's mod_sofia translates SIP response codes to Q.850 hangup
