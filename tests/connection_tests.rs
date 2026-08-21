@@ -915,6 +915,33 @@ async fn test_nixevent_command() {
         .unwrap();
 }
 
+/// `nixevent` shares the `event` grammar, so a `CUSTOM` ahead of another type
+/// would delete a subclass by that name instead of unsubscribing the type.
+#[tokio::test]
+async fn test_nixevent_custom_orders_last() {
+    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+
+    let task = tokio::spawn({
+        let client = client.clone();
+        async move {
+            client
+                .nixevent(&[EslEventType::Custom, EslEventType::ChannelCreate])
+                .await
+        }
+    });
+
+    let cmd = mock
+        .read_command()
+        .await;
+    assert_eq!(cmd, "nixevent CHANNEL_CREATE CUSTOM\n\n");
+    mock.reply_ok()
+        .await;
+
+    task.await
+        .unwrap()
+        .unwrap();
+}
+
 #[tokio::test]
 async fn test_noevents_command() {
     let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;

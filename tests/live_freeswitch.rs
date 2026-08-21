@@ -1725,3 +1725,33 @@ async fn live_outbound_connect_response_preserves_underscored_case() {
 
     drop(permit);
 }
+
+/// The reported ordering defect, end to end: `Custom` listed first with another
+/// event type after it. Before the fix the wire read `event plain CUSTOM
+/// HEARTBEAT`, FreeSWITCH registered `HEARTBEAT` as a subclass name, and the
+/// heartbeat never arrived while the `+OK` said the subscription was healthy.
+///
+/// A bare `CUSTOM` delivers nothing of its own -- FreeSWITCH gates custom
+/// events on the listener's subclass hash, which only `ALL` populates -- so the
+/// first event to arrive here is the heartbeat or nothing.
+#[tokio::test]
+#[ignore]
+async fn live_custom_first_does_not_swallow_later_event_types() {
+    let (client, mut events, _permit) = connect().await;
+
+    client
+        .subscribe_events(
+            EventFormat::Plain,
+            &[EslEventType::Custom, EslEventType::Heartbeat],
+        )
+        .await
+        .unwrap();
+
+    let event = tokio::time::timeout(Duration::from_secs(25), events.recv())
+        .await
+        .expect("HEARTBEAT never arrived -- swallowed as a CUSTOM subclass name")
+        .expect("channel closed")
+        .expect("event error");
+
+    assert_eq!(event.event_type(), Some(EslEventType::Heartbeat));
+}
