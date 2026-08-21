@@ -6,7 +6,9 @@ mod subscription;
 
 pub use event_type::{EslEventType, ParseEventTypeError};
 pub use format::{EventFormat, ParseEventFormatError};
-pub use subscription::{EventSubscription, EventSubscriptionError};
+pub use subscription::{
+    order_event_tokens, swallowed_event_types, EventSubscription, EventSubscriptionError,
+};
 
 use crate::headers::{case_alias_key, normalize_header_key, EventHeader};
 use crate::lookup::HeaderLookup;

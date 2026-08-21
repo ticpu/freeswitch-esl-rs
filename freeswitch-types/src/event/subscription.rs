@@ -97,6 +97,84 @@ fn validate_filter_field(field: &str, label: &str) -> Result<(), EventSubscripti
     validate_wire_token(field, &format!("filter {}", label), false, false)
 }
 
+const CUSTOM_TOKEN: &str = "CUSTOM";
+
+fn is_custom_token(name: &str) -> bool {
+    name.eq_ignore_ascii_case(CUSTOM_TOKEN)
+}
+
+/// Order event names and custom subclasses for the ESL `event` / `nixevent`
+/// grammar.
+///
+/// `CUSTOM` is terminal: FreeSWITCH reads every token after it as a subclass
+/// name rather than as an event type. A `CUSTOM` appearing anywhere in `names`
+/// is moved to the tail, deduplicated, and emitted in the canonical spelling
+/// (event names match case-insensitively on the wire); one is introduced when
+/// `subclasses` is non-empty and `names` did not carry it. The relative order
+/// of every other name is preserved.
+///
+/// Pass an empty `subclasses` for a `nixevent` list.
+pub fn order_event_tokens<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    subclasses: impl IntoIterator<Item = &'a str>,
+) -> Vec<&'a str> {
+    let mut tokens: Vec<&str> = Vec::new();
+    let mut custom = false;
+
+    for name in names {
+        if is_custom_token(name) {
+            custom = true;
+        } else {
+            tokens.push(name);
+        }
+    }
+
+    let mut subclasses = subclasses
+        .into_iter()
+        .peekable();
+    if custom
+        || subclasses
+            .peek()
+            .is_some()
+    {
+        tokens.push(CUSTOM_TOKEN);
+        tokens.extend(subclasses);
+    }
+
+    tokens
+}
+
+/// Event-type names in a raw `event` / `nixevent` token list that FreeSWITCH
+/// will register as `CUSTOM` subclass names instead of subscribing.
+///
+/// Empty when the list is well ordered or carries no `CUSTOM`. A subclass
+/// genuinely named like an event type is indistinguishable from the mistake in
+/// a flat token list, so this reports rather than rejects — it exists for the
+/// raw string commands, which cannot tell the two apart.
+/// [`EventSubscription`] keeps them in separate fields and cannot produce the
+/// mistake at all.
+///
+/// ```rust
+/// use freeswitch_types::event::swallowed_event_types;
+///
+/// assert!(swallowed_event_types("HEARTBEAT CUSTOM sofia::register").is_empty());
+/// assert_eq!(
+///     swallowed_event_types("CUSTOM sofia::register CHANNEL_CREATE"),
+///     ["CHANNEL_CREATE"]
+/// );
+/// ```
+pub fn swallowed_event_types(events: &str) -> Vec<&str> {
+    events
+        .split_whitespace()
+        .skip_while(|t| !is_custom_token(t))
+        .skip(1)
+        .filter(|t| {
+            t.parse::<EslEventType>()
+                .is_ok()
+        })
+        .collect()
+}
+
 impl EventSubscription {
     /// Create an empty subscription with the given format.
     pub fn new(format: EventFormat) -> Self {
@@ -358,8 +436,11 @@ impl EventSubscription {
     ///
     /// Returns `None` if no events, raw events, or custom subclasses are
     /// configured. Returns `Some("ALL")` if `EslEventType::All` is present.
-    /// Otherwise returns space-separated typed event names, then raw event
-    /// names, with custom subclasses appended after a `CUSTOM` token.
+    ///
+    /// Otherwise: typed event names then raw event names in the order they were
+    /// added, followed by `CUSTOM` and the custom subclasses. The order the
+    /// caller added event types in is not load-bearing — see
+    /// [`order_event_tokens`].
     pub fn to_event_string(&self) -> Option<String> {
         if self
             .events
@@ -368,32 +449,19 @@ impl EventSubscription {
             return Some("ALL".to_string());
         }
 
-        let mut parts: Vec<&str> = self
-            .events
-            .iter()
-            .map(|e| e.as_str())
-            .collect();
-
-        parts.extend(
-            self.raw_events
+        let parts = order_event_tokens(
+            self.events
+                .iter()
+                .map(|e| e.as_str())
+                .chain(
+                    self.raw_events
+                        .iter()
+                        .map(|s| s.as_str()),
+                ),
+            self.custom_subclasses
                 .iter()
                 .map(|s| s.as_str()),
         );
-
-        if !self
-            .custom_subclasses
-            .is_empty()
-        {
-            if !self
-                .events
-                .contains(&EslEventType::Custom)
-            {
-                parts.push("CUSTOM");
-            }
-            for sc in &self.custom_subclasses {
-                parts.push(sc.as_str());
-            }
-        }
 
         if parts.is_empty() {
             None
@@ -550,6 +618,63 @@ mod tests {
             sub.to_event_string(),
             Some("CUSTOM sofia::register".to_string())
         );
+    }
+
+    #[test]
+    fn order_event_tokens_moves_custom_to_tail() {
+        assert_eq!(
+            order_event_tokens(["CUSTOM", "CHANNEL_CREATE", "HEARTBEAT"], []),
+            ["CHANNEL_CREATE", "HEARTBEAT", "CUSTOM"]
+        );
+    }
+
+    #[test]
+    fn order_event_tokens_without_custom_is_identity() {
+        assert_eq!(
+            order_event_tokens(["CHANNEL_CREATE", "HEARTBEAT"], []),
+            ["CHANNEL_CREATE", "HEARTBEAT"]
+        );
+    }
+
+    #[test]
+    fn order_event_tokens_introduces_custom_for_subclasses() {
+        assert_eq!(
+            order_event_tokens(["HEARTBEAT"], ["sofia::register"]),
+            ["HEARTBEAT", "CUSTOM", "sofia::register"]
+        );
+    }
+
+    #[test]
+    fn order_event_tokens_keeps_bare_custom_without_subclasses() {
+        assert_eq!(order_event_tokens(["CUSTOM"], []), ["CUSTOM"]);
+    }
+
+    #[test]
+    fn order_event_tokens_empty_is_empty() {
+        assert!(order_event_tokens([], []).is_empty());
+    }
+
+    #[test]
+    fn swallowed_event_types_reports_a_type_after_custom() {
+        assert_eq!(
+            swallowed_event_types("HEARTBEAT CUSTOM sofia::register CHANNEL_CREATE"),
+            ["CHANNEL_CREATE"]
+        );
+    }
+
+    #[test]
+    fn swallowed_event_types_empty_when_well_ordered() {
+        assert!(swallowed_event_types("HEARTBEAT CUSTOM sofia::register").is_empty());
+    }
+
+    #[test]
+    fn swallowed_event_types_empty_without_custom() {
+        assert!(swallowed_event_types("HEARTBEAT CHANNEL_CREATE").is_empty());
+    }
+
+    #[test]
+    fn swallowed_event_types_matches_custom_case_insensitively() {
+        assert_eq!(swallowed_event_types("custom HEARTBEAT"), ["HEARTBEAT"]);
     }
 
     #[test]
