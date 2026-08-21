@@ -600,14 +600,14 @@ impl EslClient {
         &self,
         events: impl IntoIterator<Item = T>,
     ) -> EslResult<()> {
-        let s = events
+        let names: Vec<&str> = events
             .into_iter()
             .map(|e| {
                 e.borrow()
                     .as_str()
             })
-            .collect::<Vec<_>>()
-            .join(" ");
+            .collect();
+        let s = freeswitch_types::event::order_event_tokens(names, []).join(" ");
         self.nixevent_raw(&s)
             .await
     }
