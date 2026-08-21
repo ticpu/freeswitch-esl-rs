@@ -553,6 +553,153 @@ mod tests {
     }
 
     #[test]
+    fn custom_first_serialises_last() {
+        let sub = EventSubscription::new(EventFormat::Plain)
+            .event(EslEventType::Custom)
+            .event(EslEventType::ChannelCreate)
+            .event(EslEventType::ChannelAnswer);
+        assert_eq!(
+            sub.to_event_string(),
+            Some("CHANNEL_CREATE CHANNEL_ANSWER CUSTOM".to_string())
+        );
+    }
+
+    #[test]
+    fn custom_in_middle_serialises_last() {
+        let sub = EventSubscription::new(EventFormat::Plain)
+            .event(EslEventType::Heartbeat)
+            .event(EslEventType::Custom)
+            .event(EslEventType::ChannelCreate);
+        assert_eq!(
+            sub.to_event_string(),
+            Some("HEARTBEAT CHANNEL_CREATE CUSTOM".to_string())
+        );
+    }
+
+    #[test]
+    fn custom_and_subclasses_follow_every_event_type() {
+        let sub = EventSubscription::new(EventFormat::Plain)
+            .event(EslEventType::Heartbeat)
+            .event(EslEventType::BackgroundJob)
+            .event(EslEventType::Custom)
+            .event(EslEventType::Unpublish)
+            .event(EslEventType::ChannelCreate)
+            .custom_subclass("sofia::gateway_state")
+            .unwrap();
+        assert_eq!(
+            sub.to_event_string(),
+            Some(
+                "HEARTBEAT BACKGROUND_JOB UNPUBLISH CHANNEL_CREATE CUSTOM sofia::gateway_state"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn raw_events_order_before_custom() {
+        let sub = EventSubscription::new(EventFormat::Plain)
+            .event(EslEventType::Custom)
+            .event_raw("FUTURE_EVENT")
+            .unwrap()
+            .custom_subclass("sofia::register")
+            .unwrap();
+        assert_eq!(
+            sub.to_event_string(),
+            Some("FUTURE_EVENT CUSTOM sofia::register".to_string())
+        );
+    }
+
+    /// A raw `CUSTOM` is the terminal marker, not a plain name. FreeSWITCH
+    /// matches event names case-insensitively, so canonicalising is lossless.
+    #[test]
+    fn raw_custom_token_is_the_terminal_marker() {
+        let sub = EventSubscription::new(EventFormat::Plain)
+            .event(EslEventType::Custom)
+            .event_raw("custom")
+            .unwrap()
+            .event_raw("CHANNEL_CREATE")
+            .unwrap();
+        assert_eq!(
+            sub.to_event_string(),
+            Some("CHANNEL_CREATE CUSTOM".to_string())
+        );
+    }
+
+    #[test]
+    fn order_preserved_without_custom() {
+        let sub = EventSubscription::new(EventFormat::Plain)
+            .event(EslEventType::Heartbeat)
+            .event(EslEventType::ChannelAnswer)
+            .event(EslEventType::ChannelCreate)
+            .event(EslEventType::BackgroundJob);
+        assert_eq!(
+            sub.to_event_string(),
+            Some("HEARTBEAT CHANNEL_ANSWER CHANNEL_CREATE BACKGROUND_JOB".to_string())
+        );
+    }
+
+    #[test]
+    fn all_wins_from_any_position() {
+        let sub = EventSubscription::new(EventFormat::Plain)
+            .event(EslEventType::Custom)
+            .event(EslEventType::ChannelCreate)
+            .event(EslEventType::All)
+            .custom_subclass("sofia::register")
+            .unwrap();
+        assert_eq!(sub.to_event_string(), Some("ALL".to_string()));
+    }
+
+    /// The property FreeSWITCH's grammar requires, asserted against
+    /// `event_types()` rather than against the emitted tokens: a subclass may
+    /// legitimately be named like an event type, and the flat string cannot
+    /// tell the two apart.
+    #[test]
+    fn no_requested_event_type_lands_after_custom() {
+        let subs = [
+            EventSubscription::new(EventFormat::Plain)
+                .event(EslEventType::Custom)
+                .event(EslEventType::ChannelCreate),
+            EventSubscription::new(EventFormat::Plain)
+                .event(EslEventType::Heartbeat)
+                .event(EslEventType::Custom)
+                .event(EslEventType::Unpublish)
+                .custom_subclass("sofia::register")
+                .unwrap(),
+            EventSubscription::new(EventFormat::Plain)
+                .events(EslEventType::CHANNEL_EVENTS)
+                .event(EslEventType::Custom)
+                .sofia_events(SofiaEventSubclass::GATEWAY_EVENTS),
+        ];
+
+        for sub in subs {
+            let out = sub
+                .to_event_string()
+                .unwrap();
+            let tokens: Vec<&str> = out
+                .split(' ')
+                .collect();
+            let custom_at = tokens
+                .iter()
+                .position(|t| *t == "CUSTOM")
+                .expect("CUSTOM present");
+            for want in sub.event_types() {
+                if *want == EslEventType::Custom {
+                    continue;
+                }
+                let at = tokens
+                    .iter()
+                    .position(|t| *t == want.as_str())
+                    .unwrap_or_else(|| panic!("{} missing from {out:?}", want.as_str()));
+                assert!(
+                    at < custom_at,
+                    "{} lands after CUSTOM in {out:?}",
+                    want.as_str()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn event_string_empty_is_none() {
         let sub = EventSubscription::new(EventFormat::Plain);
         assert_eq!(sub.to_event_string(), None);

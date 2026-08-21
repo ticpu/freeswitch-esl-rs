@@ -8,8 +8,8 @@
 mod live_common;
 
 use freeswitch_esl_tokio::{
-    EslError, EslEvent, EslEventPriority, EslEventType, EventFormat, EventHeader, HeaderLookup,
-    ReplyStatus,
+    EslError, EslEvent, EslEventPriority, EslEventType, EventFormat, EventHeader,
+    EventSubscription, HeaderLookup, ReplyStatus,
 };
 use live_common::connect;
 use std::time::Duration;
@@ -826,4 +826,64 @@ async fn live_bgapi_single_round_trip() {
             Err(_) => panic!("timeout waiting for BACKGROUND_JOB {}", job_uuid),
         }
     }
+}
+
+/// The reported ordering defect, end to end: `Custom` listed first with another
+/// event type after it. Before the fix the wire read
+/// `event plain CUSTOM HEARTBEAT <subclass>`, FreeSWITCH registered `HEARTBEAT`
+/// as a subclass name, and the heartbeat never arrived while the `+OK` and the
+/// custom event both said the subscription was healthy.
+///
+/// `Heartbeat` is the second type because the switch emits it unprompted -- no
+/// synthetic channel event injected into a switch shared with parallel tests,
+/// and nothing to reap. Both halves are asserted: the reorder must not cost the
+/// `CUSTOM` subscription it is protecting.
+#[tokio::test]
+#[ignore]
+async fn live_custom_first_does_not_swallow_later_event_types() {
+    let (client, mut events, _permit) = connect().await;
+    let subclass = format!("esl_test::ordering_{}", std::process::id());
+
+    let sub = EventSubscription::new(EventFormat::Plain)
+        .event(EslEventType::Custom)
+        .event(EslEventType::Heartbeat)
+        .custom_subclass(subclass.as_str())
+        .unwrap();
+    client
+        .apply_subscription(&sub)
+        .await
+        .unwrap();
+
+    let mut event = EslEvent::with_type(EslEventType::Custom);
+    event.set_header("Event-Name", "CUSTOM");
+    event.set_header("Event-Subclass", subclass.clone());
+    client
+        .sendevent(event)
+        .await
+        .unwrap();
+
+    // event-heartbeat-interval defaults to 20s; both halves land inside 25.
+    let deadline = Instant::now() + Duration::from_secs(25);
+    let mut got_custom = false;
+    let mut got_heartbeat = false;
+    while !(got_custom && got_heartbeat) {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => {
+                if evt.header(EventHeader::EventSubclass) == Some(subclass.as_str()) {
+                    got_custom = true;
+                } else if evt.event_type() == Some(EslEventType::Heartbeat) {
+                    got_heartbeat = true;
+                }
+            }
+            Ok(Some(Err(e))) => panic!("event error: {}", e),
+            Ok(None) => panic!("event stream closed"),
+            Err(_) => break,
+        }
+    }
+
+    assert!(got_custom, "CUSTOM {} never arrived", subclass);
+    assert!(
+        got_heartbeat,
+        "HEARTBEAT never arrived -- swallowed as a CUSTOM subclass name"
+    );
 }
