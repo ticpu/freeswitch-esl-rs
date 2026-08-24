@@ -21,6 +21,14 @@ one itself, and one that does floats to later betas of that version and to any
 later stable in the major. Move the floor to the version being released each
 time; never `=`-pin the exact beta.
 
+## Evaluating Feature and Bug Requests
+
+Read [docs/evaluating-requests.md](docs/evaluating-requests.md) in full before
+answering a `FEATURE-REQUEST-*.md` or `BUG-*.md`. It carries the admission test
+for whether a wire name belongs in this crate at all, how to verify a request's
+evidence against `$FREESWITCH_SOURCE` rather than inherit it, and where the
+answer gets recorded.
+
 ## Enum Variant Ordering — Append Only
 
 New variants on public enums without `#[repr(...)]` **must be appended at
