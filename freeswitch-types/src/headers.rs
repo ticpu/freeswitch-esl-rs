@@ -179,9 +179,29 @@ sip_header::define_header_enum! {
         State => "State",
         PingStatus => "Ping-Status",
         Phrase => "Phrase",
+        /// Sofia profile name, hyphen spelling. Carried by the registration,
+        /// gateway and user-state `CUSTOM` subclasses
+        /// ([`SofiaEventSubclass::REGISTRATION_EVENTS`](crate::sofia::SofiaEventSubclass::REGISTRATION_EVENTS),
+        /// [`GATEWAY_EVENTS`](crate::sofia::SofiaEventSubclass::GATEWAY_EVENTS),
+        /// [`SipUserState`](crate::sofia::SofiaEventSubclass::SipUserState)).
+        /// The underscore spelling is [`EventHeader::ProfileNameSnake`].
         ProfileName => "profile-name",
         /// SIP response code (integer) from gateway_state and sip_user_state events.
         Status => "Status",
+
+        // --- Sofia snake_case headers (from mod_sofia's SIP-method-mirror core events) ---
+        /// Emitting module, always the literal `mod_sofia`.
+        ModuleName => "module_name",
+        /// Sofia profile name, underscore spelling. Carried by mod_sofia's
+        /// SIP-method-mirror core events (`NOTIFY_IN`, `FAILURE`, `PUBLISH`,
+        /// `UNPUBLISH`, `PHONE_FEATURE_SUBSCRIBE`) and by
+        /// [`SofiaEventSubclass::ProfileStart`](crate::sofia::SofiaEventSubclass::ProfileStart).
+        /// The hyphen spelling is [`EventHeader::ProfileName`].
+        ProfileNameSnake => "profile_name",
+        /// Bind URL of the Sofia profile named by
+        /// [`ProfileNameSnake`](EventHeader::ProfileNameSnake).
+        /// Absent on `FAILURE` when no profile resolved.
+        ProfileUri => "profile_uri",
     }
 }
 
@@ -625,7 +645,7 @@ mod tests {
         );
         assert_eq!(
             "profile_name".parse::<EventHeader>(),
-            Ok(EventHeader::ProfileNameUnderscore)
+            Ok(EventHeader::ProfileNameSnake)
         );
         assert_eq!(
             "module_name".parse::<EventHeader>(),

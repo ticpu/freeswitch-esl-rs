@@ -269,9 +269,30 @@ pub trait HeaderLookup: SipHeaderLookup {
         self.header(EventHeader::Gateway)
     }
 
-    /// `profile-name` header from `sofia::sip_user_state` events.
+    /// Sofia profile name, from whichever of the two wire spellings the event
+    /// carries.
+    ///
+    /// Probes [`EventHeader::ProfileName`] (`profile-name`, on the
+    /// registration, gateway and user-state `CUSTOM` subclasses) then
+    /// [`EventHeader::ProfileNameSnake`] (`profile_name`, on mod_sofia's
+    /// SIP-method-mirror core events and on
+    /// [`SofiaEventSubclass::ProfileStart`]).
+    /// The spelling does not follow from the event type, so use
+    /// `header(EventHeader::…)` when a spelling-exact lookup is what you want.
     fn profile_name(&self) -> Option<&str> {
         self.header(EventHeader::ProfileName)
+            .or_else(|| self.header(EventHeader::ProfileNameSnake))
+    }
+
+    /// `module_name` header -- the literal `mod_sofia` on the events above.
+    fn module_name(&self) -> Option<&str> {
+        self.header(EventHeader::ModuleName)
+    }
+
+    /// `profile_uri` header -- bind URL of the profile named by
+    /// [`profile_name()`](Self::profile_name).
+    fn profile_uri(&self) -> Option<&str> {
+        self.header(EventHeader::ProfileUri)
     }
 
     /// `Phrase` header (SIP reason phrase) from sofia state events.
@@ -650,13 +671,13 @@ mod tests {
     fn profile_name_spellings_resolve_distinct_variants() {
         let hyphen = store_with(&[("profile-name", "internal")]);
         assert_eq!(hyphen.header(EventHeader::ProfileName), Some("internal"));
-        assert_eq!(hyphen.header(EventHeader::ProfileNameUnderscore), None);
+        assert_eq!(hyphen.header(EventHeader::ProfileNameSnake), None);
         assert_eq!(hyphen.profile_name(), Some("internal"));
 
         let underscore = store_with(&[("profile_name", "external")]);
         assert_eq!(underscore.header(EventHeader::ProfileName), None);
         assert_eq!(
-            underscore.header(EventHeader::ProfileNameUnderscore),
+            underscore.header(EventHeader::ProfileNameSnake),
             Some("external")
         );
         assert_eq!(underscore.profile_name(), Some("external"));

@@ -939,7 +939,7 @@ mod tests {
         event.set_header("profile_name", "external");
         assert_eq!(event.header(EventHeader::ProfileName), Some("internal"));
         assert_eq!(
-            event.header(EventHeader::ProfileNameUnderscore),
+            event.header(EventHeader::ProfileNameSnake),
             Some("external")
         );
         assert_eq!(event.profile_name(), Some("internal"));
