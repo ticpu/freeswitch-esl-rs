@@ -933,6 +933,19 @@ mod tests {
     }
 
     #[test]
+    fn set_header_keeps_both_profile_name_spellings() {
+        let mut event = EslEvent::new();
+        event.set_header("profile-name", "internal");
+        event.set_header("profile_name", "external");
+        assert_eq!(event.header(EventHeader::ProfileName), Some("internal"));
+        assert_eq!(
+            event.header(EventHeader::ProfileNameUnderscore),
+            Some("external")
+        );
+        assert_eq!(event.profile_name(), Some("internal"));
+    }
+
+    #[test]
     fn set_header_normalizes_codec_header() {
         let mut event = EslEvent::new();
         event.set_header("channel-read-codec-bit-rate", "128000");

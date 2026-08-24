@@ -618,6 +618,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_sofia_profile_headers_are_spelling_exact() {
+        assert_eq!(
+            "profile-name".parse::<EventHeader>(),
+            Ok(EventHeader::ProfileName)
+        );
+        assert_eq!(
+            "profile_name".parse::<EventHeader>(),
+            Ok(EventHeader::ProfileNameUnderscore)
+        );
+        assert_eq!(
+            "module_name".parse::<EventHeader>(),
+            Ok(EventHeader::ModuleName)
+        );
+        assert_eq!(
+            "profile_uri".parse::<EventHeader>(),
+            Ok(EventHeader::ProfileUri)
+        );
+    }
+
+    #[test]
+    fn normalize_keeps_profile_name_spellings_apart() {
+        assert_eq!(normalize_header_key("profile-name"), "profile-name");
+        assert_eq!(normalize_header_key("PROFILE-NAME"), "profile-name");
+        assert_eq!(normalize_header_key("profile_name"), "profile_name");
+    }
+
+    #[test]
     fn parse_missing_other_leg_headers() {
         // From switch_caller_profile_event_set_data with "Other-Leg" prefix
         assert!("Other-Leg-Direction"

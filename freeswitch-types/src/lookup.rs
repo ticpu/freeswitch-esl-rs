@@ -647,6 +647,40 @@ mod tests {
     }
 
     #[test]
+    fn profile_name_spellings_resolve_distinct_variants() {
+        let hyphen = store_with(&[("profile-name", "internal")]);
+        assert_eq!(hyphen.header(EventHeader::ProfileName), Some("internal"));
+        assert_eq!(hyphen.header(EventHeader::ProfileNameUnderscore), None);
+        assert_eq!(hyphen.profile_name(), Some("internal"));
+
+        let underscore = store_with(&[("profile_name", "external")]);
+        assert_eq!(underscore.header(EventHeader::ProfileName), None);
+        assert_eq!(
+            underscore.header(EventHeader::ProfileNameUnderscore),
+            Some("external")
+        );
+        assert_eq!(underscore.profile_name(), Some("external"));
+    }
+
+    #[test]
+    fn profile_name_probes_hyphen_before_underscore() {
+        let s = store_with(&[("profile-name", "internal"), ("profile_name", "external")]);
+        assert_eq!(s.profile_name(), Some("internal"));
+    }
+
+    #[test]
+    fn module_name_accessor() {
+        let s = store_with(&[("module_name", "mod_sofia")]);
+        assert_eq!(s.module_name(), Some("mod_sofia"));
+    }
+
+    #[test]
+    fn profile_uri_accessor() {
+        let s = store_with(&[("profile_uri", "sip:mod_sofia@192.0.2.1:5060")]);
+        assert_eq!(s.profile_uri(), Some("sip:mod_sofia@192.0.2.1:5060"));
+    }
+
+    #[test]
     fn phrase_accessor() {
         let s = store_with(&[("Phrase", "OK")]);
         assert_eq!(s.phrase(), Some("OK"));
