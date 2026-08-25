@@ -39,7 +39,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), EslError> {
-//!     let listener = TcpListener::bind("0.0.0.0:8040").await
+//!     let listener = TcpListener::bind("[::]:8040").await
 //!         .map_err(EslError::from)?;
 //!
 //!     let (client, mut events) = EslClient::accept_outbound(&listener).await?;
