@@ -1,29 +1,35 @@
 //! Reconnecting ESL client -- production pattern for persistent event listeners.
 //!
-//! Demonstrates the recommended reconnection loop using the library's error
-//! classification. The library never reconnects automatically; instead it
-//! classifies errors so the caller can implement the right policy:
+//! The library never reconnects on its own; it classifies the failure and the
+//! caller sets policy. This example is that policy:
 //!
-//! - **Auth errors** (`AuthenticationFailed`) -- permanent config error, exit
-//!   immediately with `EX_CONFIG` (78) so systemd won't restart.
-//! - **Connection errors** (`is_connection_error()`) -- transient, reconnect
-//!   with exponential backoff.
-//! - **Recoverable errors** (`is_recoverable()`) -- command-level failure,
-//!   connection is still usable.
+//! - **Auth / ACL** (`AuthenticationFailed`, `AccessDenied`) -- permanent
+//!   config error, exit with `EX_CONFIG` (78) so systemd keeps the unit down.
+//! - **Session ended** -- anything but a disconnect we asked for is a reason to
+//!   reconnect, with exponential backoff.
+//! - **Recoverable** (`is_recoverable()`) -- a command failed, the connection
+//!   is still good.
+//!
+//! What it cannot do is recover the events that fired while it was away. See
+//! docs/design-rationale.md on why that makes transparent reconnection unsound
+//! and re-exec the answer for a system of record.
 //!
 //! Usage: RUST_LOG=info cargo run --example reconnecting_client
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use freeswitch_esl_tokio::prelude::*;
 use freeswitch_esl_tokio::{
-    EslClient, EslError, EslEvent, EslEventType, EventFormat, EventSubscription,
-    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    ConnectionStatus, DisconnectReason, EslClient, EslError, EslEvent, EslEventType, EventFormat,
+    EventHeader, EventSubscription, HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
 use tracing::{error, info, warn};
 
 const BACKOFF_INITIAL: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
+
+/// A session that lasted this long counts as healthy, so the next drop starts
+/// backing off from scratch instead of inheriting an old flap's delay.
+const STABLE_SESSION: Duration = Duration::from_secs(60);
 
 /// Liveness threshold. Fed by HEARTBEAT (~20s) when we are allowed to
 /// subscribe; only enabled when that subscription succeeds.
@@ -37,14 +43,21 @@ const EX_CONFIG: i32 = 78;
 async fn main() {
     tracing_subscriber::fmt::init();
 
+    // A bare IPv6 literal works here without brackets: EslClient::connect takes
+    // host and port separately.
     let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = std::env::var("ESL_PORT")
-        .ok()
-        .and_then(|p| {
-            p.parse()
-                .ok()
-        })
-        .unwrap_or(DEFAULT_ESL_PORT);
+    let port = match std::env::var("ESL_PORT") {
+        Ok(value) => match value.parse() {
+            Ok(port) => port,
+            // A typo'd port is a config error, and this binary's whole point is
+            // that config errors exit rather than retry.
+            Err(e) => {
+                error!("ESL_PORT is not a port number: {e}");
+                std::process::exit(EX_CONFIG);
+            }
+        },
+        Err(_) => DEFAULT_ESL_PORT,
+    };
     let password =
         std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
 
@@ -59,46 +72,53 @@ async fn main() {
     let mut backoff = BACKOFF_INITIAL;
 
     loop {
-        info!("connecting to {}:{}", host, port);
+        info!("connecting to {host}:{port}");
+        let started = Instant::now();
 
         match run_session(&host, port, &password, &subscription).await {
-            Ok(()) => {
-                info!("clean disconnect, exiting");
+            // The only ending this process asked for. Everything else means the
+            // session went away under us and has to be rebuilt.
+            Ok(reason @ DisconnectReason::ClientRequested) => {
+                info!("{reason}, exiting");
                 return;
             }
+            Ok(reason) => warn!("session ended: {reason}"),
             Err(EslError::AuthenticationFailed { reason }) => {
-                error!("authentication failed: {}", reason);
+                error!("authentication failed: {reason}");
                 std::process::exit(EX_CONFIG);
             }
             Err(EslError::AccessDenied { reason }) => {
-                error!("access denied (ACL): {}", reason);
+                error!("access denied (ACL): {reason}");
                 std::process::exit(EX_CONFIG);
             }
-            Err(e) if e.is_connection_error() => {
-                warn!("connection lost: {}, retrying in {:?}", e, backoff);
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(BACKOFF_MAX);
-            }
+            Err(e) if e.is_connection_error() => warn!("connection lost: {e}"),
             Err(e) => {
-                error!("unexpected error: {}", e);
+                error!("unexpected error: {e}");
                 std::process::exit(1);
             }
         }
+
+        if started.elapsed() >= STABLE_SESSION {
+            backoff = BACKOFF_INITIAL;
+        }
+        info!("retrying in {backoff:?}");
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(BACKOFF_MAX);
     }
 }
 
-/// Single ESL session: connect, subscribe, process events until disconnect.
+/// One ESL session: connect, subscribe, process events until the stream ends.
+///
+/// Returns why the stream ended. `Err` is reserved for a failure that stopped
+/// the session from running at all, or one the event loop could not absorb.
 async fn run_session(
     host: &str,
     port: u16,
     password: &str,
     subscription: &EventSubscription,
-) -> Result<(), EslError> {
+) -> Result<DisconnectReason, EslError> {
     let (client, mut events) = EslClient::connect(host, port, password).await?;
     info!("connected");
-
-    // Reset backoff on successful connection (caller does this implicitly
-    // by re-entering the loop, but subscribe failure should not reset it).
 
     // apply_subscription sends filters and event commands in one call.
     // The subscription object is reused on every reconnection -- no need
@@ -131,62 +151,62 @@ async fn run_session(
     {
         match result {
             Ok(event) => handle_event(&event),
-            Err(e) if e.is_recoverable() => {
-                warn!("recoverable event error: {}", e);
-            }
+            Err(e) if e.is_recoverable() => warn!("recoverable event error: {e}"),
             Err(e) => return Err(e),
         }
     }
 
-    match events.status() {
-        freeswitch_esl_tokio::ConnectionStatus::Disconnected(reason) => {
-            info!("disconnected: {:?}", reason);
-        }
+    Ok(match events.status() {
+        ConnectionStatus::Disconnected(reason) => reason,
+        // The reader sets a reason before closing the channel, so this is a
+        // library bug rather than a state to model.
         status => {
-            info!("event stream ended with status: {:?}", status);
+            warn!("event stream ended while status was {status:?}");
+            DisconnectReason::ConnectionClosed
         }
-    }
-
-    Ok(())
+    })
 }
 
 fn handle_event(event: &EslEvent) {
     match event.event_type() {
         Some(EslEventType::ChannelAnswer) => {
-            let uuid = event
-                .unique_id()
-                .unwrap_or("?");
+            let uuid = short_uuid(event);
             let caller = event
                 .caller_id_number()
                 .unwrap_or("?");
             let dest = event
                 .destination_number()
                 .unwrap_or("?");
-            info!(
-                "{}: {} -> {} answered",
-                &uuid[..8.min(uuid.len())],
-                caller,
-                dest
-            );
+            info!("{uuid}: {caller} -> {dest} answered");
         }
         Some(EslEventType::ChannelHangupComplete) => {
-            let uuid = event
-                .unique_id()
-                .unwrap_or("?");
-            let cause = event
-                .hangup_cause()
-                .ok()
-                .flatten()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "?".into());
-            info!("{}: hangup ({})", &uuid[..8.min(uuid.len())], cause);
+            let uuid = short_uuid(event);
+            // A cause this crate does not know is a signal, not a blank: it
+            // means FreeSWITCH grew one, and collapsing it into "?" is how
+            // nobody ever finds out.
+            match event.hangup_cause() {
+                Ok(Some(cause)) => info!("{uuid}: hangup ({cause})"),
+                Ok(None) => info!("{uuid}: hangup (no cause header)"),
+                Err(e) => warn!("{uuid}: hangup with unparseable cause: {e}"),
+            }
         }
         Some(EslEventType::Heartbeat) => {
             let sessions = event
                 .header(EventHeader::SessionCount)
                 .unwrap_or("?");
-            info!("heartbeat, sessions: {}", sessions);
+            info!("heartbeat, sessions: {sessions}");
         }
         _ => {}
     }
+}
+
+/// First segment of the channel UUID, which is enough to correlate log lines.
+fn short_uuid(event: &EslEvent) -> &str {
+    event
+        .unique_id()
+        .map_or("?", |uuid| {
+            uuid.split('-')
+                .next()
+                .unwrap_or(uuid)
+        })
 }

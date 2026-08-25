@@ -1,111 +1,134 @@
-//! Example outbound ESL server
+//! Outbound ESL: FreeSWITCH connects to you, and you drive the call.
 //!
-//! This example shows how to accept outbound connections from FreeSWITCH
-//! and handle call control.
+//! Point a dialplan extension at this listener:
+//!
+//! ```xml
+//! <action application="socket" data="127.0.0.1:8040 async full"/>
+//! ```
+//!
+//! `async full` is load-bearing. Without `full`, a session is limited to
+//! connect / myevents / getvar / resume / filter / sendmsg, so `linger` and the
+//! `event` command are refused. See docs/outbound-esl-quirks.md.
 //!
 //! Usage: cargo run --example outbound_server
-//!
-//! To test this, configure FreeSWITCH with:
-//! <action application="socket" data="localhost:8040 async full"/>
+//!        ESL_BIND=127.0.0.1:8040 cargo run --example outbound_server
 
-use freeswitch_esl_tokio::{AppCommand, EslClient, EslEventType, EventFormat, EventHeader};
+use freeswitch_esl_tokio::{
+    AppCommand, EslClient, EslError, EslEventStream, EslEventType, EventFormat, EventHeader,
+    HangupCause, HeaderLookup,
+};
+use std::time::Duration;
 use tokio::net::TcpListener;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+/// A caller leaning on a key would otherwise grow the buffer without bound.
+const MAX_DTMF_DIGITS: usize = 16;
+
+/// Resource exhaustion (EMFILE) fails `accept` again immediately, which would
+/// fill the log with one repeated line.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let bind_addr = "0.0.0.0:8040";
-    info!("Starting outbound ESL server on {}", bind_addr);
-
-    let listener = TcpListener::bind(bind_addr).await?;
-    info!("Listening for outbound connections from FreeSWITCH...");
+    // `[::]` accepts both families on a dual-stack host; `0.0.0.0` is IPv4 only.
+    let bind_addr = std::env::var("ESL_BIND").unwrap_or_else(|_| "[::]:8040".to_string());
+    let listener = TcpListener::bind(&bind_addr).await?;
+    info!("outbound ESL server listening on {bind_addr}");
 
     loop {
         match EslClient::accept_outbound(&listener).await {
             Ok((client, mut events)) => {
-                info!("Accepted new outbound connection");
                 tokio::spawn(async move {
                     if let Err(e) = handle_call(&client, &mut events).await {
-                        error!("Error handling call: {}", e);
+                        error!("call failed: {e}");
                     }
                 });
             }
+            // One connection failing to come up is not a reason to stop
+            // serving the rest.
             Err(e) => {
-                error!("Failed to accept connection: {}", e);
-                break;
+                warn!("outbound accept failed: {e}");
+                tokio::time::sleep(ACCEPT_BACKOFF).await;
             }
         }
     }
-
-    Ok(())
 }
 
-async fn handle_call(
-    client: &EslClient,
-    events: &mut freeswitch_esl_tokio::EslEventStream,
-) -> Result<(), freeswitch_esl_tokio::EslError> {
-    info!("Handling new call...");
-
-    let connect_resp = client
+async fn handle_call(client: &EslClient, events: &mut EslEventStream) -> Result<(), EslError> {
+    // `connect` must be the first command on an outbound socket. Its reply
+    // carries the whole channel as headers, so HeaderLookup's typed accessors
+    // work on it directly.
+    let channel_data = client
         .connect_session()
-        .await?;
-    let channel = connect_resp
-        .header(EventHeader::ChannelName)
-        .unwrap_or("(unknown)");
-    info!("Session established: {}", channel);
+        .await?
+        .into_result()?;
+    let Some(channel) = channel_data.channel_name() else {
+        return Err(EslError::MissingHeader {
+            header: EventHeader::ChannelName
+                .as_str()
+                .to_string(),
+        });
+    };
+    info!("session established: {channel}");
 
+    // myevents scopes delivery to this session. `subscribe_events` would send
+    // the `event` command, which is switch-wide: this IVR would then answer on
+    // another call's CHANNEL_ANSWER and collect another call's DTMF.
     client
-        .subscribe_events(
-            EventFormat::Plain,
-            &[
-                EslEventType::ChannelAnswer,
-                EslEventType::ChannelHangup,
-                EslEventType::Dtmf,
-                EslEventType::PlaybackStart,
-                EslEventType::PlaybackStop,
-            ],
-        )
+        .myevents(EventFormat::Plain)
+        .await?;
+    // Keep the socket up past hangup so the closing events still arrive.
+    client
+        .linger(None)
         .await?;
 
-    info!("Answering call...");
     client
         .send_command(AppCommand::answer())
-        .await?;
+        .await?
+        .into_result()?;
 
-    while let Some(result) = events
-        .recv()
-        .await
-    {
-        let event = match result {
-            Ok(event) => event,
-            Err(e) => {
-                error!("Event error: {}", e);
-                continue;
-            }
-        };
-        debug!("Received event: {:?}", event.event_type());
-
-        match event.event_type() {
-            Some(EslEventType::ChannelAnswer) => {
-                info!("Call answered successfully");
-                break;
-            }
-            Some(EslEventType::ChannelHangup) => {
-                info!("Call hung up before answer");
-                return Ok(());
-            }
-            _ => continue,
-        }
+    if !wait_for_answer(events).await {
+        info!("caller hung up before answer");
+        return Ok(());
     }
 
-    info!("Playing greeting message...");
     client
         .send_command(AppCommand::playback("ivr/ivr-welcome.wav"))
-        .await?;
+        .await?
+        .into_result()?;
 
-    let mut dtmf_buffer = String::new();
+    collect_digits(client, events).await
+}
+
+/// `true` once the channel answered, `false` if it went away first.
+async fn wait_for_answer(events: &mut EslEventStream) -> bool {
+    while let Some(result) = events
+        .recv()
+        .await
+    {
+        let event = match result {
+            Ok(event) => event,
+            Err(e) => {
+                warn!("event error: {e}");
+                continue;
+            }
+        };
+        match event.event_type() {
+            Some(EslEventType::ChannelAnswer) => return true,
+            Some(EslEventType::ChannelHangup) => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+async fn collect_digits(client: &EslClient, events: &mut EslEventStream) -> Result<(), EslError> {
+    let mut digits = String::new();
+    // The prompt is itself a playback, so its own PLAYBACK_STOP would re-issue
+    // it forever. Only the greeting's stop opens the prompt.
+    let mut prompted = false;
 
     while let Some(result) = events
         .recv()
@@ -114,36 +137,30 @@ async fn handle_call(
         let event = match result {
             Ok(event) => event,
             Err(e) => {
-                error!("Event error: {}", e);
+                warn!("event error: {e}");
                 continue;
             }
         };
-        debug!("Received event: {:?}", event.event_type());
 
         match event.event_type() {
             Some(EslEventType::ChannelHangup) => {
-                info!("Call hung up");
-                break;
+                info!("caller hung up");
+                return Ok(());
             }
-            Some(EslEventType::PlaybackStop) => {
-                info!("Playback finished");
-                client
-                    .send_command(AppCommand::playback(
-                        "ivr/ivr-please_enter_extension_followed_by_pound.wav",
-                    ))
-                    .await?;
+            Some(EslEventType::PlaybackStop) if !prompted => {
+                prompted = true;
+                prompt_for_extension(client).await?;
             }
             Some(EslEventType::Dtmf) => {
-                if let Some(digit) = event.header(EventHeader::DtmfDigit) {
-                    info!("Received DTMF: {}", digit);
-
-                    if digit == "#" {
-                        info!("User entered: {}", dtmf_buffer);
-                        handle_dtmf_input(client, &dtmf_buffer).await?;
-                        dtmf_buffer.clear();
-                    } else {
-                        dtmf_buffer.push_str(digit);
-                    }
+                let Some(digit) = event.header(EventHeader::DtmfDigit) else {
+                    continue;
+                };
+                debug!("DTMF: {digit}");
+                if digit == "#" {
+                    handle_dtmf_input(client, &digits).await?;
+                    digits.clear();
+                } else if digits.len() < MAX_DTMF_DIGITS {
+                    digits.push_str(digit);
                 }
             }
             _ => {}
@@ -153,61 +170,61 @@ async fn handle_call(
     Ok(())
 }
 
-async fn handle_dtmf_input(
-    client: &EslClient,
-    input: &str,
-) -> Result<(), freeswitch_esl_tokio::EslError> {
-    info!("Processing DTMF input: {}", input);
+async fn prompt_for_extension(client: &EslClient) -> Result<(), EslError> {
+    client
+        .send_command(AppCommand::playback(
+            "ivr/ivr-please_enter_extension_followed_by_pound.wav",
+        ))
+        .await?
+        .into_result()
+        .map(|_| ())
+}
 
+async fn handle_dtmf_input(client: &EslClient, input: &str) -> Result<(), EslError> {
     match input {
         "1000" | "1001" | "1002" | "1003" => {
-            info!("Transferring to extension: {}", input);
+            info!("transferring to extension {input}");
             client
                 .send_command(AppCommand::playback("ivr/ivr-hold_connect_call.wav"))
-                .await?;
+                .await?
+                .into_result()?;
             client
                 .send_command(AppCommand::transfer(input, None, None))
-                .await?;
+                .await?
+                .into_result()?;
         }
         "0" => {
-            info!("Transferring to operator");
+            info!("transferring to operator");
             client
                 .send_command(AppCommand::playback("ivr/ivr-hold_connect_call.wav"))
-                .await?;
+                .await?
+                .into_result()?;
             client
                 .send_command(AppCommand::transfer("operator", None, None))
-                .await?;
+                .await?
+                .into_result()?;
         }
         "9" => {
-            info!("Hanging up call per user request");
+            info!("hanging up at caller request");
             client
                 .send_command(AppCommand::playback("voicemail/vm-goodbye.wav"))
-                .await?;
+                .await?
+                .into_result()?;
             client
-                .send_command(AppCommand::hangup(Some(
-                    freeswitch_esl_tokio::HangupCause::NormalClearing,
-                )))
-                .await?;
+                .send_command(AppCommand::hangup(Some(HangupCause::NormalClearing)))
+                .await?
+                .into_result()?;
         }
-        "" => {
-            client
-                .send_command(AppCommand::playback(
-                    "ivr/ivr-please_enter_extension_followed_by_pound.wav",
-                ))
-                .await?;
-        }
+        "" => prompt_for_extension(client).await?,
         _ => {
-            info!("Invalid extension: {}", input);
+            info!("invalid extension: {input}");
             client
                 .send_command(AppCommand::playback(
                     "ivr/ivr-that_was_an_invalid_entry.wav",
                 ))
-                .await?;
-            client
-                .send_command(AppCommand::playback(
-                    "ivr/ivr-please_enter_extension_followed_by_pound.wav",
-                ))
-                .await?;
+                .await?
+                .into_result()?;
+            prompt_for_extension(client).await?;
         }
     }
 
