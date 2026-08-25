@@ -1,17 +1,18 @@
-//! Example ESL event listener
+//! Subscribe to FreeSWITCH events and track calls as they happen.
 //!
-//! This example shows how to subscribe to FreeSWITCH events and process them.
+//! The event loop is the other half of ESL: `inbound_client` shows commands and
+//! their replies, this shows the stream FreeSWITCH pushes at you.
 //!
 //! Usage: cargo run --example event_listener
 //!        cargo run --example event_listener -- -d    # dump raw wire data to stdout
 
 use freeswitch_esl_tokio::{
-    EslClient, EslError, EslEventType, EventFormat, EventHeader, EventSubscription, HeaderLookup,
-    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    EslClient, EslError, EslEvent, EslEventType, EventFormat, EventHeader, EventSubscription,
+    HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
 use std::collections::HashMap;
 use std::io::Write;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,31 +23,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_writer(std::io::stderr)
         .init();
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = std::env::var("ESL_PORT")
-        .ok()
-        .and_then(|p| {
-            p.parse()
-                .ok()
-        })
-        .unwrap_or(DEFAULT_ESL_PORT);
+    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port: u16 = match std::env::var("ESL_PORT") {
+        Ok(value) => value.parse()?,
+        Err(_) => DEFAULT_ESL_PORT,
+    };
     let password =
         std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
 
     let (client, mut events) = match EslClient::connect(&host, port, &password).await {
-        Ok(pair) => {
-            info!("Successfully connected to FreeSWITCH");
-            pair
-        }
+        Ok(pair) => pair,
         Err(EslError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-            error!("Failed to connect to FreeSWITCH (ESL_HOST/ESL_PORT to override)");
+            error!("nothing listening on {host}:{port} (set ESL_HOST / ESL_PORT)");
             return Err(e.into());
         }
-        Err(e) => {
-            error!("Failed to connect: {}", e);
-            return Err(e.into());
-        }
+        Err(e) => return Err(e.into()),
     };
+    info!("connected to {host}:{port}");
 
     // Build an EventSubscription describing everything we want to receive.
     // apply_subscription() sends filters and the event command in one call.
@@ -57,19 +50,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .events(EslEventType::CHANNEL_EVENTS)
             .event(EslEventType::Dtmf)
             .event(EslEventType::Heartbeat)
-            .event(EslEventType::BackgroundJob)
     };
-
-    info!("Subscribing to events...");
     client
         .apply_subscription(&subscription)
         .await?;
 
     let mut active_calls: HashMap<String, CallInfo> = HashMap::new();
     let mut event_count = 0u64;
-    let stdout = std::io::stdout();
+    let mut stdout = std::io::stdout();
 
-    info!("Listening for events... Press Ctrl+C to exit");
+    info!("listening for events, Ctrl+C to exit");
 
     while let Some(result) = events
         .recv()
@@ -78,28 +68,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let event = match result {
             Ok(event) => event,
             Err(e) => {
-                error!("Event error: {}", e);
+                error!("event error: {e}");
                 continue;
             }
         };
         event_count += 1;
-        debug!("Received event #{}: {:?}", event_count, event.event_type());
 
         if dump_raw {
-            let mut out = stdout.lock();
-            let _ = out.write_all(
+            // A closed or broken stdout is the end of the run, not something to
+            // keep writing past: the dump is what this mode is for.
+            stdout.write_all(
                 event
                     .to_plain_format()
                     .as_bytes(),
-            );
+            )?;
         }
 
-        if let Err(e) = process_event(&event, &mut active_calls) {
-            error!("Error processing event: {}", e);
-        }
+        process_event(&event, &mut active_calls);
     }
 
-    info!("Connection closed, total events: {}", event_count);
+    if dump_raw {
+        stdout.flush()?;
+    }
+    info!("connection closed, {event_count} events seen");
     client
         .disconnect()
         .await?;
@@ -107,112 +98,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn process_event(
-    event: &freeswitch_esl_tokio::EslEvent,
-    active_calls: &mut HashMap<String, CallInfo>,
-) -> Result<(), EslError> {
+fn process_event(event: &EslEvent, active_calls: &mut HashMap<String, CallInfo>) {
+    // HEARTBEAT describes the switch, not a channel, so it is answered before
+    // the UUID every other arm here needs.
+    if event.event_type() == Some(EslEventType::Heartbeat) {
+        if let Some(sessions) = event.header(EventHeader::SessionCount) {
+            info!("heartbeat, sessions: {sessions}");
+        }
+        return;
+    }
+
+    let Some(uuid) = event.unique_id() else {
+        return;
+    };
+
     match event.event_type() {
         Some(EslEventType::ChannelCreate) => {
-            if let Some(uuid) = event.unique_id() {
-                let caller_id = event
-                    .caller_id_number()
-                    .unwrap_or("Unknown");
-                let destination = event
-                    .header(EventHeader::CallerDestinationNumber)
-                    .unwrap_or("Unknown");
-                let direction = match event.call_direction() {
-                    Ok(Some(d)) => d.to_string(),
-                    Ok(None) => "Unknown".into(),
-                    Err(e) => format!("!ERR({})", e),
-                };
+            let caller_id = event
+                .caller_id_number()
+                .unwrap_or("unknown");
+            let destination = event
+                .destination_number()
+                .unwrap_or("unknown");
+            // A direction that fails to parse is FreeSWITCH sending something
+            // this crate does not know, which is worth seeing, not hiding.
+            match event.call_direction() {
+                Ok(Some(direction)) => {
+                    info!("new call: {caller_id} -> {destination} ({direction})")
+                }
+                Ok(None) => info!("new call: {caller_id} -> {destination}"),
+                Err(e) => warn!("new call: {caller_id} -> {destination}, bad direction: {e}"),
+            }
 
-                let call_info = CallInfo {
+            active_calls.insert(
+                uuid.to_string(),
+                CallInfo {
                     caller_id: caller_id.to_string(),
                     start_time: std::time::Instant::now(),
                     answered_time: None,
-                };
-
-                info!("New call: {} -> {} ({})", caller_id, destination, direction);
-                active_calls.insert(uuid.to_string(), call_info);
-            }
+                },
+            );
         }
         Some(EslEventType::ChannelAnswer) => {
-            if let Some(uuid) = event.unique_id() {
-                if let Some(call_info) = active_calls.get_mut(uuid) {
-                    call_info.answered_time = Some(std::time::Instant::now());
-                    let duration = call_info
-                        .start_time
-                        .elapsed();
-                    info!(
-                        "Call answered: {} (ring time: {:.2}s)",
-                        call_info.caller_id,
-                        duration.as_secs_f64()
-                    );
-                }
+            if let Some(call_info) = active_calls.get_mut(uuid) {
+                call_info.answered_time = Some(std::time::Instant::now());
+                let ring = call_info
+                    .start_time
+                    .elapsed();
+                info!(
+                    "answered: {} (ring {:.2}s)",
+                    call_info.caller_id,
+                    ring.as_secs_f64()
+                );
             }
         }
         Some(EslEventType::ChannelHangup) => {
-            if let Some(uuid) = event.unique_id() {
-                if let Some(call_info) = active_calls.get(uuid) {
-                    let cause = match event.hangup_cause() {
-                        Ok(Some(c)) => c.to_string(),
-                        _ => "UNKNOWN".into(),
-                    };
-                    let talk_time = call_info
-                        .answered_time
-                        .map(|t| t.elapsed());
-
-                    if let Some(talk_duration) = talk_time {
-                        info!(
-                            "Call ended: {} (cause: {}, talk time: {:.2}s)",
-                            call_info.caller_id,
-                            cause,
-                            talk_duration.as_secs_f64()
-                        );
-                    } else {
-                        info!(
-                            "Call ended: {} (cause: {}, not answered)",
-                            call_info.caller_id, cause
-                        );
-                    }
+            let Some(call_info) = active_calls.get(uuid) else {
+                return;
+            };
+            let cause = match event.hangup_cause() {
+                Ok(Some(cause)) => cause.to_string(),
+                Ok(None) => "no cause header".to_string(),
+                // FreeSWITCH grew a cause this crate does not carry yet.
+                Err(e) => {
+                    warn!("{uuid}: unparseable hangup cause: {e}");
+                    return;
                 }
+            };
+            match call_info
+                .answered_time
+                .map(|t| t.elapsed())
+            {
+                Some(talk) => info!(
+                    "ended: {} ({cause}, talk {:.2}s)",
+                    call_info.caller_id,
+                    talk.as_secs_f64()
+                ),
+                None => info!("ended: {} ({cause}, never answered)", call_info.caller_id),
             }
         }
         Some(EslEventType::ChannelHangupComplete) => {
-            if let Some(uuid) = event.unique_id() {
-                active_calls.remove(uuid);
-                debug!("Cleaned up call: {}", uuid);
-            }
+            active_calls.remove(uuid);
         }
         Some(EslEventType::Dtmf) => {
-            if let (Some(uuid), Some(digit)) =
-                (event.unique_id(), event.header(EventHeader::DtmfDigit))
-            {
-                info!("DTMF: {} pressed '{}'", uuid, digit);
+            if let Some(digit) = event.header(EventHeader::DtmfDigit) {
+                info!("{uuid}: DTMF '{digit}'");
             }
         }
-        Some(EslEventType::Heartbeat) => {
-            if let Some(sessions) = event.header(EventHeader::SessionCount) {
-                info!("Heartbeat - active sessions: {}", sessions);
-            }
-        }
-        Some(EslEventType::BackgroundJob) => {
-            if let Some(job_uuid) = event.job_uuid() {
-                info!("Background job completed: {}", job_uuid);
-                if let Some(body) = event.body() {
-                    debug!("Job result: {}", body);
-                }
-            }
-        }
-        _ => {
-            debug!("Ignoring event type: {:?}", event.event_type());
-        }
+        other => debug!("ignoring {other:?}"),
     }
-
-    Ok(())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct CallInfo {
     caller_id: String,
     start_time: std::time::Instant,
