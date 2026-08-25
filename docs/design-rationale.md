@@ -257,6 +257,13 @@ allocating on every lookup — one extra hash probe in the fallback path.
 The alias map is derived state (`#[serde(skip)]`), rebuilt during
 deserialization by routing all headers through `set_header()`.
 
+### Two spellings of one field are two keys
+
+mod_sofia emits one logical field under both a hyphen and an underscore
+spelling, so each is its own variant and normalization never folds one into the
+other. A `HeaderLookup` accessor unions them where the caller wants the field
+rather than the key.
+
 ## Command builders as pure Display types
 
 Command builders in `commands/`, `app/`, and `variables/` implement `Display`
