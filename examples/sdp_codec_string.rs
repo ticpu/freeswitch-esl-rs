@@ -12,14 +12,14 @@
 //!   cargo run --example sdp_codec_string --features sdp
 //!
 //! Connection (all optional, these are the defaults):
-//!   ESL_HOST=localhost  ESL_PORT=8021  ESL_PASSWORD=ClueCon
+//!   ESL_HOST=127.0.0.1  ESL_PORT=8021  ESL_PASSWORD=ClueCon
 
 use freeswitch_esl_tokio::sdp::{
     default_rate, CodecImplementation, CodecString, CodecStringOptions, SdpCodecEntry, SdpCodecs,
     SdpWarning,
 };
 use freeswitch_esl_tokio::{
-    ChannelVariable, EslClient, EslError, EslEventType, EventFormat, EventSubscription,
+    ChannelVariable, EslClient, EslError, EslEventType, EslResult, EventFormat, EventSubscription,
     HeaderLookup, UuidSetVar, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
 use tracing::{error, info, warn};
@@ -56,14 +56,11 @@ fn loaded_implementations() -> Vec<CodecImplementation> {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = std::env::var("ESL_PORT")
-        .ok()
-        .and_then(|p| {
-            p.parse()
-                .ok()
-        })
-        .unwrap_or(DEFAULT_ESL_PORT);
+    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port: u16 = match std::env::var("ESL_PORT") {
+        Ok(value) => value.parse()?,
+        Err(_) => DEFAULT_ESL_PORT,
+    };
     let password =
         std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
 
@@ -121,16 +118,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sdp_str = match event.variable(ChannelVariable::SwitchRSdp) {
             Some(s) => s.to_string(),
             None => {
-                // uuid is a FreeSWITCH UUID (ASCII hex + dashes), but slice indexing
-                // panics on a non-ASCII char boundary. Use char-safe truncation.
-                let short: String = uuid
-                    .chars()
-                    .take(8)
-                    .collect();
-                warn!(
-                    "{}: no switch_r_sdp -- call was not an INVITE with body SDP",
-                    short
-                );
+                let short = short_uuid(&uuid);
+                warn!("{short}: no switch_r_sdp -- call was not an INVITE with body SDP");
                 continue;
             }
         };
@@ -152,12 +141,7 @@ async fn handle_answered_channel(
     backup: &CodecString,
     inventory: &[CodecImplementation],
 ) {
-    // uuid is a FreeSWITCH UUID (ASCII hex + dashes), but slice indexing panics on
-    // a non-ASCII char boundary. Collect the first 8 chars instead.
-    let short: String = uuid
-        .chars()
-        .take(8)
-        .collect();
+    let short = short_uuid(uuid);
 
     // SdpCodecs::parse fails only on structural breakage: missing v=, malformed
     // a=rtpmap, non-numeric payload type. Unknown codecs with no a=rtpmap go to
@@ -304,49 +288,12 @@ async fn handle_answered_channel(
     }
     println!("{}: final codec string: {}", short, codec_string);
 
-    // Set absolute_codec_string. This variable takes precedence over codec_string
-    // and ep_codec_string and takes effect on the next SDP offer this leg generates.
-    //
-    // Delivery path: uuid_setvar splits its argument string on spaces and honours
-    // single-quote grouping. AMR format-parameter strings routinely contain "; "
-    // with a space (e.g. "octet-align=1; mode-set=0,1,2"), so an unquoted value
-    // would be truncated at the first space. Single-quoting prevents that split.
-    // UuidSetVar's Display does not add quotes itself -- it is a bare wire builder --
-    // so the quoting is this caller's job, same as it would be for any other consumer
-    // of the typed command.
-    let quoted = format!("'{}'", escape_for_setvar(&codec_string.to_string()));
-    let cmd = UuidSetVar::new(
-        uuid,
-        ChannelVariable::AbsoluteCodecString.to_string(),
-        quoted,
-    );
-    match client
-        .api(&cmd.to_string())
-        .await
-    {
-        Ok(resp) => {
-            if let Err(e) = resp.into_result() {
-                warn!(
-                    "{}: uuid_setvar {} failed: {}",
-                    short,
-                    ChannelVariable::AbsoluteCodecString,
-                    e
-                );
-            } else {
-                info!(
-                    "{}: {} set: {}",
-                    short,
-                    ChannelVariable::AbsoluteCodecString,
-                    codec_string,
-                );
-            }
-        }
-        Err(e) => warn!(
-            "{}: api error setting {}: {}",
-            short,
-            ChannelVariable::AbsoluteCodecString,
-            e
-        ),
+    // absolute_codec_string takes precedence over codec_string and
+    // ep_codec_string, and takes effect on the next SDP offer this leg generates.
+    let name = ChannelVariable::AbsoluteCodecString;
+    match set_channel_var(client, uuid, name, &codec_string.to_string()).await {
+        Ok(()) => info!("{short}: {name} set: {codec_string}"),
+        Err(e) => warn!("{short}: {name} not set: {e}"),
     }
 
     // rtp_force_audio_fmtp: the offer's a=fmtp for whichever codec ended up first
@@ -368,45 +315,10 @@ async fn handle_answered_channel(
             .rate()
             .unwrap_or_else(|| default_rate(first.name()));
         if let Some(fmtp) = parsed.fmtp_for(first.name(), rate) {
-            // uuid_setvar splits on spaces and processes \ escapes even inside single
-            // quotes (cleanup_separated_string). Escape ' and \
-            // in the raw peer fmtp before wrapping in single quotes: unescaped '
-            // toggles quote state (corrupting the argument boundary) and unescaped \
-            // consumes the next char. \n is line-split out of wire headers so it
-            // cannot appear here.
-            let safe_fmtp = format!("'{}'", escape_for_setvar(fmtp));
-            let fmtp_cmd = UuidSetVar::new(
-                uuid,
-                ChannelVariable::RtpForceAudioFmtp.to_string(),
-                safe_fmtp,
-            );
-            match client
-                .api(&fmtp_cmd.to_string())
-                .await
-            {
-                Ok(resp) => {
-                    if let Err(e) = resp.into_result() {
-                        warn!(
-                            "{}: uuid_setvar {} failed: {}",
-                            short,
-                            ChannelVariable::RtpForceAudioFmtp,
-                            e
-                        );
-                    } else {
-                        info!(
-                            "{}: {} set: {}",
-                            short,
-                            ChannelVariable::RtpForceAudioFmtp,
-                            fmtp,
-                        );
-                    }
-                }
-                Err(e) => warn!(
-                    "{}: api error setting {}: {}",
-                    short,
-                    ChannelVariable::RtpForceAudioFmtp,
-                    e
-                ),
+            let name = ChannelVariable::RtpForceAudioFmtp;
+            match set_channel_var(client, uuid, name, fmtp).await {
+                Ok(()) => info!("{short}: {name} set: {fmtp}"),
+                Err(e) => warn!("{short}: {name} not set: {e}"),
             }
         }
     }
@@ -447,10 +359,46 @@ async fn handle_answered_channel(
     );
 }
 
+/// Enough of the UUID to correlate log lines.
+///
+/// Truncation is by character, not by byte: a value that came off the wire may
+/// have decoded lossily, and slicing a multi-byte replacement in half panics.
+fn short_uuid(uuid: &str) -> String {
+    uuid.chars()
+        .take(8)
+        .collect()
+}
+
+/// Set a channel variable through `uuid_setvar`.
+///
+/// uuid_setvar splits its argument string on spaces and honours single-quote
+/// grouping, and an AMR format-parameter string routinely carries `"; "` with a
+/// space, so an unquoted value is truncated at the first one. `UuidSetVar`'s
+/// `Display` is a bare wire builder and adds no quotes, so quoting is this
+/// caller's job -- as it would be for any other consumer of the typed command.
+///
+/// The reply is read with `api_result()`: the channel can hang up between the
+/// event and this write, and `-ERR No such channel!` arrives in the body.
+async fn set_channel_var(
+    client: &EslClient,
+    uuid: &str,
+    name: ChannelVariable,
+    value: &str,
+) -> EslResult<()> {
+    let quoted = format!("'{}'", escape_for_setvar(value));
+    let cmd = UuidSetVar::new(uuid, name.to_string(), quoted);
+    client
+        .api(&cmd.to_string())
+        .await?
+        .api_result()?;
+    Ok(())
+}
+
 /// Escape `'` and `\` in a value before wrapping it in single quotes for `uuid_setvar`.
 ///
 /// `uuid_setvar` uses `cleanup_separated_string` with a space delimiter.
 /// That function processes `\` escapes even inside a `'...'` region:
+///
 /// - `\'` prevents the `'` from toggling the quoting state (argument boundary corruption).
 /// - `\\` prevents the `\` from consuming the next character.
 fn escape_for_setvar(s: &str) -> String {
