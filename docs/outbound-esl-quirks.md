@@ -33,6 +33,26 @@ The `full` flag is set from the socket application data:
 Without `full`, you only have: `connect`, `myevents`, `getvar`, `resume`,
 `filter`, `divert_events`, `sendmsg`.
 
+A command skipped by that early-out leaves the reply empty, and the `done:`
+label fills an empty reply with `-ERR command not found`. So a blocked command
+on a non-`full` socket is not spelled `-ERR permission denied` and
+`EslError::is_permission_denied()` does not answer for it — it is
+indistinguishable on the wire from a command mod_event_socket never heard of.
+
+## `myevents` scopes delivery; `event` does not
+
+Every listener joins the global list, outbound included, and the event
+dispatcher matches on the subscription alone. `LFLAG_MYEVENTS`, set only by
+`myevents`, is what adds the session check — it compares the event's `unique-id`
+against the listener's session and drops what does not match. An outbound
+session that subscribes with the `event` command therefore receives every other
+call's events, and an IVR built on it answers and collects DTMF for calls that
+are not its own.
+
+An event carrying no `unique-id` is dropped under `LFLAG_MYEVENTS` too, unless
+its `Job-Owner-UUID` names the session — which is how a `myevents` session still
+receives the `BACKGROUND_JOB` results of its own `bgapi` commands.
+
 The `connect_session()` response confirms the mode via headers:
 
 - `Control: full` vs `Control: single-channel`

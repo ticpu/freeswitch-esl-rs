@@ -26,6 +26,10 @@ use indexmap::IndexMap;
 /// Returns [`EslError::ProtocolError`] if the body is empty after
 /// stripping.
 ///
+/// A command that wrote nothing is given a fixed unprefixed message rather than
+/// an empty body, so it arrives here as ordinary output. Nothing distinguishes
+/// it from a query that legitimately answered with prose.
+///
 /// This is the same parser used by [`EslResponse::api_result`]. Use it
 /// directly on [`EslEvent::body`](freeswitch_types::EslEvent::body) for
 /// `BACKGROUND_JOB` results:
