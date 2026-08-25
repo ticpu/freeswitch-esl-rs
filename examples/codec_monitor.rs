@@ -4,83 +4,141 @@
 //! channel. Each event carries `Channel-Read-Codec-Bit-Rate` and `Channel-Write-Codec-Bit-Rate`
 //! as event headers (these are NOT channel variables -- `uuid_getvar` cannot retrieve them).
 //!
-//! This example subscribes to CODEC, CHANNEL_ANSWER, and CHANNEL_BRIDGE events to show:
+//! This example follows CODEC, CHANNEL_ANSWER and the bridge lifecycle to show:
 //! - Initial codec negotiation (on answer)
-//! - Codec changes mid-call (re-INVITE, ofer/answer renegotiation)
-//! - Bridge pairs with mismatched codecs (transcoding detection)
+//! - Codec changes mid-call (re-INVITE, offer/answer renegotiation)
+//! - Bridge pairs that transcode rather than pass through
 //!
 //! Limitation: for AMR-WB, `bits_per_second` reflects the SDP-negotiated rate, not per-frame
 //! mode changes. AMR-WB can switch modes frame-by-frame without firing a new CODEC event.
 //!
-//! Usage: RUST_LOG=info cargo run --example codec_monitor [-- [host[:port]] [password]]
+//! Usage: RUST_LOG=info cargo run --example codec_monitor
+//!   Configure via ESL_HOST, ESL_PORT, ESL_PASSWORD env vars.
 
 use std::collections::HashMap;
+use std::fmt;
 
 use freeswitch_esl_tokio::{
-    EslClient, EslError, EslEventType, EventFormat, EventHeader, HeaderLookup,
+    EslClient, EslError, EslEvent, EslEventType, EventFormat, EventHeader, HeaderLookup,
     DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
 use tracing::{error, info, warn};
 
-fn short_uuid(uuid: &str) -> &str {
-    &uuid[..8.min(uuid.len())]
+/// Enough of the UUID to correlate log lines, truncated by character: a value
+/// off the wire may have decoded lossily, and slicing a replacement in half
+/// panics.
+fn short_uuid(uuid: &str) -> String {
+    uuid.chars()
+        .take(8)
+        .collect()
 }
 
-struct CodecInfo {
-    read_codec: String,
-    read_rate: String,
-    read_bitrate: String,
-    write_codec: String,
-    write_rate: String,
-    write_bitrate: String,
+/// One direction's negotiated codec. A `None` field means the event did not
+/// carry that header, which is not the same as a codec whose name is `-`.
+#[derive(PartialEq, Eq)]
+struct Codec {
+    name: Option<String>,
+    rate: Option<String>,
+    bitrate: Option<String>,
 }
 
-impl CodecInfo {
-    fn from_event(event: &freeswitch_esl_tokio::EslEvent) -> Self {
+impl Codec {
+    fn read_from(event: &EslEvent) -> Self {
+        Self::from_headers(
+            event,
+            EventHeader::ChannelReadCodecName,
+            EventHeader::ChannelReadCodecRate,
+            EventHeader::ChannelReadCodecBitRate,
+        )
+    }
+
+    fn write_from(event: &EslEvent) -> Self {
+        Self::from_headers(
+            event,
+            EventHeader::ChannelWriteCodecName,
+            EventHeader::ChannelWriteCodecRate,
+            EventHeader::ChannelWriteCodecBitRate,
+        )
+    }
+
+    fn from_headers(
+        event: &EslEvent,
+        name: EventHeader,
+        rate: EventHeader,
+        bitrate: EventHeader,
+    ) -> Self {
         Self {
-            read_codec: event
-                .header(EventHeader::ChannelReadCodecName)
-                .unwrap_or("-")
-                .to_string(),
-            read_rate: event
-                .header(EventHeader::ChannelReadCodecRate)
-                .unwrap_or("-")
-                .to_string(),
-            read_bitrate: event
-                .header(EventHeader::ChannelReadCodecBitRate)
-                .unwrap_or("-")
-                .to_string(),
-            write_codec: event
-                .header(EventHeader::ChannelWriteCodecName)
-                .unwrap_or("-")
-                .to_string(),
-            write_rate: event
-                .header(EventHeader::ChannelWriteCodecRate)
-                .unwrap_or("-")
-                .to_string(),
-            write_bitrate: event
-                .header(EventHeader::ChannelWriteCodecBitRate)
-                .unwrap_or("-")
-                .to_string(),
+            name: event
+                .header(name)
+                .map(str::to_string),
+            rate: event
+                .header(rate)
+                .map(str::to_string),
+            bitrate: event
+                .header(bitrate)
+                .map(str::to_string),
         }
     }
 
-    fn is_transcoding_with(&self, other: &CodecInfo) -> bool {
-        self.read_codec != other.read_codec
-            || self.read_rate != other.read_rate
-            || self.read_bitrate != other.read_bitrate
+    fn is_known(&self) -> bool {
+        self.name
+            .is_some()
+    }
+}
+
+impl fmt::Display for Codec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let field = |v: &Option<String>| {
+            v.clone()
+                .unwrap_or_else(|| "-".to_string())
+        };
+        write!(
+            f,
+            "{}/{}hz/{}bps",
+            field(&self.name),
+            field(&self.rate),
+            field(&self.bitrate)
+        )
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct CodecInfo {
+    read: Codec,
+    write: Codec,
+}
+
+impl CodecInfo {
+    fn from_event(event: &EslEvent) -> Self {
+        Self {
+            read: Codec::read_from(event),
+            write: Codec::write_from(event),
+        }
     }
 
-    fn summary(&self) -> String {
-        format!(
-            "r={}/{}hz/{}bps w={}/{}hz/{}bps",
-            self.read_codec,
-            self.read_rate,
-            self.read_bitrate,
-            self.write_codec,
-            self.write_rate,
-            self.write_bitrate,
-        )
+    /// Audio crossing a bridge is decoded and re-encoded when what one leg
+    /// reads is not what the other leg writes. `None` while either side has
+    /// reported too little to say -- silence there would read as passthrough.
+    fn transcodes_with(&self, other: &CodecInfo) -> Option<bool> {
+        let known = self
+            .read
+            .is_known()
+            && self
+                .write
+                .is_known()
+            && other
+                .read
+                .is_known()
+            && other
+                .write
+                .is_known();
+        known.then(|| self.read != other.write || self.write != other.read)
+    }
+}
+
+impl fmt::Display for CodecInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "r={} w={}", self.read, self.write)
     }
 }
 
@@ -98,84 +156,79 @@ impl Monitor {
         }
     }
 
-    fn handle_codec(&mut self, event: &freeswitch_esl_tokio::EslEvent) {
-        let uuid = match event.unique_id() {
-            Some(u) => u.to_string(),
-            None => return,
+    fn handle_codec(&mut self, event: &EslEvent) {
+        let Some(uuid) = event.unique_id() else {
+            return;
         };
-        let prev = self
-            .channels
-            .get(&uuid)
-            .map(|c| c.summary());
         let info = CodecInfo::from_event(event);
-        let current = info.summary();
 
-        match prev {
-            Some(ref old) if old == &current => {}
-            Some(old) => {
-                info!(
-                    "{} codec changed: {} -> {}",
-                    short_uuid(&uuid),
-                    old,
-                    current
-                );
-                self.check_transcoding(&uuid);
+        match self
+            .channels
+            .get(uuid)
+        {
+            Some(previous) if *previous == info => return,
+            Some(previous) => {
+                info!("{} codec changed: {previous} -> {info}", short_uuid(uuid));
             }
-            None => {
-                info!("{} codec set: {}", short_uuid(&uuid), current);
-            }
+            None => info!("{} codec set: {info}", short_uuid(uuid)),
         }
 
         self.channels
-            .insert(uuid, info);
+            .insert(uuid.to_string(), info);
+        self.check_transcoding(uuid);
     }
 
-    fn handle_bridge(&mut self, event: &freeswitch_esl_tokio::EslEvent) {
-        let uuid = match event.unique_id() {
-            Some(u) => u.to_string(),
-            None => return,
+    fn handle_bridge(&mut self, event: &EslEvent) {
+        let Some(uuid) = event.unique_id() else {
+            return;
         };
-        let other = match event.header(EventHeader::OtherLegUniqueId) {
-            Some(u) => u.to_string(),
-            None => return,
+        let Some(other) = event.header(EventHeader::OtherLegUniqueId) else {
+            return;
         };
 
-        // Update codec info from the bridge event itself (it carries Channel-* headers)
-        let info = CodecInfo::from_event(event);
+        // The bridge event carries this leg's Channel-* headers too.
         self.channels
-            .insert(uuid.clone(), info);
+            .insert(uuid.to_string(), CodecInfo::from_event(event));
 
         self.bridges
-            .insert(uuid.clone(), other.clone());
+            .insert(uuid.to_string(), other.to_string());
         self.bridges
-            .insert(other.clone(), uuid.clone());
+            .insert(other.to_string(), uuid.to_string());
 
-        self.check_transcoding(&uuid);
+        self.check_transcoding(uuid);
     }
 
-    fn handle_destroy(&mut self, event: &freeswitch_esl_tokio::EslEvent) {
-        let uuid = match event.unique_id() {
-            Some(u) => u.to_string(),
-            None => return,
+    /// An unbridged channel is still up and may bridge again, so only the
+    /// pairing goes; dropping its codecs would leave the next bridge with
+    /// nothing to compare until another CODEC event happened to fire.
+    fn handle_unbridge(&mut self, event: &EslEvent) {
+        let Some(uuid) = event.unique_id() else {
+            return;
         };
         if let Some(partner) = self
             .bridges
-            .remove(&uuid)
+            .remove(uuid)
         {
             self.bridges
                 .remove(&partner);
         }
+    }
+
+    fn handle_destroy(&mut self, event: &EslEvent) {
+        let Some(uuid) = event.unique_id() else {
+            return;
+        };
+        self.handle_unbridge(event);
         self.channels
-            .remove(&uuid);
+            .remove(uuid);
     }
 
     fn check_transcoding(&self, uuid: &str) {
-        let partner = match self
+        let Some(partner) = self
             .bridges
             .get(uuid)
-        {
-            Some(p) => p,
-            None => return,
+        else {
+            return;
         };
         let (Some(a), Some(b)) = (
             self.channels
@@ -186,21 +239,13 @@ impl Monitor {
             return;
         };
 
-        if a.is_transcoding_with(b) {
-            warn!(
-                "TRANSCODING {}<->{}: A[{}] B[{}]",
-                short_uuid(uuid),
-                short_uuid(partner),
-                a.summary(),
-                b.summary(),
-            );
-        } else {
-            info!(
-                "passthrough {}<->{}: {}",
-                short_uuid(uuid),
-                short_uuid(partner),
-                a.summary(),
-            );
+        let (short_a, short_b) = (short_uuid(uuid), short_uuid(partner));
+        match a.transcodes_with(b) {
+            Some(true) => warn!("TRANSCODING {short_a}<->{short_b}: A[{a}] B[{b}]"),
+            Some(false) => info!("passthrough {short_a}<->{short_b}: {a}"),
+            // Saying nothing here is what made "no output" ambiguous between
+            // a passthrough bridge and one never evaluated.
+            None => info!("{short_a}<->{short_b}: codecs not fully reported yet: A[{a}] B[{b}]"),
         }
     }
 }
@@ -209,34 +254,23 @@ impl Monitor {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let mut args = std::env::args().skip(1);
-    let host_port = args
-        .next()
-        .unwrap_or_else(|| "localhost".to_string());
-    let password = args
-        .next()
-        .unwrap_or_else(|| DEFAULT_ESL_PASSWORD.to_string());
-
-    let (host, port) = match host_port.rsplit_once(':') {
-        Some((h, p)) => (
-            h.to_string(),
-            p.parse::<u16>()
-                .unwrap_or(DEFAULT_ESL_PORT),
-        ),
-        None => (host_port, DEFAULT_ESL_PORT),
+    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port: u16 = match std::env::var("ESL_PORT") {
+        Ok(value) => value.parse()?,
+        Err(_) => DEFAULT_ESL_PORT,
     };
+    let password =
+        std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
 
     let (client, mut events) = match EslClient::connect(&host, port, &password).await {
-        Ok(pair) => {
-            info!("Connected to {}:{}", host, port);
-            pair
-        }
+        Ok(pair) => pair,
         Err(EslError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-            error!("Connection refused at {}:{}", host, port);
+            error!("nothing listening on {host}:{port} (set ESL_HOST / ESL_PORT)");
             return Err(e.into());
         }
         Err(e) => return Err(e.into()),
     };
+    info!("connected to {host}:{port}");
 
     client
         .subscribe_events(
@@ -251,8 +285,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    info!("Subscribed to CODEC + bridge lifecycle events");
-
     let mut monitor = Monitor::new();
 
     while let Some(result) = events
@@ -262,26 +294,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let event = match result {
             Ok(event) => event,
             Err(e) => {
-                error!("Event error: {}", e);
+                error!("event error: {e}");
                 continue;
             }
         };
 
         match event.event_type() {
-            Some(EslEventType::Codec) | Some(EslEventType::ChannelAnswer) => {
+            Some(EslEventType::Codec | EslEventType::ChannelAnswer) => {
                 monitor.handle_codec(&event);
             }
-            Some(EslEventType::ChannelBridge) => {
-                monitor.handle_bridge(&event);
-            }
-            Some(EslEventType::ChannelUnbridge) | Some(EslEventType::ChannelDestroy) => {
-                monitor.handle_destroy(&event);
-            }
+            Some(EslEventType::ChannelBridge) => monitor.handle_bridge(&event),
+            Some(EslEventType::ChannelUnbridge) => monitor.handle_unbridge(&event),
+            Some(EslEventType::ChannelDestroy) => monitor.handle_destroy(&event),
             _ => {}
         }
     }
 
-    info!("Connection closed");
+    info!("connection closed");
     client
         .disconnect()
         .await?;

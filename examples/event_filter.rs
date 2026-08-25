@@ -12,11 +12,14 @@
 //!   # Multiple events
 //!   cargo run --example event_filter -- -e CHANNEL_CREATE -e CHANNEL_ANSWER -f Call-Direction -v inbound
 //!
+//!   # Exit after the first 5 matching events
+//!   cargo run --example event_filter -- -e CHANNEL_CREATE -c 5
+//!
 //!   # With userauth (user@domain format required)
 //!   cargo run --example event_filter -- -u admin@default -p secret -e ALL
 
 use freeswitch_esl_tokio::{
-    EslClient, EslError, EslEventType, EventFormat, EventHeader, EventSubscription, HeaderLookup,
+    EslClient, EslError, EslEventType, EventFormat, EventSubscription, HeaderLookup,
     DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
 
@@ -37,11 +40,12 @@ Filter Options:
                            Examples: CHANNEL_CREATE, CHANNEL_ANSWER, ALL
   -f, --filter <HEADER>    Header name to filter on
   -v, --value <VALUE>      Value to match (use /regex/ for regex matching)
+  -c, --max-count <N>      Exit after N matching events (default: run forever)
 
-Output Options:
-  -j, --json               Output events as JSON
-  -r, --raw                Output raw event format
-  -q, --quiet              Only output matching event headers, not full event
+Output Options (default: every header, in a delimited block)
+  -j, --json               One JSON object per event, body included
+  -r, --raw                The event exactly as it arrived on the wire
+  -q, --quiet              One summary line per event
 
 Examples:
   # Filter CHANNEL_CREATE events where caller contains "ra232"
@@ -52,6 +56,9 @@ Examples:
 
   # Multiple events with JSON output
   event_filter -e CHANNEL_CREATE -e CHANNEL_ANSWER -f Caller-Context -v public -j
+
+  # Print the next 3 matching events then exit
+  event_filter -e CHANNEL_CREATE -f Call-Direction -v inbound -c 3
 
   # With userauth (user@domain format)
   event_filter -u admin@default -p secret -e ALL
@@ -78,38 +85,41 @@ struct Args {
     events: Vec<String>,
     filter_header: Option<String>,
     filter_value: Option<String>,
+    max_count: Option<usize>,
     json_output: bool,
     raw_output: bool,
     quiet: bool,
 }
 
-impl Default for Args {
-    fn default() -> Self {
-        Self {
+impl Args {
+    /// Defaults from the environment, before the flags below override them.
+    /// `-P` rejects a malformed port, so `ESL_PORT` does too.
+    fn from_env() -> Result<Self, String> {
+        Ok(Self {
             host: std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string()),
-            port: std::env::var("ESL_PORT")
-                .ok()
-                .and_then(|p| {
-                    p.parse()
-                        .ok()
-                })
-                .unwrap_or(DEFAULT_ESL_PORT),
+            port: match std::env::var("ESL_PORT") {
+                Ok(value) => value
+                    .parse()
+                    .map_err(|_| format!("ESL_PORT is not a port number: {value}"))?,
+                Err(_) => DEFAULT_ESL_PORT,
+            },
             user: None,
             password: std::env::var("ESL_PASSWORD")
                 .unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string()),
             events: vec!["CHANNEL_CREATE".to_string()],
             filter_header: None,
             filter_value: None,
+            max_count: None,
             json_output: false,
             raw_output: false,
             quiet: false,
-        }
+        })
     }
 }
 
 fn parse_args() -> Result<Args, String> {
     let args: Vec<String> = std::env::args().collect();
-    let mut result = Args::default();
+    let mut result = Args::from_env()?;
     result
         .events
         .clear();
@@ -183,6 +193,18 @@ fn parse_args() -> Result<Args, String> {
                         .clone(),
                 );
             }
+            "-c" | "--max-count" => {
+                i += 1;
+                let count: usize = args
+                    .get(i)
+                    .ok_or("Missing max-count value")?
+                    .parse()
+                    .map_err(|_| "Invalid max-count: expected a positive integer")?;
+                if count == 0 {
+                    return Err("--max-count must be at least 1".to_string());
+                }
+                result.max_count = Some(count);
+            }
             "-j" | "--json" => {
                 result.json_output = true;
             }
@@ -221,8 +243,12 @@ fn parse_args() -> Result<Args, String> {
     Ok(result)
 }
 
-fn parse_event_type(name: &str) -> Result<EslEventType, String> {
-    EslEventType::parse_event_type(name).ok_or_else(|| format!("Unknown event type: {}", name))
+/// Enough of the UUID to correlate lines, truncated by character: a value off
+/// the wire may have decoded lossily, and slicing a replacement in half panics.
+fn short_uuid(uuid: &str) -> String {
+    uuid.chars()
+        .take(8)
+        .collect()
 }
 
 fn format_event_summary(event: &freeswitch_esl_tokio::EslEvent) -> String {
@@ -234,39 +260,40 @@ fn format_event_summary(event: &freeswitch_esl_tokio::EslEvent) -> String {
         .caller_id_number()
         .unwrap_or("-");
     let dest = event
-        .header(EventHeader::CallerDestinationNumber)
+        .destination_number()
         .unwrap_or("-");
     let direction = match event.call_direction() {
         Ok(Some(d)) => d.to_string(),
         Ok(None) => "-".into(),
-        Err(e) => format!("!ERR({})", e),
+        Err(e) => format!("!ERR({e})"),
     };
     let uuid = event
         .unique_id()
-        .map(|s| &s[..8.min(s.len())])
-        .unwrap_or("-");
+        .map_or_else(|| "-".to_string(), short_uuid);
 
-    format!(
-        "[{}] {} -> {} ({}) uuid:{}...",
-        event_name, caller_id, dest, direction, uuid
-    )
+    format!("[{event_name}] {caller_id} -> {dest} ({direction}) uuid:{uuid}...")
 }
 
 fn format_event_full(event: &freeswitch_esl_tokio::EslEvent) -> String {
-    let mut output = String::new();
-    output.push_str("---EVENT---\n");
+    use std::fmt::Write;
+
+    let mut output = String::from("---EVENT---\n");
     for (key, value) in event.headers() {
-        output.push_str(&format!("{}: {}\n", key, value));
+        // Writing to a String cannot fail, so there is no error to handle.
+        let _ = writeln!(output, "{key}: {value}");
     }
     if let Some(body) = event.body() {
-        output.push_str(&format!("\n{}\n", body));
+        let _ = writeln!(output, "\n{body}");
     }
     output.push_str("-----------\n");
     output
 }
 
-fn format_event_json(event: &freeswitch_esl_tokio::EslEvent) -> String {
-    serde_json::to_string(event.headers()).unwrap_or_else(|_| "{}".to_string())
+/// The whole event, body included. Serializing only the headers would drop the
+/// payload that DTMF and BACKGROUND_JOB events carry, which the other output
+/// modes print.
+fn format_event_json(event: &freeswitch_esl_tokio::EslEvent) -> Result<String, serde_json::Error> {
+    serde_json::to_string(event)
 }
 
 #[tokio::main]
@@ -302,6 +329,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Authentication failed: {}", reason);
             std::process::exit(1);
         }
+        // An ACL rejection arrives as text/rude-rejection before auth, so it
+        // reads as a connection failure unless it is named.
+        Err(EslError::AccessDenied { ref reason }) => {
+            eprintln!("Rejected by the ESL ACL: {}", reason);
+            std::process::exit(1);
+        }
         Err(EslError::Io(ref e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
             eprintln!(
                 "Connection refused - is FreeSWITCH running on {}:{}?",
@@ -317,16 +350,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Connected successfully");
 
-    let event_types: Result<Vec<EslEventType>, String> = args
+    // FromStr carries the crate's own error rather than a stringified one.
+    let event_types = match args
         .events
         .iter()
-        .map(|e| parse_event_type(e))
-        .collect();
-
-    let event_types = match event_types {
+        .map(|name| name.parse::<EslEventType>())
+        .collect::<Result<Vec<_>, _>>()
+    {
         Ok(types) => types,
         Err(e) => {
-            eprintln!("Error: {}", e);
+            eprintln!("Error: {e}");
             std::process::exit(1);
         }
     };
@@ -352,7 +385,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .apply_subscription(&sub)
         .await?;
 
-    eprintln!("Listening for events... (Ctrl+C to exit)\n");
+    match args.max_count {
+        Some(n) => eprintln!("Listening for {} event(s)... (Ctrl+C to exit early)\n", n),
+        None => eprintln!("Listening for events... (Ctrl+C to exit)\n"),
+    }
+
+    let mut matched = 0usize;
+    let mut reached_max = false;
 
     while let Some(result) = events
         .recv()
@@ -366,18 +405,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         let output = if args.json_output {
-            format_event_json(&event)
+            format_event_json(&event)?
         } else if args.raw_output {
-            format_event_full(&event)
+            // The wire form the reader would see on the socket, not a rendering
+            // of it: that is what makes --raw worth having.
+            event.to_plain_format()
         } else if args.quiet {
             format_event_summary(&event)
         } else {
             format_event_full(&event)
         };
-        println!("{}", output);
+        println!("{output}");
+
+        matched += 1;
+        if args
+            .max_count
+            .is_some_and(|max| matched >= max)
+        {
+            reached_max = true;
+            break;
+        }
     }
 
-    eprintln!("Connection closed by server");
+    if reached_max {
+        eprintln!("Reached max count of {} event(s)", matched);
+    } else {
+        eprintln!("Connection closed by server");
+    }
     client
         .disconnect()
         .await?;
