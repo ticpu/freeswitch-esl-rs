@@ -7,6 +7,7 @@ use tracing::{debug, info};
 
 use crate::{
     command::{EslCommand, EslResponse, ExecuteOptions},
+    constants::{REPLY_COMMAND_NOT_FOUND, UNDEF_VALUE},
     error::{EslError, EslResult},
     event::{EslEvent, EslEventType, EventFormat},
     headers::EventHeader,
@@ -698,10 +699,14 @@ impl EslClient {
     ///
     /// **Protocol quirk:** Unlike every other ESL command, `getvar` returns
     /// the raw variable value directly in `Reply-Text` with no `+OK`/`-ERR`
-    /// prefix. A non-existent variable returns an empty string (never `-ERR`).
-    /// This method reads the raw Reply-Text; do not use `into_result()` on
-    /// the response -- it would misclassify the bare value as
+    /// prefix. This method hands back that text verbatim; do not use
+    /// `into_result()` on the response -- it would misclassify the bare value as
     /// [`UnexpectedReply`](crate::EslError::UnexpectedReply).
+    ///
+    /// An unset variable produces an empty reply, which `mod_event_socket` then
+    /// overwrites with its `-ERR`-prefixed filler for a reply nothing wrote to.
+    /// It reads like a failure and is not one, so
+    /// [`getvar_opt`](Self::getvar_opt) is the accessor to prefer.
     pub async fn getvar(&self, name: &str) -> EslResult<String> {
         let cmd = EslCommand::GetVar {
             name: name.to_string(),
@@ -717,19 +722,20 @@ impl EslClient {
 
     /// Read a channel variable, distinguishing "unset" from a present value.
     ///
-    /// FreeSWITCH does not signal a missing variable with `-ERR`; some
-    /// versions reply with the literal string `_undef_`, others reply with
-    /// an empty `Reply-Text`. This method normalizes both to `Ok(None)`
-    /// so callers don't have to special-case either sentinel.
+    /// A missing variable has three spellings and none of them is a value:
+    /// the literal `_undef_`, an empty `Reply-Text`, and the filler
+    /// `mod_event_socket` writes over a reply a command left empty. All three
+    /// normalize to `Ok(None)`.
+    ///
+    /// That filler is spelled like an unrecognised command, and on this command
+    /// it cannot be told apart from one -- `getvar` is only reachable on a
+    /// session, so an inbound connection sending it gets the same answer as an
+    /// outbound one reading an unset variable.
     pub async fn getvar_opt(&self, name: &str) -> EslResult<Option<String>> {
-        let v = self
+        let value = self
             .getvar(name)
             .await?;
-        Ok(if v.is_empty() || v == "_undef_" {
-            None
-        } else {
-            Some(v)
-        })
+        Ok((!getvar_is_unset(&value)).then_some(value))
     }
 
     /// Enable FreeSWITCH log forwarding at the given level.
@@ -913,6 +919,11 @@ impl futures_util::Stream for EslEventStream {
         self.rx
             .poll_recv(cx)
     }
+}
+
+/// Whether a `getvar` reply means the variable is not set.
+fn getvar_is_unset(reply: &str) -> bool {
+    reply.is_empty() || reply == UNDEF_VALUE || reply == REPLY_COMMAND_NOT_FOUND
 }
 
 #[cfg(test)]
