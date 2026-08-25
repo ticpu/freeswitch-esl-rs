@@ -20,8 +20,9 @@
 //! Usage: RUST_LOG=info cargo run --example channel_tracker [-- [host[:port]] [password]]
 
 use std::collections::HashMap;
-use std::fmt::Display;
+use std::fmt::{Display, Write};
 
+use freeswitch_esl_tokio::variables::SofiaVariable;
 use freeswitch_esl_tokio::{
     BgJobTracker, CallState, EslClient, EslError, EslEvent, EslEventType, EventFormat, EventHeader,
     HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
@@ -29,8 +30,17 @@ use freeswitch_esl_tokio::{
 use percent_encoding::percent_decode_str;
 use tracing::{debug, error, info, warn};
 
-fn short_uuid(uuid: &str) -> &str {
-    &uuid[..8.min(uuid.len())]
+/// First `n` characters of a wire value. Counted in characters, not bytes: a
+/// value that decoded lossily carries replacement characters a byte slice splits.
+fn truncate_chars(value: &str, n: usize) -> String {
+    value
+        .chars()
+        .take(n)
+        .collect()
+}
+
+fn short_uuid(uuid: &str) -> String {
+    truncate_chars(uuid, 8)
 }
 
 fn display_or<T: Display, E: Display>(result: Result<Option<T>, E>) -> String {
@@ -337,23 +347,26 @@ impl ChannelTracker {
         for (uuid, ch) in sorted {
             let (state, call_state, dir, cid, name) = ch.format_fields();
             let dest = ch
-                .header(EventHeader::CallerDestinationNumber)
+                .destination_number()
                 .unwrap_or("-");
+            // `write!` into a String cannot fail, so the flags below discard it.
             let mut flags = String::new();
             if ch.call_state() == Ok(Some(CallState::Held)) {
                 flags.push_str("[HELD]");
             }
             if ch
-                .variable_str("rtp_secure_media_confirmed")
+                .variable(SofiaVariable::RtpSecureMediaConfirmed)
                 .is_some()
             {
                 flags.push_str("[SEC]");
             }
             if let Some(other) = ch.header(EventHeader::OtherLegUniqueId) {
-                flags.push_str(&format!("[B:{}]", short_uuid(other)));
+                let other = short_uuid(other);
+                let _ = write!(flags, "[B:{other}]");
             }
-            if let Some(call_id) = ch.variable_str("sip_call_id") {
-                flags.push_str(&format!("[SIP:{}]", &call_id[..16.min(call_id.len())]));
+            if let Some(call_id) = ch.variable(SofiaVariable::SipCallId) {
+                let call_id = truncate_chars(call_id, 16);
+                let _ = write!(flags, "[SIP:{call_id}]");
             }
             println!(
                 "{:<36}  {:<14} {:<10} {:<8} {:<16} {:<16} {}{}",
@@ -391,13 +404,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = std::env::var("ESL_PORT")
-        .ok()
-        .and_then(|p| {
-            p.parse()
-                .ok()
-        })
-        .unwrap_or(DEFAULT_ESL_PORT);
+    let port: u16 = match std::env::var("ESL_PORT") {
+        Ok(value) => value.parse()?,
+        Err(_) => DEFAULT_ESL_PORT,
+    };
     let password =
         std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
 
@@ -464,16 +474,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .api("show channels as json")
         .await
     {
-        Ok(response) => {
-            // show channels as json returns raw JSON (no +OK prefix)
-            if let Ok(body) = response.api_result() {
+        // show channels as json returns raw JSON (no +OK prefix). A user whose
+        // <allowed-api> omits `show` is refused here, and swallowing that left
+        // the tracker looking like it had found an idle switch.
+        Ok(response) => match response.api_result() {
+            Ok(body) => {
                 let uuids = tracker.bootstrap(body);
                 for uuid in &uuids {
                     request_dump(&client, &mut bg, uuid).await;
                 }
             }
-        }
-        Err(e) => warn!("Failed to bootstrap channels: {}", e),
+            Err(e) => warn!("Could not list channels: {e}"),
+        },
+        Err(e) => warn!("Failed to bootstrap channels: {e}"),
     }
 
     info!("Listening for events... Press Ctrl+C to exit");
@@ -491,8 +504,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         if let Some((channel_uuid, result)) = bg.try_complete(&event) {
-            if let Some(body) = result.body() {
-                tracker.apply_dump(&channel_uuid, body);
+            // parse_body(), not body(): a channel that hung up between being
+            // listed and being dumped answers -ERR in the body, which the raw
+            // string would feed to the parser as if it were channel data.
+            match result.parse_body() {
+                Ok(body) => tracker.apply_dump(&channel_uuid, body),
+                Err(e) => debug!("uuid_dump {} answered {e}", short_uuid(&channel_uuid)),
             }
             continue;
         }
