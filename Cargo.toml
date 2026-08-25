@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "freeswitch-esl-tokio"
-version = "2.4.1"
+version = "2.4.2"
 edition = "2021"
 authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "FreeSWITCH Event Socket Library (ESL) client for Rust"
