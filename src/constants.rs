@@ -47,6 +47,10 @@ pub const REPLY_PREFIX_ERR: &str = "-ERR";
 /// `:` so a `starts_with` test matches whatever separator the command wrote.
 pub const REPLY_PREFIX_USAGE: &str = "-USAGE";
 
+/// What `mod_event_socket` puts in a reply that a command left empty, which is
+/// not always a command it failed to recognise.
+pub const REPLY_COMMAND_NOT_FOUND: &str = "-ERR command not found";
+
 /// Protocol framing header names (not event payload -- these stay as constants).
 pub const HEADER_CONTENT_TYPE: &str = "Content-Type";
 /// Protocol framing header: body length.

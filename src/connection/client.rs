@@ -914,3 +914,16 @@ impl futures_util::Stream for EslEventStream {
             .poll_recv(cx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn getvar_unset_covers_the_empty_reply_filler() {
+        assert!(getvar_is_unset(""));
+        assert!(getvar_is_unset(UNDEF_VALUE));
+        assert!(getvar_is_unset(REPLY_COMMAND_NOT_FOUND));
+        assert!(!getvar_is_unset("sofia/internal/1000@example.com"));
+    }
+}
