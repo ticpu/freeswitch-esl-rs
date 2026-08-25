@@ -312,11 +312,27 @@ impl EslResponse {
     /// assert!(resp.api_result().is_err());
     /// ```
     pub fn api_result(&self) -> EslResult<&str> {
+        // A refused command is answered by mod_event_socket itself, as a
+        // reply with no body, so the body parser would only see it as empty.
+        if self.status == ReplyStatus::Err {
+            return Err(self.command_failed());
+        }
         let body = self
             .body
             .as_deref()
             .unwrap_or("");
         parse_api_body(body)
+    }
+
+    /// The failure a `-ERR` `Reply-Text` names, for the two entry points that
+    /// both have to report it.
+    fn command_failed(&self) -> EslError {
+        EslError::CommandFailed {
+            reply_text: self
+                .reply_text()
+                .unwrap_or("-ERR")
+                .to_string(),
+        }
     }
 
     /// Convert to result based on success status.
@@ -331,13 +347,7 @@ impl EslResponse {
     pub fn into_result(self) -> EslResult<Self> {
         match self.status {
             ReplyStatus::Ok => Ok(self),
-            ReplyStatus::Err => {
-                let reply_text = self
-                    .reply_text()
-                    .unwrap_or("-ERR")
-                    .to_string();
-                Err(EslError::CommandFailed { reply_text })
-            }
+            ReplyStatus::Err => Err(self.command_failed()),
             ReplyStatus::Other => {
                 let reply_text = self
                     .reply_text()
@@ -1614,6 +1624,35 @@ mod tests {
                 .unwrap_err(),
             EslError::ProtocolError { .. }
         ));
+    }
+
+    // A denial never reaches the body: mod_event_socket answers the refused
+    // command itself, so there is no api/response frame to carry one.
+    #[test]
+    fn api_result_reports_denial_from_reply_text() {
+        let headers: IndexMap<String, String> =
+            [("Reply-Text".into(), "-ERR permission denied".into())].into();
+        let resp = EslResponse::new(headers, None);
+        let err = resp
+            .api_result()
+            .unwrap_err();
+        assert!(
+            matches!(err, EslError::CommandFailed { .. }),
+            "expected CommandFailed, got: {err:?}"
+        );
+        assert!(err.is_permission_denied());
+    }
+
+    #[test]
+    fn api_result_keeps_unprefixed_reply_text_non_fatal() {
+        let headers: IndexMap<String, String> =
+            [("Reply-Text".into(), "some-variable-value".into())].into();
+        let resp = EslResponse::new(headers, Some("body-payload\n".into()));
+        assert_eq!(
+            resp.api_result()
+                .unwrap(),
+            "body-payload"
+        );
     }
 
     // --- Finding 2: EslResponse SipHeaderLookup ARRAY encoding ---

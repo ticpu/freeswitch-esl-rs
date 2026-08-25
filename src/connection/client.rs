@@ -132,9 +132,12 @@ impl EslClient {
     /// that may take a long time (`originate`, `conference`, bulk operations),
     /// use [`bgapi`](Self::bgapi) instead so events keep flowing.
     ///
-    /// Use [`EslResponse::api_result`] to parse the response body, or
+    /// [`EslResponse::api_result`] is the single check this needs. A command
+    /// FreeSWITCH refuses (an `esl-allowed-api` gate) never runs, and is
+    /// answered as a reply with no body; one that runs and fails reports in the
+    /// body. `api_result` covers both. Use
     /// [`parse_api_body`](crate::parse_api_body) for `BACKGROUND_JOB` event
-    /// bodies.
+    /// bodies, which carry only the second kind.
     ///
     /// ```rust,no_run
     /// # async fn example(client: &freeswitch_esl_tokio::EslClient) -> Result<(), freeswitch_esl_tokio::EslError> {
