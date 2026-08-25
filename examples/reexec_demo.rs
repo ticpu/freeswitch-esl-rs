@@ -13,58 +13,69 @@
 #[cfg(unix)]
 mod demo {
     use freeswitch_esl_tokio::{
-        EslClient, EslError, EslEventType, EventFormat, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+        EslClient, EslError, EslEventStream, EslEventType, EventFormat, EventHeader,
+        DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
     };
     use std::os::unix::io::BorrowedFd;
+    use std::time::Duration;
     use tracing::{error, info};
+
+    /// FreeSWITCH fires HEARTBEAT about every 20s, so one that has not arrived
+    /// by now is not late.
+    const HEARTBEAT_WAIT: Duration = Duration::from_secs(25);
+
+    /// Wait for one heartbeat and report what it carried.
+    ///
+    /// Failing here has to be an error: the demo's only claim is that events
+    /// flow, and a version that logged and carried on printed "complete" and
+    /// exited 0 having proved nothing.
+    async fn expect_heartbeat(
+        events: &mut EslEventStream,
+        stage: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match tokio::time::timeout(HEARTBEAT_WAIT, events.recv()).await {
+            Ok(Some(Ok(event))) => {
+                info!(
+                    "{stage}: heartbeat, {}",
+                    event
+                        .header(EventHeader::EventInfo)
+                        .unwrap_or("(no info)")
+                );
+                Ok(())
+            }
+            Ok(Some(Err(e))) => Err(format!("{stage}: event error: {e}").into()),
+            Ok(None) => Err(format!("{stage}: event stream closed").into()),
+            Err(_) => Err(format!("{stage}: no heartbeat within {HEARTBEAT_WAIT:?}").into()),
+        }
+    }
 
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tracing_subscriber::fmt::init();
 
         let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let port: u16 = std::env::var("ESL_PORT")
-            .ok()
-            .and_then(|s| {
-                s.parse()
-                    .ok()
-            })
-            .unwrap_or(DEFAULT_ESL_PORT);
+        let port: u16 = match std::env::var("ESL_PORT") {
+            Ok(value) => value.parse()?,
+            Err(_) => DEFAULT_ESL_PORT,
+        };
         let password =
             std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
 
         // Phase 1: connect and subscribe
         let (client, mut events) = match EslClient::connect(&host, port, &password).await {
-            Ok(pair) => {
-                info!("Connected to FreeSWITCH on port {}", port);
-                pair
-            }
+            Ok(pair) => pair,
             Err(EslError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-                error!("FreeSWITCH not running on localhost:{}", port);
+                error!("nothing listening on {host}:{port} (set ESL_HOST / ESL_PORT)");
                 return Err(e.into());
             }
             Err(e) => return Err(e.into()),
         };
+        info!("connected to {host}:{port}");
 
         client
             .subscribe_events(EventFormat::Plain, &[EslEventType::Heartbeat])
             .await?;
-        info!("Subscribed to HEARTBEAT events");
 
-        // Wait for one heartbeat to confirm the subscription works
-        info!("Waiting for a heartbeat before teardown...");
-        match tokio::time::timeout(std::time::Duration::from_secs(25), events.recv()).await {
-            Ok(Some(Ok(event))) => {
-                info!(
-                    "Got heartbeat: {}",
-                    event
-                        .header_str("Event-Info")
-                        .unwrap_or("(no info)")
-                );
-            }
-            Ok(Some(Err(e))) => error!("Event error: {}", e),
-            Ok(None) => error!("Event stream closed"),
-            Err(_) => error!("Timed out waiting for heartbeat"),
-        }
+        expect_heartbeat(&mut events, "before teardown").await?;
         drop(events);
 
         // Phase 2: teardown
@@ -94,7 +105,7 @@ mod demo {
         // but keeps the TCP connection alive by not sending FIN).
         // Safety: fd is a valid open descriptor from teardown_for_reexec().
         // We borrow it for dup() without taking ownership (client still holds it).
-        let dup_fd = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(fd) }).expect("dup failed");
+        let dup_fd = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(fd) })?;
         std::mem::forget(client);
 
         // Phase 3: adopt the stream (simulating new process)
@@ -106,27 +117,30 @@ mod demo {
         std_stream.set_nonblocking(true)?;
         let tokio_stream = tokio::net::TcpStream::from_std(std_stream)?;
 
-        let (_new_client, mut new_events) = EslClient::adopt_stream(tokio_stream, &residual)?;
-        info!("Adopted stream, waiting for events...");
+        let (new_client, mut new_events) = EslClient::adopt_stream(tokio_stream, &residual)?;
+
+        // Exercise the write half too. Reading alone would leave the demo
+        // claiming a working connection on the evidence of one direction.
+        let response = new_client
+            .api("status")
+            .await?;
+        let status = response.api_result()?;
+        info!(
+            "adopted connection answers commands: {}",
+            status
+                .lines()
+                .next()
+                .unwrap_or("(empty)")
+        );
 
         // The old subscription survives on the TCP connection, so
-        // heartbeats should arrive without re-subscribing.
-        info!("Waiting for heartbeat on adopted connection...");
-        match tokio::time::timeout(std::time::Duration::from_secs(25), new_events.recv()).await {
-            Ok(Some(Ok(event))) => {
-                info!(
-                    "Got heartbeat on adopted connection: {}",
-                    event
-                        .header_str("Event-Info")
-                        .unwrap_or("(no info)")
-                );
-            }
-            Ok(Some(Err(e))) => error!("Event error: {}", e),
-            Ok(None) => error!("Event stream closed"),
-            Err(_) => error!("Timed out waiting for heartbeat on adopted connection"),
-        }
+        // heartbeats arrive without re-subscribing.
+        expect_heartbeat(&mut new_events, "after adopt").await?;
 
-        info!("Re-exec demo complete");
+        info!("re-exec demo complete");
+        new_client
+            .disconnect()
+            .await?;
         Ok(())
     }
 }
