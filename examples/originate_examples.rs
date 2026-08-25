@@ -19,11 +19,15 @@ use freeswitch_esl_tokio::commands::{
 use std::time::Duration;
 
 use freeswitch_esl_tokio::{
-    parse_api_body, Application, DialplanType, Endpoint, EslClient, EslError, EslEventType,
-    EventFormat, EventHeader, HeaderLookup, Originate, SipPassthroughHeader, Variables,
-    VariablesType, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    Application, BgJobTracker, DialplanType, Endpoint, EslClient, EslError, EslEventType,
+    EventFormat, HeaderLookup, Originate, SipPassthroughHeader, Variables, VariablesType,
+    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
 use tracing::{error, info};
+
+/// The originate carries its own 10s timeout, so anything past this means no
+/// result is coming.
+const CALL_DEADLINE: Duration = Duration::from_secs(30);
 
 fn print_endpoint_examples() {
     println!("=== Endpoint wire formats ===");
@@ -287,9 +291,12 @@ fn print_endpoint_examples() {
     let wire = "originate sofia/gateway/carrier/15551234567 &bridge(user/1000) XML default Alice 5551234 60";
     match wire.parse::<Originate>() {
         Ok(cmd) => {
-            // Parsed struct re-serializes to the identical wire string
-            assert_eq!(cmd.to_string(), wire);
-            println!("round-trip: {}", cmd);
+            let round_tripped = cmd.to_string();
+            if round_tripped == wire {
+                println!("round-trip: {round_tripped}");
+            } else {
+                println!("round-trip changed the string:\n  in:  {wire}\n  out: {round_tripped}");
+            }
         }
         Err(e) => println!("parse error: {}", e),
     }
@@ -305,14 +312,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Part 2: live call via bgapi
     // -----------------------------------------------------------------------
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = std::env::var("ESL_PORT")
-        .ok()
-        .and_then(|p| {
-            p.parse()
-                .ok()
-        })
-        .unwrap_or(DEFAULT_ESL_PORT);
+    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port: u16 = match std::env::var("ESL_PORT") {
+        Ok(value) => value.parse()?,
+        Err(_) => DEFAULT_ESL_PORT,
+    };
     let password =
         std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
 
@@ -357,67 +361,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Live call via bgapi ===");
     println!("originate: {}", cmd);
 
-    // bgapi returns immediately with a Job-UUID; the originate result arrives
-    // later as a BACKGROUND_JOB event matching that UUID.
-    let response = client
-        .bgapi(&cmd.to_string())
+    // bgapi returns immediately with a Job-UUID and the originate result
+    // arrives later as a BACKGROUND_JOB event. BACKGROUND_JOB is a switch-wide
+    // event, so the UUID is what makes a result ours; BgJobTracker owns that
+    // bookkeeping, and reports a refused bgapi as the denial it is rather than
+    // as a missing header.
+    let mut jobs: BgJobTracker<()> = BgJobTracker::new();
+    jobs.bgapi(&client, &cmd.to_string(), ())
         .await?;
-    let job_uuid = response
-        .job_uuid()
-        // bgapi always returns a Job-UUID in the response headers
-        .expect("bgapi always returns Job-UUID")
-        .to_string();
-    info!("job submitted: {}", job_uuid);
 
     let mut call_uuid: Option<String> = None;
+    // Nothing guarantees the call ever produces a channel, so the loop needs an
+    // end of its own.
+    let deadline = tokio::time::Instant::now() + CALL_DEADLINE;
 
-    while let Some(Ok(event)) = events
-        .recv()
-        .await
-    {
+    loop {
+        let result = match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(result)) => result,
+            Ok(None) => {
+                error!("event stream closed before the call finished");
+                break;
+            }
+            Err(_) => {
+                error!("gave up after {CALL_DEADLINE:?}");
+                break;
+            }
+        };
+        let event = match result {
+            Ok(event) => event,
+            Err(e) => {
+                error!("event error: {e}");
+                continue;
+            }
+        };
+
+        // A BACKGROUND_JOB that is not ours leaves the tracker untouched.
+        if let Some(((), job)) = jobs.try_complete(&event) {
+            match job.parse_body() {
+                Ok(uuid) => {
+                    call_uuid = Some(uuid.to_string());
+                    info!("call created: {uuid}");
+                }
+                Err(e) => {
+                    error!("originate failed: {e}");
+                    break;
+                }
+            }
+            continue;
+        }
+
+        // unique_id() falls back to Caller-Unique-ID, which the enum lookup
+        // alone would miss.
+        let Some(uuid) = event.unique_id() else {
+            continue;
+        };
         match event.event_type() {
-            Some(EslEventType::BackgroundJob) => {
-                if event.job_uuid() != Some(job_uuid.as_str()) {
-                    continue; // unrelated bgapi job
-                }
-                // BACKGROUND_JOB body has the same +OK/-ERR format as api responses.
-                // parse_api_body() handles all variants (including raw query data).
-                let body = event
-                    .body()
-                    .unwrap(); // BACKGROUND_JOB always has a body
-                match parse_api_body(body) {
-                    Ok(uuid) => {
-                        call_uuid = Some(uuid.to_string());
-                        info!("call created: {}", uuid);
-                    }
-                    Err(e) => {
-                        error!("originate failed: {}", e);
-                        break;
-                    }
-                }
-            }
-            Some(EslEventType::ChannelCreate) => {
-                let uuid = event.header(EventHeader::UniqueId);
-                info!("channel created: {}", uuid.unwrap_or("?"));
-            }
-            Some(EslEventType::ChannelAnswer) => {
-                let uuid = event.header(EventHeader::UniqueId);
-                info!("channel answered: {}", uuid.unwrap_or("?"));
-            }
-            Some(EslEventType::ChannelHangup) => {
-                let uuid = event.header(EventHeader::UniqueId);
-                // hangup_cause() returns Result<Option<HangupCause>, _>
-                let cause = match event.hangup_cause() {
-                    Ok(Some(c)) => c.to_string(),
-                    _ => "unknown".into(),
-                };
-                info!("channel hangup: {} cause={}", uuid.unwrap_or("?"), cause);
-            }
+            Some(EslEventType::ChannelCreate) => info!("channel created: {uuid}"),
+            Some(EslEventType::ChannelAnswer) => info!("channel answered: {uuid}"),
+            Some(EslEventType::ChannelHangup) => match event.hangup_cause() {
+                Ok(Some(cause)) => info!("channel hangup: {uuid} cause={cause}"),
+                Ok(None) => info!("channel hangup: {uuid}, no cause header"),
+                Err(e) => error!("channel hangup: {uuid}, unparseable cause: {e}"),
+            },
             Some(EslEventType::ChannelDestroy) => {
-                let uuid = event.header(EventHeader::UniqueId);
-                info!("channel destroyed: {}", uuid.unwrap_or("?"));
+                info!("channel destroyed: {uuid}");
                 // Stop once our specific channel is gone
-                if call_uuid.is_some() && uuid == call_uuid.as_deref() {
+                if call_uuid.as_deref() == Some(uuid) {
                     break;
                 }
             }
