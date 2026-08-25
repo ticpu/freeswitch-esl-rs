@@ -422,7 +422,7 @@ async fn live_escaping_survives_the_dialplan_carrier() {
             )
             .await
             .unwrap_or_else(|e| panic!("{label}: execute bridge transport error: {e}"))
-            .into_result()
+            .check()
             .unwrap_or_else(|e| panic!("{label}: execute bridge rejected: {e}"));
 
         // The bridge is async, so the far leg appears a moment later.
@@ -572,7 +572,7 @@ async fn live_separated_escaping_survives_the_dialplan_carrier() {
             )
             .await
             .unwrap_or_else(|e| panic!("{label}: execute bridge transport error: {e}"))
-            .into_result()
+            .check()
             .unwrap_or_else(|e| panic!("{label}: execute bridge rejected: {e}"));
 
         tokio::time::sleep(Duration::from_millis(500)).await;

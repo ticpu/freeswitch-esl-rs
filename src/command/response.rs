@@ -178,7 +178,12 @@ pub enum ReplyStatus {
 }
 
 /// Response from ESL command execution
+///
+/// `#[must_use]`: a reply carries the only report a command makes, and an `api`
+/// reply carries it in either of two places, so dropping the value is
+/// indistinguishable from the command having succeeded.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "an ESL reply can be -ERR: read it with api_result(), or check() if there is no payload to read"]
 pub struct EslResponse {
     headers: IndexMap<String, String>,
     body: Option<String>,
@@ -399,6 +404,24 @@ impl EslResponse {
                 .unwrap_or(REPLY_PREFIX_ERR)
                 .to_string(),
         }
+    }
+
+    /// Require a successful reply and keep nothing.
+    ///
+    /// The same check as [`into_result`](Self::into_result), for the common
+    /// case of a command whose reply carries no payload worth reading. Handing
+    /// the response back there leaves a `#[must_use]` value the caller has
+    /// already finished with.
+    ///
+    /// ```
+    /// # use freeswitch_esl_tokio::EslResponse;
+    /// # use indexmap::IndexMap;
+    /// let headers: IndexMap<String, String> = [("Reply-Text".into(), "+OK".into())].into();
+    /// EslResponse::new(headers, None).check().unwrap();
+    /// ```
+    pub fn check(self) -> EslResult<()> {
+        self.into_result()
+            .map(|_| ())
     }
 
     /// Convert to result based on success status.

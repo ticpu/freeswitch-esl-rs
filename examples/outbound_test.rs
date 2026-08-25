@@ -147,11 +147,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     client
         .exit()
         .await?
-        .into_result()?;
+        .check()?;
     inbound
         .exit()
         .await?
-        .into_result()?;
+        .check()?;
 
     println!("done");
     Ok(())

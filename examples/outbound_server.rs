@@ -87,7 +87,7 @@ async fn handle_call(client: &EslClient, events: &mut EslEventStream) -> Result<
     client
         .send_command(AppCommand::answer())
         .await?
-        .into_result()?;
+        .check()?;
 
     if !wait_for_answer(events).await {
         info!("caller hung up before answer");
@@ -97,7 +97,7 @@ async fn handle_call(client: &EslClient, events: &mut EslEventStream) -> Result<
     client
         .send_command(AppCommand::playback("ivr/ivr-welcome.wav"))
         .await?
-        .into_result()?;
+        .check()?;
 
     collect_digits(client, events).await
 }
@@ -176,8 +176,7 @@ async fn prompt_for_extension(client: &EslClient) -> Result<(), EslError> {
             "ivr/ivr-please_enter_extension_followed_by_pound.wav",
         ))
         .await?
-        .into_result()
-        .map(|_| ())
+        .check()
 }
 
 async fn handle_dtmf_input(client: &EslClient, input: &str) -> Result<(), EslError> {
@@ -187,33 +186,33 @@ async fn handle_dtmf_input(client: &EslClient, input: &str) -> Result<(), EslErr
             client
                 .send_command(AppCommand::playback("ivr/ivr-hold_connect_call.wav"))
                 .await?
-                .into_result()?;
+                .check()?;
             client
                 .send_command(AppCommand::transfer(input, None, None))
                 .await?
-                .into_result()?;
+                .check()?;
         }
         "0" => {
             info!("transferring to operator");
             client
                 .send_command(AppCommand::playback("ivr/ivr-hold_connect_call.wav"))
                 .await?
-                .into_result()?;
+                .check()?;
             client
                 .send_command(AppCommand::transfer("operator", None, None))
                 .await?
-                .into_result()?;
+                .check()?;
         }
         "9" => {
             info!("hanging up at caller request");
             client
                 .send_command(AppCommand::playback("voicemail/vm-goodbye.wav"))
                 .await?
-                .into_result()?;
+                .check()?;
             client
                 .send_command(AppCommand::hangup(Some(HangupCause::NormalClearing)))
                 .await?
-                .into_result()?;
+                .check()?;
         }
         "" => prompt_for_extension(client).await?,
         _ => {
@@ -223,7 +222,7 @@ async fn handle_dtmf_input(client: &EslClient, input: &str) -> Result<(), EslErr
                     "ivr/ivr-that_was_an_invalid_entry.wav",
                 ))
                 .await?
-                .into_result()?;
+                .check()?;
             prompt_for_extension(client).await?;
         }
     }
