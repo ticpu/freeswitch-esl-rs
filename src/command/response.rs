@@ -374,11 +374,27 @@ impl EslResponse {
     /// assert!(resp.api_result().is_err());
     /// ```
     pub fn api_result(&self) -> EslResult<&str> {
+        // A refused command is answered by mod_event_socket itself, as a
+        // reply with no body, so the body parser would only see it as empty.
+        if self.status == ReplyStatus::Err {
+            return Err(self.command_failed());
+        }
         let body = self
             .body
             .as_deref()
             .unwrap_or("");
         parse_api_body(body)
+    }
+
+    /// The failure a `-ERR` `Reply-Text` names, for the two entry points that
+    /// both have to report it.
+    fn command_failed(&self) -> EslError {
+        EslError::CommandFailed {
+            reply_text: self
+                .reply_text()
+                .unwrap_or(REPLY_PREFIX_ERR)
+                .to_string(),
+        }
     }
 
     /// Convert to result based on success status.
@@ -393,13 +409,7 @@ impl EslResponse {
     pub fn into_result(self) -> EslResult<Self> {
         match self.status {
             ReplyStatus::Ok => Ok(self),
-            ReplyStatus::Err => {
-                let reply_text = self
-                    .reply_text()
-                    .unwrap_or(REPLY_PREFIX_ERR)
-                    .to_string();
-                Err(EslError::CommandFailed { reply_text })
-            }
+            ReplyStatus::Err => Err(self.command_failed()),
             ReplyStatus::Other => {
                 let reply_text = self
                     .reply_text()
