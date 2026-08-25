@@ -112,15 +112,23 @@ impl<C> BgJobTracker<C> {
     ///
     /// # Errors
     ///
-    /// Returns [`EslError::ProtocolError`] if the response is missing the
-    /// `Job-UUID` header. In this case the command has already been sent to
+    /// A refused command (an `esl-allowed-api` gate) returns
+    /// [`EslError::CommandFailed`], readable through
+    /// [`EslError::is_permission_denied`]; nothing was sent and `ctx` is
+    /// dropped.
+    ///
+    /// Returns [`EslError::ProtocolError`] if an accepted response is missing
+    /// the `Job-UUID` header. In this case the command has already been sent to
     /// FreeSWITCH but cannot be tracked, and `ctx` is lost. A missing
     /// `Job-UUID` is a protocol violation; consider disconnecting and
     /// reconnecting from a known-good state.
     pub async fn bgapi(&mut self, client: &EslClient, command: &str, ctx: C) -> EslResult<String> {
+        // A refusal is answered as a reply with no Job-UUID, which would
+        // otherwise be reported as a protocol violation instead of a denial.
         let resp = client
             .bgapi(command)
-            .await?;
+            .await?
+            .into_result()?;
         let job_uuid = resp
             .job_uuid()
             .ok_or_else(|| EslError::ProtocolError {
