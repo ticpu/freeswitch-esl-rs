@@ -718,6 +718,35 @@ mod tests {
         ));
     }
 
+    // A denial never reaches the body: mod_event_socket answers the refused
+    // command itself, so there is no api/response frame to carry one.
+    #[test]
+    fn api_result_reports_denial_from_reply_text() {
+        let headers: IndexMap<String, String> =
+            [("Reply-Text".into(), "-ERR permission denied".into())].into();
+        let resp = EslResponse::new(headers, None);
+        let err = resp
+            .api_result()
+            .unwrap_err();
+        assert!(
+            matches!(err, EslError::CommandFailed { .. }),
+            "expected CommandFailed, got: {err:?}"
+        );
+        assert!(err.is_permission_denied());
+    }
+
+    #[test]
+    fn api_result_keeps_unprefixed_reply_text_non_fatal() {
+        let headers: IndexMap<String, String> =
+            [("Reply-Text".into(), "some-variable-value".into())].into();
+        let resp = EslResponse::new(headers, Some("body-payload\n".into()));
+        assert_eq!(
+            resp.api_result()
+                .unwrap(),
+            "body-payload"
+        );
+    }
+
     // --- Finding 2: EslResponse SipHeaderLookup ARRAY encoding ---
 
     #[test]
