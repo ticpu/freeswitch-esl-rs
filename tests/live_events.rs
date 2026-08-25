@@ -117,7 +117,9 @@ async fn live_recv_custom_sendevent() {
     client
         .sendevent(event)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
@@ -165,7 +167,9 @@ async fn live_recv_custom_sendevent_percent_decoded() {
     client
         .sendevent(event)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
@@ -301,7 +305,9 @@ async fn live_noevents_stops_delivery() {
     client
         .sendevent(evt1)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -330,7 +336,9 @@ async fn live_noevents_stops_delivery() {
     client
         .sendevent(evt2)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     match tokio::time::timeout(Duration::from_secs(2), events.recv()).await {
         Err(_) => {} // timeout — correct
@@ -373,7 +381,9 @@ async fn live_nixevent_selective_unsubscribe() {
     client
         .sendevent(event)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
@@ -442,7 +452,9 @@ async fn live_sendevent_comma_separated_sip_header() {
     client
         .sendevent(event)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
@@ -496,7 +508,9 @@ async fn live_sendevent_array_sip_header() {
     client
         .sendevent(event)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
@@ -555,7 +569,9 @@ async fn live_sendevent_repeated_diversion_header() {
     client
         .sendevent(event)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < deadline {
@@ -612,7 +628,9 @@ async fn live_filter_event_name() {
     client
         .bgapi("status")
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("bgapi rejected");
 
     // We should only see HEARTBEAT, not BACKGROUND_JOB
     let deadline = Instant::now() + Duration::from_secs(25);
@@ -649,7 +667,9 @@ async fn live_filter_event_name() {
     client
         .bgapi("status")
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("bgapi rejected");
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
@@ -860,7 +880,9 @@ async fn live_custom_first_does_not_swallow_later_event_types() {
     client
         .sendevent(event)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     // event-heartbeat-interval defaults to 20s; both halves land inside 25.
     let deadline = Instant::now() + Duration::from_secs(25);
@@ -909,7 +931,9 @@ async fn live_bare_custom_delivers_no_subclassed_events() {
     client
         .sendevent(event)
         .await
-        .unwrap();
+        .unwrap()
+        .into_result()
+        .expect("sendevent rejected");
 
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {

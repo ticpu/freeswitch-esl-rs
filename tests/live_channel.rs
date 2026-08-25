@@ -421,7 +421,9 @@ async fn live_escaping_survives_the_dialplan_carrier() {
                 ExecuteOptions::new().with_async(),
             )
             .await
-            .unwrap_or_else(|e| panic!("{label}: execute bridge failed: {e}"));
+            .unwrap_or_else(|e| panic!("{label}: execute bridge transport error: {e}"))
+            .into_result()
+            .unwrap_or_else(|e| panic!("{label}: execute bridge rejected: {e}"));
 
         // The bridge is async, so the far leg appears a moment later.
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -569,7 +571,9 @@ async fn live_separated_escaping_survives_the_dialplan_carrier() {
                 ExecuteOptions::new().with_async(),
             )
             .await
-            .unwrap_or_else(|e| panic!("{label}: execute bridge failed: {e}"));
+            .unwrap_or_else(|e| panic!("{label}: execute bridge transport error: {e}"))
+            .into_result()
+            .unwrap_or_else(|e| panic!("{label}: execute bridge rejected: {e}"));
 
         tokio::time::sleep(Duration::from_millis(500)).await;
         let mut results = Vec::new();

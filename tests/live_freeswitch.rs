@@ -409,7 +409,9 @@ async fn live_log_events_have_log_type() {
     client
         .api("status")
         .await
-        .unwrap();
+        .unwrap()
+        .api_result()
+        .expect("status rejected");
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
@@ -433,7 +435,7 @@ async fn live_log_events_have_log_type() {
                         "log event should have a body with the log text"
                     );
 
-                    // Disable log forwarding before returning
+                    // Connection drops on return, so a failed nolog changes nothing.
                     let _ = client
                         .nolog()
                         .await;
@@ -446,6 +448,7 @@ async fn live_log_events_have_log_type() {
         }
     }
 
+    // Connection drops on panic, so a failed nolog changes nothing.
     let _ = client
         .nolog()
         .await;
