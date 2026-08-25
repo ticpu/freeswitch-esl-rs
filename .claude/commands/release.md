@@ -1,11 +1,12 @@
-Perform a release of the rust-freeswitch-platform-ng workspace.
+Perform a release of the freeswitch-esl-tokio workspace.
 
 Optional override: $ARGUMENTS (format: vX.Y.Z). If provided, use that version.
 
 ## Release Workflow
 
 This is a two-crate workspace. `freeswitch-esl-tokio` depends on
-`freeswitch-types`, so **types must be published first**.
+`freeswitch-types`, so when both go out, **types is published first**. A release
+that changed only one crate publishes only that one.
 
 `scripts/pre-release.sh` is the gate: fmt, feature matrix, clippy, workspace and
 live tests, Windows cross-check, semver-checks, and a publish dry-run.
@@ -21,12 +22,12 @@ it is built on. Never push a tag and its commit together.**
    brief changelog in the tag message (use `git log --oneline <previous-tag>..HEAD`
    to generate it)
 4. Push the tag (`git push --tags`)
-5. Only then publish, from the tagged commit and types first:
+5. Only then publish, from the tagged commit, whichever crates were bumped:
 
 ```sh
 git checkout vX.Y.Z
-cargo publish -p freeswitch-types
-cargo publish -p freeswitch-esl-tokio
+cargo publish -p freeswitch-types      # only if its version changed
+cargo publish -p freeswitch-esl-tokio  # only if its version changed
 git switch master
 ```
 
@@ -98,8 +99,16 @@ git commit -m "release: vX.Y.Z"
 
 ```sh
 git push
-gh run watch "$(gh run list --branch master --limit 1 --json databaseId --jq '.[0].databaseId')"
+./scripts/watch-ci.sh
 ```
+
+   Never select the run with `--branch ... --limit 1`. This repository runs
+   GitHub's default-setup CodeQL scan alongside `ci.yml`, and it is a separate
+   run on the same commit with no workflow file behind it. It usually finishes
+   first, so the most recent run on the branch is regularly the scan rather than
+   CI, and reading it green says nothing about CI. `watch-ci.sh` pins both the
+   workflow and the commit SHA, and passes `--exit-status`, without which
+   `gh run watch` exits 0 on a run that failed.
 
 7. Build the tag locally — nothing is pushed yet. It sits on a detached child of
    the green commit that pins `Cargo.lock`, so a tagged tree resolves the exact
@@ -136,20 +145,25 @@ git switch master
 
 ```sh
 git push --tags
-gh run watch "$(gh run list --branch vX.Y.Z --limit 1 --json databaseId --jq '.[0].databaseId')"
+./scripts/watch-ci.sh vX.Y.Z
 ```
 
    Red here means the pin resolved something the floating build did not. Never
    retag; fix on master and cut a new patch release.
 
-9. Publish from the tagged commit, types first:
+9. Publish from the tagged commit, **only the crates whose version was bumped in
+   step 2**, types first when both are going out:
 
 ```sh
 git checkout vX.Y.Z
-cargo publish -p freeswitch-types
-cargo publish -p freeswitch-esl-tokio
+cargo publish -p freeswitch-types      # only if its version changed
+cargo publish -p freeswitch-esl-tokio  # only if its version changed
 git switch master
 ```
+
+   A crate whose version did not change is already on crates.io at that version,
+   and publishing it again is refused. "Types first" orders the two; it does not
+   mean types is always part of a release.
 
    `git switch master` deletes the working-tree `Cargo.lock` (untracked there);
    the next cargo command regenerates it.
