@@ -41,58 +41,6 @@ yaml_serde = "0.10"
 libc = "0.2"
 
 [[example]]
-name = "inbound_client"
-path = "examples/inbound_client.rs"
-
-[[example]]
-name = "outbound_server"
-path = "examples/outbound_server.rs"
-
-[[example]]
-name = "event_listener"
-path = "examples/event_listener.rs"
-
-[[example]]
-name = "event_filter"
-path = "examples/event_filter.rs"
-
-[[example]]
-name = "outbound_test"
-path = "examples/outbound_test.rs"
-
-[[example]]
-name = "channel_tracker"
-path = "examples/channel_tracker.rs"
-
-[[example]]
-name = "originate_examples"
-path = "examples/originate_examples.rs"
-
-[[example]]
-name = "originate_loopback_yaml"
-path = "examples/originate_loopback_yaml.rs"
-
-[[example]]
-name = "originate_loopback_bowout"
-path = "examples/originate_loopback_bowout.rs"
-
-[[example]]
-name = "reexec_demo"
-path = "examples/reexec_demo.rs"
-
-[[example]]
-name = "reconnecting_client_demo"
-path = "examples/reconnecting_client.rs"
-
-[[example]]
-name = "codec_monitor"
-path = "examples/codec_monitor.rs"
-
-[[example]]
-name = "bgapi_bench"
-path = "examples/bgapi_bench.rs"
-
-[[example]]
 name = "sdp_codec_string"
 path = "examples/sdp_codec_string.rs"
 required-features = ["sdp"]

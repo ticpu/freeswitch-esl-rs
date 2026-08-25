@@ -33,7 +33,7 @@ detection.
 
 ```rust
 use std::time::Duration;
-use freeswitch_esl_tokio::{parse_api_body, *};
+use freeswitch_esl_tokio::*;
 use freeswitch_esl_tokio::commands::*;
 
 #[tokio::main]
@@ -55,29 +55,35 @@ async fn main() -> Result<(), EslError> {
     )
     .timeout(Duration::from_secs(30));
 
-    let response = client.bgapi(&cmd.to_string()).await?;
-    response.into_result()?;
+    // BACKGROUND_JOB is a switch-wide event, so the Job-UUID is what makes a
+    // result yours. BgJobTracker keeps that bookkeeping.
+    let mut jobs: BgJobTracker<()> = BgJobTracker::new();
+    jobs.bgapi(&client, &cmd.to_string(), ()).await?;
 
     while let Some(Ok(event)) = events.recv().await {
+        if let Some(((), job)) = jobs.try_complete(&event) {
+            match job.parse_body() {
+                Ok(data) => println!("bgapi result: {data}"),
+                Err(e) => eprintln!("bgapi failed: {e}"),
+            }
+            continue;
+        }
         let Some(event_type) = event.event_type() else { continue };
         match event_type {
             EslEventType::ChannelCreate => {
                 println!("channel created: {}", event.channel_name().unwrap_or("?"));
             }
             EslEventType::ChannelDestroy => {
+                // A cause that fails to parse means FreeSWITCH grew one this
+                // crate does not carry: a signal, not a blank.
                 let cause = match event.hangup_cause() {
                     Ok(Some(c)) => c.to_string(),
-                    _ => "unknown".into(),
+                    Ok(None) => "no cause header".into(),
+                    Err(e) => format!("unparseable: {e}"),
                 };
-                println!("channel destroyed: {} ({})",
-                    event.channel_name().unwrap_or("?"), cause);
+                println!("channel destroyed: {} ({cause})",
+                    event.channel_name().unwrap_or("?"));
                 break;
-            }
-            EslEventType::BackgroundJob => {
-                match parse_api_body(event.body().unwrap_or("")) {
-                    Ok(data) => println!("bgapi result: {}", data),
-                    Err(e) => eprintln!("bgapi error: {}", e),
-                }
             }
             _ => {}
         }
@@ -153,7 +159,10 @@ See [docs/design-rationale.md](docs/design-rationale.md) for the full story.
 let (client, mut events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
 
 let response = client.api("status").await?;
-// api_result() strips +OK prefix for action commands, returns raw body for queries
+// api_result() is the whole check. A command the switch refuses is answered as
+// a reply with no body; one that runs and fails reports in the body. Both come
+// back as Err here. It also strips the +OK prefix action commands carry, and
+// returns a query's body as-is.
 println!("{}", response.api_result()?);
 ```
 
@@ -229,7 +238,12 @@ for uuid in &channel_uuids {
 
 while let Some(Ok(event)) = events.recv().await {
     if let Some((channel_uuid, result)) = bg.try_complete(&event) {
-        println!("dump for {}: {:?}", channel_uuid, result.body());
+        // parse_body(), not body(): a job that failed reports it in the body,
+        // so the raw string reads as output.
+        match result.parse_body() {
+            Ok(dump) => println!("dump for {channel_uuid}: {dump}"),
+            Err(e) => eprintln!("dump for {channel_uuid} failed: {e}"),
+        }
     }
     // ... handle other events
 }
@@ -244,7 +258,7 @@ After accepting, send `connect` to establish the session:
 use freeswitch_esl_tokio::{EslClient, AppCommand, EventFormat, EventHeader, HeaderLookup};
 use tokio::net::TcpListener;
 
-let listener = TcpListener::bind("0.0.0.0:8040").await?;
+let listener = TcpListener::bind("[::]:8040").await?;
 let (client, mut events) = EslClient::accept_outbound(&listener).await?;
 
 // Must be the first command after accept, returns channel info as an EslResponse
@@ -673,7 +687,8 @@ impl HeaderLookup for TrackedChannel {
 // ch.caller_timetable(), ch.header(EventHeader::UniqueId), etc.
 ```
 
-See `cargo run --example channel_tracker` for a complete reference
+See [`examples/README.md`](examples/README.md) for what each example teaches and
+what it needs, or `cargo run --example channel_tracker` for a complete reference
 implementation using `HeaderLookup` for channel lifecycle monitoring.
 
 ### Channel event ordering
