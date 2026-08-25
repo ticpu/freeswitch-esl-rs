@@ -249,7 +249,6 @@ Examples are the first thing a new user reads. Write them for someone who has
 never used this library before.
 
 - **Comment the "why", not the "what".** Explain non-obvious return types inline.
-- **No em-dashes (—) in source code.** Fine in markdown prose.
 - **Explain unwrap() calls** — if safe, say why in a comment.
 - Examples use `ESL_HOST`/`ESL_PORT`/`ESL_PASSWORD` env vars with defaults.
 - **Keep examples in sync** — build all examples after public API changes.
@@ -281,3 +280,15 @@ serialization is wrong — fix the serializer, not the test.
 
 Tests and examples must use sanitized domains (`example.com`, `pbx.example.com`,
 `10.0.0.1`, `192.0.2.x`) — never real production or internal domains.
+
+## Dual Stack by Default
+
+Every bind, connect and address default in this crate, its examples and its
+tests must reach both families. Bind `[::]`, never `0.0.0.0`. Default a host to
+`localhost`, never to a literal: a literal pins the example to one family, and
+the shipped `event_socket.conf.xml` listens on `::`.
+
+`EslClient::connect` takes host and port as separate arguments, so a bare IPv6
+literal needs no brackets. Anything that reassembles `host:port` into one string
+must bracket it, and anything that splits one apart must not assume a single
+colon.
