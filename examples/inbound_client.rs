@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
     // A bare IPv6 literal needs no brackets: connect() takes host and port
     // separately. Parsing is loud on purpose -- a typo'd port that silently
     // became the default would look like FreeSWITCH refusing the connection.

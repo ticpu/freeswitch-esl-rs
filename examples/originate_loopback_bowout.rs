@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== YAML -> Originate ===");
     println!("{}\n", originate);
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port: u16 = std::env::var("ESL_PORT")
         .ok()
         .and_then(|p| {

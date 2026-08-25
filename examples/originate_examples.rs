@@ -312,7 +312,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Part 2: live call via bgapi
     // -----------------------------------------------------------------------
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port: u16 = match std::env::var("ESL_PORT") {
         Ok(value) => value.parse()?,
         Err(_) => DEFAULT_ESL_PORT,

@@ -12,7 +12,7 @@
 //!   cargo run --example sdp_codec_string --features sdp
 //!
 //! Connection (all optional, these are the defaults):
-//!   ESL_HOST=127.0.0.1  ESL_PORT=8021  ESL_PASSWORD=ClueCon
+//!   ESL_HOST=localhost  ESL_PORT=8021  ESL_PASSWORD=ClueCon
 
 use freeswitch_esl_tokio::sdp::{
     default_rate, CodecImplementation, CodecString, CodecStringOptions, SdpCodecEntry, SdpCodecs,
@@ -56,7 +56,7 @@ fn loaded_implementations() -> Vec<CodecImplementation> {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port: u16 = match std::env::var("ESL_PORT") {
         Ok(value) => value.parse()?,
         Err(_) => DEFAULT_ESL_PORT,

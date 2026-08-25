@@ -45,7 +45,7 @@ async fn main() {
 
     // A bare IPv6 literal works here without brackets: EslClient::connect takes
     // host and port separately.
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
     let port = match std::env::var("ESL_PORT") {
         Ok(value) => match value.parse() {
             Ok(port) => port,
