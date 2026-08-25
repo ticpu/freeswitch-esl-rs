@@ -1,11 +1,15 @@
-Perform a release of the rust-freeswitch-platform-ng workspace.
+Perform a release of the freeswitch-esl-tokio workspace.
 
 Optional override: $ARGUMENTS (format: vX.Y.Z). If provided, use that version.
 
 ## Release Workflow
 
 This is a two-crate workspace. `freeswitch-esl-tokio` depends on
-`freeswitch-types`, so **types must be published first**.
+`freeswitch-types`, so when both go out, **types is published first**. A release
+that changed only one crate publishes only that one.
+
+**A pushed tag is immutable — it is created only once CI is green on the commit
+it is built on. Never push a tag and its commit together.**
 
 ### Pre-release checks
 
@@ -24,19 +28,21 @@ cargo publish --dry-run -p freeswitch-types
 
 ### Publish order
 
+Only the crates whose version changed, types first when both go out:
+
 ```sh
-cargo publish -p freeswitch-types
-cargo publish -p freeswitch-esl-tokio
+cargo publish -p freeswitch-types      # only if its version changed
+cargo publish -p freeswitch-esl-tokio  # only if its version changed
 ```
 
 **Never `cargo publish` without completing these steps first:**
 
-1. Create signed annotated tags (`git tag -as`) with a brief changelog
-   in the tag message (use `git log --oneline <previous-tag>..HEAD` to
+1. Push the release commit **alone** (`git push`) and wait for CI to pass on it
+2. Only then create the signed annotated tag (`git tag -as`) with a brief
+   changelog in the tag message (use `git log --oneline <previous-tag>..HEAD` to
    generate it)
-2. Push the tags (`git push --tags`)
-3. Wait for CI to pass on the tagged commit
-4. Only then `cargo publish` (types first, then ESL)
+3. Push the tag (`git push --tags`) and wait for its own CI run
+4. Only then `cargo publish`, whichever crates were bumped
 
 ## Version determination
 
@@ -63,7 +69,16 @@ cargo publish -p freeswitch-esl-tokio
 2. Bump `version` in the appropriate `Cargo.toml` files (`freeswitch-types/Cargo.toml`
    and/or the root `Cargo.toml` for `freeswitch-esl-tokio`).
 
-3. Run the full release validation sequence — stop and report on any failure:
+3. Commit the bump — the validation below ends in `cargo publish --dry-run`,
+   which refuses a dirty working tree:
+
+```sh
+git add freeswitch-types/Cargo.toml Cargo.toml
+git commit -m "release: vX.Y.Z"
+```
+
+4. Run the full release validation sequence — stop and report on any failure.
+   Nothing is pushed or tagged yet, so amend the release commit and re-run:
 
 ```sh
 cargo fmt --all && \
@@ -78,7 +93,7 @@ cargo semver-checks check-release -p freeswitch-esl-tokio && \
 cargo publish --dry-run -p freeswitch-types
 ```
 
-4. Draft a changelog from `git log --oneline <last-tag>..HEAD`.
+5. Draft a changelog from `git log --oneline <last-tag>..HEAD`.
 
    **Rules:**
    - Group entries under section headings: `New features:`, `Bug fixes:`,
@@ -103,28 +118,48 @@ cargo publish --dry-run -p freeswitch-types
    - what changed
    ```
 
-5. Stage, commit, tag, and push in sequence:
+6. Push the release commit **alone**, then wait for CI. The tag is immutable
+   once pushed, so it is not created until this passes; a red run here is fixed
+   with another commit, not a retag:
 
 ```sh
-git add freeswitch-types/Cargo.toml Cargo.toml
-git commit -m "release: vX.Y.Z"
+git push
+./scripts/watch-ci.sh
+```
+
+   Never select the run to watch with `--branch ... --limit 1`. This repository
+   runs GitHub's default-setup CodeQL scan alongside `ci.yml`, and it is a
+   separate run on the same commit with no workflow file behind it. It usually
+   finishes first, so the most recent run on the branch is regularly the scan
+   rather than CI, and reading it green says nothing about CI. `watch-ci.sh`
+   pins both the workflow and the commit SHA, and passes `--exit-status`,
+   without which `gh run watch` exits 0 on a run that failed.
+
+7. Tag the green commit and push the tag on its own, then wait for its run:
+
+```sh
 git tag -as vX.Y.Z -m "$(cat <<'EOF'
 vX.Y.Z
 
 <changelog>
 EOF
 )"
-git push && git push --tags
+git push --tags
+./scripts/watch-ci.sh vX.Y.Z
 ```
 
-6. Wait for CI to pass on the tagged commit, then publish:
+8. Publish, **only the crates whose version was bumped in step 2**:
 
 ```sh
-cargo publish -p freeswitch-types
-cargo publish -p freeswitch-esl-tokio
+cargo publish -p freeswitch-types      # only if its version changed
+cargo publish -p freeswitch-esl-tokio  # only if its version changed
 ```
 
-7. Report the tag and the changelog.
+   A crate whose version did not change is already on crates.io at that version,
+   and publishing it again is refused. "Types first" orders the two; it does not
+   mean types is always part of a release.
+
+9. Report the tag and the changelog.
 
 ## Important
 
