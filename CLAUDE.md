@@ -306,7 +306,6 @@ Examples are the first thing a new user reads. Write them for someone who has
 never used this library before.
 
 - **Comment the "why", not the "what".** Explain non-obvious return types inline.
-- **No em-dashes (—) in source code.** Fine in markdown prose.
 - **Explain unwrap() calls** — if safe, say why in a comment.
 - Examples use `ESL_HOST`/`ESL_PORT`/`ESL_PASSWORD` env vars with defaults.
 - **Keep examples in sync** — build all examples after public API changes.

@@ -420,6 +420,17 @@ decide what to do with it. This is why the library never reconnects
 automatically — it can't know whether a failure is permanent or transient in
 the caller's context.
 
+## A refusal and a failure arrive on different halves of the same reply
+
+A command the switch refuses answers with a reply text and no body; one it runs
+and fails answers with a body and no reply text. Splitting those across two
+accessors makes every caller pick one half and lose the other, so the body parser
+reports the reply text's failure before reading the body. A reply text carrying
+neither marker stays non-fatal there: its normal case is a returned value.
+
+The response type is `#[must_use]`, because dropping it discards the only report
+either half makes.
+
 ## Re-exec preserves the authenticated socket across binary upgrades
 
 Production ESL daemons like fs-eventd maintain a persistent TCP connection to
