@@ -22,6 +22,10 @@ use std::time::Duration;
 
 const BOWOUT_YAML: &str = include_str!("originate_loopback_bowout.yaml");
 
+/// The pair bows out within milliseconds of the bridge, so this bounds a run
+/// where it never happened rather than one where it is still coming.
+const BOWOUT_DEADLINE: Duration = Duration::from_secs(10);
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let originate: Originate = yaml_serde::from_str(BOWOUT_YAML)?;
@@ -30,13 +34,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}\n", originate);
 
     let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = std::env::var("ESL_PORT")
-        .ok()
-        .and_then(|p| {
-            p.parse()
-                .ok()
-        })
-        .unwrap_or(DEFAULT_ESL_PORT);
+    let port: u16 = match std::env::var("ESL_PORT") {
+        Ok(value) => value.parse()?,
+        Err(_) => DEFAULT_ESL_PORT,
+    };
     let password =
         std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
 
@@ -68,10 +69,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut resigned = Vec::new();
     let mut spliced: Option<(String, String)> = None;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    // Distinguished from each other so a failure below names what actually
+    // happened: reporting "bowout did not happen" for a dropped connection
+    // sends the reader after the wrong thing.
+    let mut gave_up = None;
+    let deadline = tokio::time::Instant::now() + BOWOUT_DEADLINE;
     while resigned.len() < 2 || spliced.is_none() {
-        let Ok(Some(Ok(evt))) = tokio::time::timeout_at(deadline, events.recv()).await else {
-            break;
+        let evt = match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => evt,
+            Ok(Some(Err(e))) => {
+                gave_up = Some(format!("event stream error: {e}"));
+                break;
+            }
+            Ok(None) => {
+                gave_up = Some("event stream closed".to_string());
+                break;
+            }
+            Err(_) => {
+                gave_up = Some(format!("nothing more arrived within {BOWOUT_DEADLINE:?}"));
+                break;
+            }
         };
         match evt.event_type() {
             Some(EslEventType::ChannelHangupComplete) => {
@@ -109,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // uuid_bridge. Only the last one has a real channel on
                 // both sides.
                 let (Some(this), Some(other)) = (
-                    evt.header(EventHeader::ChannelName),
+                    evt.channel_name(),
                     evt.header(EventHeader::OtherLegChannelName),
                 ) else {
                     continue;
@@ -131,12 +148,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if let Some(reason) = gave_up {
+        return Err(format!(
+            "stopped watching before the bowout completed ({reason}); \
+             saw {} of 2 resignations and {} bridge",
+            resigned.len(),
+            if spliced.is_some() { "the" } else { "no" }
+        )
+        .into());
+    }
+    if resigned.len() != 2 {
+        return Err(format!("expected 2 loopback legs to resign, saw {:?}", resigned).into());
+    }
     let Some((near, far)) = spliced else {
         return Err("no uuid_bridge between the real legs -- bowout did not happen".into());
     };
-    if resigned.len() != 2 {
-        return Err(format!("expected 2 loopback legs to resign, saw {}", resigned.len()).into());
-    }
 
     println!("\n=== After bowout ===");
     println!(
@@ -146,10 +172,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Killing either survivor tears down what is now a plain two-party call.
     let kill = UuidKill::new(&near);
-    client
+    match client
         .api(&kill.to_string())
-        .await?;
-    println!("hung up {}", near);
+        .await
+        .and_then(|resp| {
+            resp.api_result()
+                .map(str::to_string)
+        }) {
+        Ok(_) => println!("hung up {near}"),
+        Err(e) => eprintln!("could not hang up {near}: {e}"),
+    }
 
+    client
+        .disconnect()
+        .await?;
     Ok(())
 }
