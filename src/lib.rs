@@ -181,4 +181,5 @@ pub use connection::{
     ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions,
     EslEventStream,
 };
+pub use constants::UNDEF_VALUE;
 pub use error::{CommandFailure, EslError, EslResult};
