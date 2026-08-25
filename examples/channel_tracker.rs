@@ -23,9 +23,10 @@
 //! Usage: RUST_LOG=info cargo run --example channel_tracker
 
 use std::collections::HashMap;
-use std::fmt::Display;
+use std::fmt::{Display, Write};
 use std::time::{Duration, Instant};
 
+use freeswitch_esl_tokio::variables::SofiaVariable;
 use freeswitch_esl_tokio::{
     parse_channel_dump, BgJobResult, BgJobTracker, CallState, ChannelState, EslClient, EslError,
     EslEvent, EslEventType, EventFormat, EventHeader, HeaderLookup, DEFAULT_ESL_PASSWORD,
@@ -42,8 +43,17 @@ const DUMP_DEADLINE: Duration = Duration::from_secs(30);
 /// [`EventHeader`] variant, so it is read by name.
 const OLD_UNIQUE_ID: &str = "Old-Unique-ID";
 
-fn short_uuid(uuid: &str) -> &str {
-    &uuid[..8.min(uuid.len())]
+/// First `n` characters of a wire value. Counted in characters, not bytes: a
+/// value that decoded lossily carries replacement characters a byte slice splits.
+fn truncate_chars(value: &str, n: usize) -> String {
+    value
+        .chars()
+        .take(n)
+        .collect()
+}
+
+fn short_uuid(uuid: &str) -> String {
+    truncate_chars(uuid, 8)
 }
 
 fn display_or<T: Display, E: Display>(result: Result<Option<T>, E>) -> String {
@@ -51,7 +61,7 @@ fn display_or<T: Display, E: Display>(result: Result<Option<T>, E>) -> String {
         Ok(Some(v)) => v.to_string(),
         Ok(None) => "-".into(),
         Err(e) => {
-            warn!("parse error: {}", e);
+            warn!("parse error: {e}");
             "!ERR".into()
         }
     }
@@ -246,18 +256,26 @@ impl ChannelTracker {
             return None;
         }
 
-        let Some(body) = result.body() else {
-            warn!("uuid_dump {} answered with no body", short_uuid(uuid));
-            self.forget(uuid);
-            return None;
+        let body = match result.parse_body() {
+            Ok(body) => body,
+            // A channel that hung up between the listing and its dump answers
+            // `-ERR No such channel!`, which is routine, not a fault.
+            Err(EslError::CommandFailed { reply_text }) => {
+                debug!("uuid_dump {} answered {reply_text}", short_uuid(uuid));
+                self.forget(uuid);
+                return None;
+            }
+            Err(e) => {
+                warn!("uuid_dump {} carried no result: {e}", short_uuid(uuid));
+                self.forget(uuid);
+                return None;
+            }
         };
 
         let mut event = match parse_channel_dump(body) {
             Ok(event) => event,
-            // A channel that hung up between the listing and its dump answers
-            // `-ERR No such channel!`, which is routine, not a fault.
             Err(e) => {
-                debug!("uuid_dump {} did not parse: {}", short_uuid(uuid), e);
+                warn!("uuid_dump {} did not parse: {e}", short_uuid(uuid));
                 self.forget(uuid);
                 return None;
             }
@@ -267,7 +285,7 @@ impl ChannelTracker {
         // signal names which keys, so it must not be dropped silently.
         let lossy = event.lossy_values();
         if !lossy.is_empty() {
-            warn!("uuid_dump {} decoded lossily: {}", short_uuid(uuid), lossy);
+            warn!("uuid_dump {} decoded lossily: {lossy}", short_uuid(uuid));
         }
 
         if event.unique_id() != Some(uuid) {
@@ -363,7 +381,7 @@ impl ChannelTracker {
                     .get_mut(&uuid)
                 {
                     ch.data
-                        .remove(EventHeader::OtherLegUniqueId.as_ref());
+                        .remove(EventHeader::OtherLegUniqueId.as_str());
                 }
                 self.print_channel_event(&uuid, event_type);
             }
@@ -383,7 +401,7 @@ impl ChannelTracker {
             Ok(Some(state)) => state.is_terminal(),
             Ok(None) => false,
             Err(e) => {
-                warn!("{} carried an unreadable state: {}", short_uuid(uuid), e);
+                warn!("{} carried an unreadable state: {e}", short_uuid(uuid));
                 false
             }
         };
@@ -462,43 +480,39 @@ impl ChannelTracker {
         sorted.sort_unstable();
         for uuid in sorted {
             let Some(ch) = self.get(uuid) else {
-                println!("{:<36}  awaiting dump", uuid);
+                println!("{uuid:<36}  awaiting dump");
                 continue;
             };
             let (state, call_state, dir, cid, name) = ch.format_fields();
             let dest = ch
-                .header(EventHeader::CallerDestinationNumber)
+                .destination_number()
                 .unwrap_or("-");
+            // `write!` into a String cannot fail, so the flags below discard it.
             let mut flags = String::new();
             if ch.call_state() == Ok(Some(CallState::Held)) {
                 flags.push_str("[HELD]");
             }
             if ch
-                .variable_str("rtp_secure_media_confirmed")
+                .variable(SofiaVariable::RtpSecureMediaConfirmed)
                 .is_some()
             {
                 flags.push_str("[SEC]");
             }
             if let Some(other) = ch.header(EventHeader::OtherLegUniqueId) {
-                flags.push_str(&format!("[B:{}]", short_uuid(other)));
+                let other = short_uuid(other);
+                let _ = write!(flags, "[B:{other}]");
             }
-            if let Some(call_id) = ch.variable_str("sip_call_id") {
-                flags.push_str(&format!("[SIP:{}]", &call_id[..16.min(call_id.len())]));
+            if let Some(call_id) = ch.variable(SofiaVariable::SipCallId) {
+                let call_id = truncate_chars(call_id, 16);
+                let _ = write!(flags, "[SIP:{call_id}]");
             }
+            let flags = if flags.is_empty() {
+                String::new()
+            } else {
+                format!(" {flags}")
+            };
             println!(
-                "{:<36}  {:<14} {:<10} {:<8} {:<16} {:<16} {}{}",
-                uuid,
-                state,
-                call_state,
-                dir,
-                cid,
-                dest,
-                name,
-                if flags.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", flags)
-                },
+                "{uuid:<36}  {state:<14} {call_state:<10} {dir:<8} {cid:<16} {dest:<16} {name}{flags}"
             );
         }
     }
@@ -517,11 +531,11 @@ async fn request_dump(
         sent: Instant::now(),
     };
     if let Err(e) = bg
-        .bgapi(client, &format!("uuid_dump {}", uuid), pending)
+        .bgapi(client, &format!("uuid_dump {uuid}"), pending)
         .await
     {
         // That dump was the channel's only route to being readable.
-        warn!("bgapi uuid_dump {} failed: {}", short_uuid(uuid), e);
+        warn!("bgapi uuid_dump {} failed: {e}", short_uuid(uuid));
         tracker.forget(uuid);
     }
 }
@@ -554,30 +568,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = std::env::var("ESL_PORT")
-        .ok()
-        .and_then(|p| {
-            p.parse()
-                .ok()
-        })
-        .unwrap_or(DEFAULT_ESL_PORT);
+    let port: u16 = match std::env::var("ESL_PORT") {
+        Ok(value) => value.parse()?,
+        Err(_) => DEFAULT_ESL_PORT,
+    };
     let password =
         std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
 
     let (client, mut events) = match EslClient::connect(&host, port, &password).await {
         Ok(pair) => {
-            info!("Connected to FreeSWITCH at {}:{}", host, port);
+            info!("Connected to FreeSWITCH at {host}:{port}");
             pair
         }
         Err(EslError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-            error!(
-                "Connection refused -- is FreeSWITCH running on {}:{}?",
-                host, port,
-            );
+            error!("Connection refused -- is FreeSWITCH running on {host}:{port}?");
             return Err(e.into());
         }
         Err(e) => {
-            error!("Failed to connect: {}", e);
+            error!("Failed to connect: {e}");
             return Err(e.into());
         }
     };
@@ -643,7 +651,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let event = match result {
             Ok(event) => event,
             Err(e) => {
-                error!("Event error: {}", e);
+                error!("Event error: {e}");
                 continue;
             }
         };
