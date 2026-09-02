@@ -236,7 +236,7 @@ Key design choices:
 ## What This Does Not Cover
 
 - Automatic dispatch (no `client.originate(cmd)` — just `client.bgapi(&cmd.to_string())`)
-- Response parsing for specific commands (e.g., parsing `uuid_dump` output)
+- Modelling a command's output schema (`status`, `sofia status`, `show` rows)
 - SIP URI type (future extension point)
 - Enterprise originate with `:_:` separator (deferred, documented in
   [dial-string-format.md](dial-string-format.md))

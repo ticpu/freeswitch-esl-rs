@@ -18,8 +18,22 @@ client.channel(&uuid).kill(HangupCause::NormalClearing).await?;
 ## Architectural Boundary
 
 `freeswitch-esl-tokio` (this crate) is **transport only**: wire format, framing,
-event delivery, and raw `api()`/`bgapi()`. It does not parse API response bodies
-into typed structs.
+event delivery, and raw `api()`/`bgapi()`. It does not model a command's output
+schema.
+
+The line is not "no per-command reply handling", which the crate has never
+managed to hold. A reply whose shape misleads a caller who reads it generically
+is a protocol fact, and this crate is where it is known: `parse_channel_dump`
+reads a `uuid_dump` body as the `CHANNEL_DATA` event it is rather than a second
+line format, and `getvar_opt` collapses the three spellings of an unset variable
+that `getvar` otherwise hands back as values. Both exist because the generic
+accessor returns a plausible wrong answer, not because the command deserved a
+typed API.
+
+What stays out is the schema behind a reply that is already unambiguous —
+`status`, `sofia status`, `show` rows. Those are the wrapper's, and
+[design-rationale.md](design-rationale.md) records why `show` in particular is
+not modelled anywhere.
 
 The wrapper crate depends on this crate and adds:
 
@@ -77,31 +91,10 @@ command builders and the transport layer independently.
 
 ## Planned Typed Enums
 
-These are **not** in `freeswitch-esl-tokio` yet but are natural next steps.
-They could live in either crate depending on whether the transport layer
-benefits from them directly.
-
-### HangupCause (Q.850 causes)
-
-Used by `UuidKill::cause`, `AppCommand::hangup()`, and the `hangup_cause()`
-accessor. FreeSWITCH defines these in `switch_channel.h`:
-
-```rust
-pub enum HangupCause {
-    NormalClearing,         // NORMAL_CLEARING
-    UserBusy,               // USER_BUSY
-    NoAnswer,               // NO_ANSWER
-    CallRejected,           // CALL_REJECTED
-    UnallocatedNumber,      // UNALLOCATED_NUMBER
-    NoRouteDestination,     // NO_ROUTE_DESTINATION
-    OriginatorCancel,       // ORIGINATOR_CANCEL
-    // ~50 more Q.850 causes
-}
-```
-
-**Strong candidate for this crate** since `UuidKill` and `AppCommand` already
-accept cause strings. Changing `cause: Option<String>` to
-`cause: Option<impl Display>` is backward-compatible.
+`HangupCause` was the first of these and landed in `freeswitch-types`
+(`channel.rs`), which settled the question the rest of this section asks: a
+value enum belongs here when a builder already takes the string, and only the
+parser that reads a reply's shape belongs to the wrapper.
 
 ### ApplicationName (dptools)
 
@@ -127,8 +120,12 @@ These belong in the wrapper crate since they depend on parsing strategy
 
 - `StatusResponse` -- from `api status`
 - `SofiaProfile` -- from `api sofia status`
-- `ShowChannels` -- from `api show channels as xml`
 - `OriginateResult` -- parsed originate response with UUID extraction
+
+`show` rows are the exception that is not merely deferred: they are refused
+here and in a wrapper alike, for the reason
+[design-rationale.md](design-rationale.md) gives. A caller wanting them parses
+them.
 
 ## Wrapper API Sketch
 
