@@ -48,11 +48,10 @@ impl EslParser {
         loop {
             match reader.read_event() {
                 Ok(XmlEvent::Start(ref e)) => {
-                    let tag = String::from_utf8_lossy(
-                        e.name()
-                            .as_ref(),
-                    )
-                    .to_string();
+                    let tag = e
+                        .name()
+                        .as_ref()
+                        .to_string();
                     match tag.as_str() {
                         "headers" => in_headers = true,
                         "body" => in_body = true,
@@ -64,11 +63,10 @@ impl EslParser {
                     }
                 }
                 Ok(XmlEvent::End(ref e)) => {
-                    let tag = String::from_utf8_lossy(
-                        e.name()
-                            .as_ref(),
-                    )
-                    .to_string();
+                    let tag = e
+                        .name()
+                        .as_ref()
+                        .to_string();
                     match tag.as_str() {
                         "headers" => in_headers = false,
                         "body" => {
@@ -89,11 +87,8 @@ impl EslParser {
                     }
                 }
                 Ok(XmlEvent::Text(ref e)) => {
-                    let decoded = e
-                        .decode()
-                        .map_err(Self::xml_err)?;
                     if in_body || current_tag.is_some() {
-                        text_buf.push_str(&decoded);
+                        text_buf.push_str(e);
                     }
                 }
                 Ok(XmlEvent::GeneralRef(ref e)) if in_body || current_tag.is_some() => {
@@ -118,14 +113,11 @@ impl EslParser {
         {
             return Ok(ch.to_string());
         }
-        let name = entity
-            .decode()
-            .map_err(Self::xml_err)?;
-        match quick_xml::escape::resolve_xml_entity(&name) {
+        let name: &str = entity;
+        match quick_xml::escape::resolve_xml_entity(name) {
             Some(s) => Ok(s.to_string()),
             None => Err(EslError::protocol_error(format!(
-                "unknown XML entity: &{};",
-                name
+                "unknown XML entity: &{name};"
             ))),
         }
     }
