@@ -1058,4 +1058,64 @@ mod tests {
         assert_eq!(vars.scope(), VariablesType::Channel);
         assert_eq!(vars.get("k"), Some("v"));
     }
+
+    /// A block whose separator is dropped by a round trip renders as a comma
+    /// block, which splits the very value the separator was chosen to carry.
+    #[test]
+    fn serde_variables_separator_round_trips() {
+        let mut vars = Variables::new(VariablesType::Default);
+        vars.insert("codecs", "PCMA,PCMU");
+        let vars = vars
+            .with_separator('|')
+            .unwrap();
+
+        let json = serde_json::to_string(&vars).unwrap();
+        let parsed: Variables = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.separator(), Some('|'));
+        assert_eq!(parsed, vars);
+        assert_eq!(parsed.to_string(), "{^^|codecs=PCMA,PCMU}");
+    }
+
+    /// The default separator has no key, so a config written before the key
+    /// existed serializes back byte-identical.
+    #[test]
+    fn serde_variables_default_separator_is_absent() {
+        let mut flat = Variables::new(VariablesType::Default);
+        flat.insert("k", "v");
+        assert_eq!(serde_json::to_string(&flat).unwrap(), r#"{"k":"v"}"#);
+
+        let mut scoped = Variables::new(VariablesType::Channel);
+        scoped.insert("k", "v");
+        assert_eq!(
+            serde_json::to_string(&scoped).unwrap(),
+            r#"{"scope":"channel","vars":{"k":"v"}}"#
+        );
+    }
+
+    #[test]
+    fn serde_variables_separator_deserializes_from_config() {
+        let json = r#"{"scope":"channel","vars":{"codecs":"PCMA,PCMU"},"separator":"|"}"#;
+        let vars: Variables = serde_json::from_str(json).unwrap();
+        assert_eq!(vars.scope(), VariablesType::Channel);
+        assert_eq!(vars.separator(), Some('|'));
+        assert_eq!(vars.to_string(), "[^^|codecs=PCMA,PCMU]");
+    }
+
+    /// The builder's two refusals have to hold at the config boundary too, or a
+    /// YAML file produces a block the same crate would not build.
+    #[test]
+    fn serde_variables_unusable_separator_is_refused() {
+        let undelimitable = r#"{"scope":"default","vars":{"k":"v"},"separator":"="}"#;
+        assert!(serde_json::from_str::<Variables>(undelimitable).is_err());
+
+        let in_a_value =
+            r#"{"scope":"default","vars":{"uri":"sip:bob@example.com"},"separator":":"}"#;
+        let err = serde_json::from_str::<Variables>(in_a_value)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("uri"),
+            "error does not name the variable: {err}"
+        );
+    }
 }
