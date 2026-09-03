@@ -129,34 +129,74 @@ pub struct SdpCodec {
 }
 
 impl SdpCodec {
-    /// Create a new [`SdpCodec`].
-    #[allow(clippy::too_many_arguments)]
+    /// Create a codec from the fields an `m=` line and its rtpmap always supply.
+    ///
+    /// The direction defaults to [`SdpDirection::SendRecv`], which is what a
+    /// section carrying no direction attribute means, and `has_rtpmap` to
+    /// `false` — set it with [`with_rtpmap`](Self::with_rtpmap) when the name
+    /// and clock rate came off an `a=rtpmap` line rather than the RFC 3551
+    /// static table.
     pub fn new(
         media: SdpMediaType,
         payload_type: u8,
         name: impl Into<String>,
         clock_rate: u32,
-        channels: Option<u8>,
-        fmtp: Option<String>,
-        ptime: Option<u32>,
-        maxptime: Option<u32>,
-        bitrate: Option<u32>,
-        direction: SdpDirection,
-        has_rtpmap: bool,
     ) -> Self {
         Self {
             media,
             payload_type,
             name: name.into(),
             clock_rate,
-            channels,
-            fmtp,
-            ptime,
-            maxptime,
-            bitrate,
-            direction,
-            has_rtpmap,
+            channels: None,
+            fmtp: None,
+            ptime: None,
+            maxptime: None,
+            bitrate: None,
+            direction: SdpDirection::SendRecv,
+            has_rtpmap: false,
         }
+    }
+
+    /// Set the channel count from `a=rtpmap`.
+    pub fn with_channels(mut self, channels: u8) -> Self {
+        self.channels = Some(channels);
+        self
+    }
+
+    /// Set the format parameters from `a=fmtp`.
+    pub fn with_fmtp(mut self, fmtp: impl Into<String>) -> Self {
+        self.fmtp = Some(fmtp.into());
+        self
+    }
+
+    /// Set the packetization time in milliseconds.
+    pub fn with_ptime(mut self, ptime: u32) -> Self {
+        self.ptime = Some(ptime);
+        self
+    }
+
+    /// Set the maximum packetization time in milliseconds.
+    pub fn with_maxptime(mut self, maxptime: u32) -> Self {
+        self.maxptime = Some(maxptime);
+        self
+    }
+
+    /// Set the bitrate in bits per second.
+    pub fn with_bitrate(mut self, bitrate: u32) -> Self {
+        self.bitrate = Some(bitrate);
+        self
+    }
+
+    /// Set the media direction of the section this codec came from.
+    pub fn with_direction(mut self, direction: SdpDirection) -> Self {
+        self.direction = direction;
+        self
+    }
+
+    /// Record that the encoding name and clock rate came from an `a=rtpmap` line.
+    pub fn with_rtpmap(mut self) -> Self {
+        self.has_rtpmap = true;
+        self
     }
 
     /// The SDP media type this codec belongs to.

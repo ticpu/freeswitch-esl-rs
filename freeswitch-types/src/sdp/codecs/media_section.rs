@@ -149,21 +149,20 @@ pub(super) fn parse_media_section(
             &mut section.warnings,
         );
 
+        let mut codec = SdpCodec::new(media_type.clone(), pt, canonical, clock_rate)
+            .with_direction(media_direction);
+        if has_rtpmap {
+            codec = codec.with_rtpmap();
+        }
+        *codec.channels_mut() = channels;
+        *codec.fmtp_mut() = fmtp;
+        *codec.ptime_mut() = ptime;
+        *codec.maxptime_mut() = media_maxptime;
+        *codec.bitrate_mut() = bitrate;
+
         section
             .entries
-            .push(SdpCodecEntry::Rtp(SdpCodec::new(
-                media_type.clone(),
-                pt,
-                canonical,
-                clock_rate,
-                channels,
-                fmtp,
-                ptime,
-                media_maxptime,
-                bitrate,
-                media_direction,
-                has_rtpmap,
-            )));
+            .push(SdpCodecEntry::Rtp(codec));
     }
 
     Ok(section)
