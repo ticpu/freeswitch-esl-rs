@@ -787,7 +787,7 @@ one.
 
 ## Requirements
 
-- Rust 1.75+
+- Rust 1.86+
 - Tokio async runtime
 
 ## Migrating from 1.x

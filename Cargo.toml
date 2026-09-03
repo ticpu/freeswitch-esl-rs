@@ -14,7 +14,7 @@ documentation = "https://docs.rs/freeswitch-esl-tokio"
 keywords = ["freeswitch", "esl", "voip", "tokio", "telephony"]
 categories = ["network-programming", "api-bindings"]
 readme = "README.md"
-rust-version = "1.75"
+rust-version = "1.86"
 exclude = ["CLAUDE.md", "hooks/", "tests/", "docs/"]
 
 [features]

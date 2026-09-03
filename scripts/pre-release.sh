@@ -4,7 +4,8 @@
 # Usage: ./pre-release.sh
 #
 # Requires a live FreeSWITCH ESL listener for the live_freeswitch suite, the
-# x86_64-pc-windows-msvc target for the cross-check, and cargo-semver-checks.
+# x86_64-pc-windows-msvc target for the cross-check, rustup for the MSRV
+# toolchain, and cargo-semver-checks.
 # Traced (set -x) so a failure names the gate that stopped it.
 
 set -euxo pipefail
@@ -15,6 +16,7 @@ cd "$CRATE_DIR"
 
 cargo fmt --all
 "$SCRIPT_DIR/check-feature-matrix.sh"
+"$SCRIPT_DIR/check-msrv.sh"
 cargo clippy --workspace --release --all-features -- -D warnings
 cargo test --workspace --release --all-features
 cargo test --test live_freeswitch -- --ignored

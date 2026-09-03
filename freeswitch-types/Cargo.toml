@@ -10,7 +10,7 @@ documentation = "https://docs.rs/freeswitch-types"
 keywords = ["freeswitch", "esl", "voip", "telephony", "sip"]
 categories = ["network-programming", "api-bindings"]
 readme = "README.md"
-rust-version = "1.75"
+rust-version = "1.86"
 exclude = ["CLAUDE.md"]
 
 [features]

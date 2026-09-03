@@ -41,6 +41,9 @@ jobs:
       - name: Check feature combinations
         run: scripts/check-feature-matrix.sh
 
+      - name: Check declared MSRV
+        run: scripts/check-msrv.sh
+
       - name: Check and lint
         run: scripts/ci-check.sh
 

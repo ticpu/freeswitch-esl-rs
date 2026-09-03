@@ -8,8 +8,8 @@ This is a two-crate workspace. `freeswitch-esl-tokio` depends on
 `freeswitch-types`, so when both go out, **types is published first**. A release
 that changed only one crate publishes only that one.
 
-`scripts/pre-release.sh` is the gate: fmt, feature matrix, clippy, workspace and
-live tests, Windows cross-check, semver-checks, and a publish dry-run.
+`scripts/pre-release.sh` is the gate: fmt, feature matrix, declared MSRV, clippy,
+workspace and live tests, Windows cross-check, semver-checks, and a publish dry-run.
 
 **A pushed tag is immutable — it is created only once CI is green on the commit
 it is built on. Never push a tag and its commit together.**
