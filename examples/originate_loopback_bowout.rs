@@ -14,9 +14,12 @@
 //!   Configure via ESL_HOST, ESL_PORT, ESL_PASSWORD env vars.
 
 use freeswitch_esl_tokio::commands::UuidKill;
+// Loopback types live in the variables module, beside LoopbackVariable, rather
+// than at the crate root.
+use freeswitch_esl_tokio::variables::LoopbackChannelName;
 use freeswitch_esl_tokio::{
-    EslClient, EslEventType, EventFormat, EventHeader, HeaderLookup, LoopbackChannelName,
-    Originate, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    EslClient, EslEventType, EventFormat, EventHeader, HeaderLookup, Originate,
+    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
 use std::time::Duration;
 

@@ -9,10 +9,10 @@ mod live_common;
 
 use freeswitch_esl_tokio::commands::originate::{OriginateTarget, Variables, VariablesType};
 use freeswitch_esl_tokio::commands::{LoopbackEndpoint, UuidSetVar, UuidTransfer};
-use freeswitch_esl_tokio::variables::LoopbackVariable;
+use freeswitch_esl_tokio::variables::{LoopbackChannelName, LoopbackHangupCause, LoopbackVariable};
 use freeswitch_esl_tokio::{
     Application, ChannelState, DialplanType, Endpoint, EslEventType, EventFormat, EventHeader,
-    HeaderLookup, LoopbackChannelName, LoopbackHangupCause, Originate,
+    HeaderLookup, Originate,
 };
 use live_common::{channel_exists, connect, getvar, kill_channel, ChannelReaper};
 use std::time::Duration;
