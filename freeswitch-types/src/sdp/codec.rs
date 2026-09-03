@@ -488,19 +488,31 @@ mod tests {
     // --- SdpCodec ---
 
     fn make_audio_codec() -> SdpCodec {
-        SdpCodec::new(
-            SdpMediaType::Audio,
-            0,
-            "PCMU",
-            8000,
-            Some(1),
-            None,
-            Some(20),
-            None,
-            Some(64000),
-            SdpDirection::SendRecv,
-            false,
-        )
+        SdpCodec::new(SdpMediaType::Audio, 0, "PCMU", 8000)
+            .with_channels(1)
+            .with_ptime(20)
+            .with_bitrate(64000)
+    }
+
+    #[test]
+    fn sdp_codec_new_defaults() {
+        let c = SdpCodec::new(SdpMediaType::Audio, 8, "PCMA", 8000);
+        assert_eq!(c.channels(), None);
+        assert_eq!(c.fmtp(), None);
+        assert_eq!(c.ptime(), None);
+        assert_eq!(c.maxptime(), None);
+        assert_eq!(c.bitrate(), None);
+        assert_eq!(c.direction(), SdpDirection::SendRecv);
+        assert!(!c.has_rtpmap());
+    }
+
+    #[test]
+    fn sdp_codec_builders_set_optional_fields() {
+        let c = SdpCodec::new(SdpMediaType::Audio, 9, "G722", 8000)
+            .with_maxptime(40)
+            .with_direction(SdpDirection::RecvOnly);
+        assert_eq!(c.maxptime(), Some(40));
+        assert_eq!(c.direction(), SdpDirection::RecvOnly);
     }
 
     #[test]
@@ -521,19 +533,11 @@ mod tests {
 
     #[test]
     fn sdp_codec_with_rtpmap() {
-        let c = SdpCodec::new(
-            SdpMediaType::Audio,
-            111,
-            "opus",
-            48000,
-            Some(2),
-            Some("minptime=10;useinbandfec=1".into()),
-            Some(20),
-            None,
-            None,
-            SdpDirection::SendRecv,
-            true,
-        );
+        let c = SdpCodec::new(SdpMediaType::Audio, 111, "opus", 48000)
+            .with_channels(2)
+            .with_fmtp("minptime=10;useinbandfec=1")
+            .with_ptime(20)
+            .with_rtpmap();
         assert_eq!(c.name(), "opus");
         assert_eq!(c.clock_rate(), 48000);
         assert_eq!(c.channels(), Some(2));
@@ -543,19 +547,7 @@ mod tests {
 
     #[test]
     fn sdp_codec_video_no_channels() {
-        let c = SdpCodec::new(
-            SdpMediaType::Video,
-            99,
-            "H264",
-            90000,
-            None,
-            None,
-            None,
-            None,
-            None,
-            SdpDirection::SendRecv,
-            true,
-        );
+        let c = SdpCodec::new(SdpMediaType::Video, 99, "H264", 90000).with_rtpmap();
         assert_eq!(c.media(), &SdpMediaType::Video);
         assert!(c
             .channels()

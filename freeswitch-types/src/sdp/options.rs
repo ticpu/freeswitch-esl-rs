@@ -189,38 +189,19 @@ impl CodecStringOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sdp::codec::{SdpDirection, SdpMediaType};
+    use crate::sdp::codec::SdpMediaType;
 
     fn make_audio_codec(name: &str, rate: u32, ptime: u32) -> SdpCodec {
-        SdpCodec::new(
-            SdpMediaType::Audio,
-            0,
-            name,
-            rate,
-            Some(1),
-            None,
-            Some(ptime),
-            None,
-            Some(64000),
-            SdpDirection::SendRecv,
-            false,
-        )
+        SdpCodec::new(SdpMediaType::Audio, 0, name, rate)
+            .with_channels(1)
+            .with_ptime(ptime)
+            .with_bitrate(64000)
     }
 
     fn make_video_codec(name: &str) -> SdpCodec {
-        SdpCodec::new(
-            SdpMediaType::Video,
-            99,
-            name,
-            90000,
-            None,
-            Some("profile-level-id=42e01f".to_string()),
-            None,
-            None,
-            None,
-            SdpDirection::SendRecv,
-            true,
-        )
+        SdpCodec::new(SdpMediaType::Video, 99, name, 90000)
+            .with_fmtp("profile-level-id=42e01f")
+            .with_rtpmap()
     }
 
     // --- defaults ---
