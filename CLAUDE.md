@@ -262,6 +262,12 @@ data. If a header is present but its value doesn't parse, that's a
 protocol violation — return `Err`, don't collapse it into `None` where
 it becomes indistinguishable from a missing header.
 
+Two carve-outs exist, both recorded in
+[docs/design-rationale.md](docs/design-rationale.md): non-UTF-8 event values
+and bodies decode lossily with the wire bytes carried as data, and a
+`userauth` reply the switch truncated is salvaged on the auth path only, with
+a warning. Neither is a framing fault, and framing faults stay fatal.
+
 ## Warnings Ride as Data, Never as a Flag in `Result`
 
 Best-effort recovery (e.g. lossy UTF-8 decode) carries its signal as **data on
