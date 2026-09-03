@@ -29,7 +29,10 @@ be the only way to render an audio endpoint.
 
 Some values cannot be represented in a bracket block at all: an empty value is
 discarded by the switch under every encoding, and a value carrying an unbalanced
-closing bracket truncates the block. Refusing them is the only correct handling,
+closing bracket truncates the block. A value carrying the block's own `^^`
+separator is the third: `with_separator` checks the values present when it is
+called, and an `insert` after it splits into a pair nobody wrote.
+Refusing them is the only correct handling,
 and it cannot live at render time — `Display` is infallible and `ToString`
 panics on a `fmt::Error`, which would put a panic in a library. Until these
 return `Result`, such a value is built silently and lost on the wire.

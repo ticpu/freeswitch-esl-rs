@@ -226,7 +226,9 @@ impl Variables {
     /// renders the same way whatever its values happen to be that call.
     ///
     /// Fails if `sep` cannot delimit this block, or if a value already present
-    /// contains it. Values inserted afterwards are not checked.
+    /// contains it. A value inserted afterwards is not checked: one carrying
+    /// `sep` splits into a pair nobody wrote, silently, until
+    /// [`insert`](Self::insert) becomes fallible (`docs/next-major.md`).
     pub fn with_separator(mut self, sep: char) -> Result<Self, OriginateError> {
         check_separator(sep, self.vars_type)?;
         if let Some((key, _)) = self
