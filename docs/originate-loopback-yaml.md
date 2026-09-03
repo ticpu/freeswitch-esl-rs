@@ -78,6 +78,22 @@ variables:                    variables:
                               # -> [customer_id=CUST-42,...]
 ```
 
+The `scope`/`vars` form also takes an optional `separator`, which renders the
+block in the `^^X` form described in
+[dial-string-format.md](dial-string-format.md#x-block-separator) — the only way
+a value can carry a comma when it arrives by `${...}` expansion. It is refused
+at load if it cannot delimit that scope's block or if a value already contains
+it. Absent, the block separates on a comma and no key is emitted.
+
+```yaml
+variables:
+  scope: default
+  vars:
+    codecs: "PCMA,PCMU,G729"
+  separator: "|"
+# -> {^^|codecs=PCMA,PCMU,G729}
+```
+
 ## Fields
 
 `endpoint` and one target key are required; everything else is optional and

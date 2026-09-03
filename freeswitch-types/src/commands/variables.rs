@@ -44,10 +44,13 @@ impl VariablesType {
 ///
 /// # Serde format
 ///
-/// [`Default`](VariablesType::Default) scope serializes as a flat JSON map:
-/// `{"key": "value", ...}`. Non-default scopes serialize as
-/// `{"scope": "Enterprise", "vars": {"key": "value"}}`.
-/// Deserialization accepts both formats; a flat map implies `Default` scope.
+/// [`Default`](VariablesType::Default) scope with the comma separator
+/// serializes as a flat JSON map: `{"key": "value", ...}`. Anything else
+/// serializes as `{"scope": "enterprise", "vars": {"key": "value"}}`, carrying
+/// a `"separator"` field only when [`with_separator`](Variables::with_separator)
+/// chose one. Deserialization accepts both formats; a flat map implies
+/// `Default` scope and the comma. A `separator` that cannot delimit the block,
+/// or that a value already contains, is refused at load.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variables {
     vars_type: VariablesType,
@@ -309,14 +312,25 @@ impl Variables {
 #[cfg(feature = "serde")]
 impl serde::Serialize for Variables {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.vars_type == VariablesType::Default {
+        if self.vars_type == VariablesType::Default
+            && self
+                .separator
+                .is_none()
+        {
             self.inner
                 .serialize(serializer)
         } else {
             use serde::ser::SerializeStruct;
-            let mut s = serializer.serialize_struct("Variables", 2)?;
+            let fields = 2 + usize::from(
+                self.separator
+                    .is_some(),
+            );
+            let mut s = serializer.serialize_struct("Variables", fields)?;
             s.serialize_field("scope", &self.vars_type)?;
             s.serialize_field("vars", &self.inner)?;
+            if let Some(sep) = self.separator {
+                s.serialize_field("separator", &sep)?;
+            }
             s.end()
         }
     }
@@ -331,24 +345,36 @@ impl<'de> serde::Deserialize<'de> for Variables {
             Scoped {
                 scope: VariablesType,
                 vars: IndexMap<String, String>,
+                #[serde(default)]
+                separator: Option<char>,
             },
             Flat(IndexMap<String, String>),
         }
 
-        let (vars_type, inner) = match VariablesRepr::deserialize(deserializer)? {
-            VariablesRepr::Scoped { scope, vars } => (scope, vars),
-            VariablesRepr::Flat(map) => (VariablesType::Default, map),
+        let (vars_type, inner, separator) = match VariablesRepr::deserialize(deserializer)? {
+            VariablesRepr::Scoped {
+                scope,
+                vars,
+                separator,
+            } => (scope, vars, separator),
+            VariablesRepr::Flat(map) => (VariablesType::Default, map, None),
         };
         // A config naming a value the wire cannot carry fails at load rather
         // than on the call it was loaded for.
         for (key, value) in &inner {
             check_representable(key, value, vars_type).map_err(serde::de::Error::custom)?;
         }
-        Ok(Self {
+        let vars = Self {
             vars_type,
             inner,
             separator: None,
-        })
+        };
+        match separator {
+            Some(sep) => vars
+                .with_separator(sep)
+                .map_err(serde::de::Error::custom),
+            None => Ok(vars),
+        }
     }
 }
 
