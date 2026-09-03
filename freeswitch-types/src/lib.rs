@@ -90,9 +90,7 @@ pub use sofia::{
 #[cfg(feature = "esl")]
 pub use variables::EslHeaders;
 pub use variables::{
-    ChannelVariable, CoreMediaVariable, EslArray, EslArrayError, LoopbackChannelName,
-    LoopbackHangupCause, LoopbackLeg, LoopbackResignation, MultipartBody, MultipartBodyError,
-    MultipartItem, ParseChannelVariableError, ParseCoreMediaVariableError,
-    ParseLoopbackHangupCauseError, ParseLoopbackLegError, RtpStatUnit, SipHeaderPrefix,
-    SipPassthroughHeader, VariableName, MAX_ARRAY_ITEMS,
+    ChannelVariable, CoreMediaVariable, EslArray, EslArrayError, MultipartBody, MultipartBodyError,
+    MultipartItem, ParseChannelVariableError, ParseCoreMediaVariableError, RtpStatUnit,
+    SipHeaderPrefix, SipPassthroughHeader, VariableName, MAX_ARRAY_ITEMS,
 };
