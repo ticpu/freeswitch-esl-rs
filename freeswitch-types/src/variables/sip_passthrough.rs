@@ -58,7 +58,14 @@ pub enum SipHeaderPrefix {
 
 impl SipHeaderPrefix {
     /// Wire prefix string including trailing separator.
-    pub fn as_str(&self) -> &'static str {
+    ///
+    /// ```
+    /// use freeswitch_types::SipHeaderPrefix;
+    ///
+    /// const PREFIX: &str = SipHeaderPrefix::Request.as_str();
+    /// assert_eq!(PREFIX, "sip_h_");
+    /// ```
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Invite => "sip_i_",
             Self::Request => "sip_h_",
