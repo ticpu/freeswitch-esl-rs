@@ -719,6 +719,14 @@ Per-channel teardown order:
 5. `CHANNEL_DESTROY`
 6. `CHANNEL_STATE` (CS_DESTROY) — true final event
 
+The two state headers do not report the same field. `switch_channel_event_set_basic_data()`
+in `switch_channel.c` fills `Channel-State` from the channel's `running_state`
+and `Channel-State-Number` from its `state`, and during teardown `state` leads.
+So `CHANNEL_DESTROY` carries `Channel-State: CS_REPORTING` while its
+`Channel-State-Number` already reads CS_DESTROY, and only the `CHANNEL_STATE`
+that follows reports `Channel-State: CS_DESTROY`. Read end-of-life from
+`Channel-State`, never from the number.
+
 Events from different channels can interleave freely on the ESL wire. If you
 are tracking channel lifecycle, use `CHANNEL_STATE` (CS_INIT) as the
 start-of-life trigger and `CHANNEL_STATE` (CS_DESTROY) as end-of-life rather
