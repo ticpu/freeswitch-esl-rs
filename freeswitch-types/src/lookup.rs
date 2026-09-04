@@ -364,6 +364,10 @@ pub trait HeaderLookup: SipHeaderLookup {
     /// Parse the `Channel-State-Number` header into a [`ChannelState`].
     ///
     /// Returns `Ok(None)` if the header is absent, `Err` if present but unparseable.
+    ///
+    /// This reports the channel's `state`, which leads `Channel-State`
+    /// (`running_state`) during teardown, so it is not the end-of-life signal --
+    /// see [`is_terminal_channel_state`](Self::is_terminal_channel_state).
     fn channel_state_number(&self) -> Result<Option<ChannelState>, ParseChannelStateError> {
         match self.header(EventHeader::ChannelStateNumber) {
             Some(s) => {
@@ -376,6 +380,22 @@ pub trait HeaderLookup: SipHeaderLookup {
             }
             None => Ok(None),
         }
+    }
+
+    /// Whether this event is the one that ends the channel: a `CHANNEL_STATE`
+    /// carrying `Channel-State: CS_DESTROY`.
+    ///
+    /// `CHANNEL_DESTROY` is not that event -- its `Channel-State` still reads
+    /// `CS_REPORTING`. Never derive end-of-life from
+    /// [`channel_state_number()`](Self::channel_state_number), which already
+    /// reads `CS_DESTROY` on `CHANNEL_DESTROY` and so fires twice.
+    ///
+    /// `Err` when `Channel-State` is present but unparseable; `Ok(false)` when
+    /// it is absent.
+    fn is_terminal_channel_state(&self) -> Result<bool, ParseChannelStateError> {
+        Ok(self
+            .channel_state()?
+            .is_some_and(|state| state.is_terminal()))
     }
 
     /// Parse the `Channel-Call-State` header into a [`CallState`].
@@ -725,6 +745,41 @@ mod tests {
                 .unwrap(),
             Some(ChannelState::CsExecute)
         );
+    }
+
+    #[test]
+    fn terminal_state_is_the_final_channel_state_event() {
+        let s = store_with(&[("Channel-State", "CS_DESTROY")]);
+        assert_eq!(s.is_terminal_channel_state(), Ok(true));
+    }
+
+    #[test]
+    fn channel_destroy_shape_is_not_terminal() {
+        let s = store_with(&[
+            ("Channel-State", "CS_REPORTING"),
+            ("Channel-State-Number", "12"),
+        ]);
+        assert_eq!(s.is_terminal_channel_state(), Ok(false));
+    }
+
+    #[test]
+    fn hangup_state_is_not_terminal() {
+        let s = store_with(&[("Channel-State", "CS_HANGUP")]);
+        assert_eq!(s.is_terminal_channel_state(), Ok(false));
+    }
+
+    #[test]
+    fn unparseable_channel_state_is_an_error() {
+        let s = store_with(&[("Channel-State", "CS_BOGUS")]);
+        assert!(s
+            .is_terminal_channel_state()
+            .is_err());
+    }
+
+    #[test]
+    fn missing_channel_state_is_not_terminal() {
+        let s = store_with(&[("Event-Name", "HEARTBEAT")]);
+        assert_eq!(s.is_terminal_channel_state(), Ok(false));
     }
 
     #[test]
