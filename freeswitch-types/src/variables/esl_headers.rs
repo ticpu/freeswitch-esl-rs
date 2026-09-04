@@ -149,16 +149,56 @@ impl EslHeaders {
     /// assert_eq!(info.entries().len(), 2);
     /// ```
     pub fn parse_uri_info(value: &str) -> Result<UriInfo, UriInfoError> {
+        let entries =
+            Self::split_entries(value).map_err(|e| UriInfoError::Malformed(e.to_string()))?;
+        UriInfo::from_entries(
+            entries
+                .iter()
+                .map(String::as_str),
+        )
+    }
+
+    /// Split one comma-list SIP header value held as an ESL variable into its
+    /// entries, applying the same decoding as [`parse_uri_info`](Self::parse_uri_info)
+    /// and [`parse_history_info`](Self::parse_history_info): bracket unwrapping,
+    /// then `ARRAY::` splitting, falling back to the RFC comma split.
+    ///
+    /// Only for headers that are lists (`Call-Info`, `Alert-Info`,
+    /// `History-Info`, `Diversion`, …). A header whose value legitimately
+    /// contains commas without being a list — `Date`, `Subject`, `User-Agent` —
+    /// must not go through it.
+    ///
+    /// # Errors
+    ///
+    /// A missing `ARRAY::` prefix is the RFC form, not an error. Every other
+    /// [`EslArrayError`] is a structural fault in the ESL encoding and is
+    /// returned as-is. An empty or whitespace-only value yields no entries,
+    /// which the typed parsers turn into their own `Empty` error.
+    ///
+    /// ```
+    /// use freeswitch_types::EslHeaders;
+    ///
+    /// let entries =
+    ///     EslHeaders::split_entries("ARRAY::<sip:a@example.test>|:<sip:b@example.test>").unwrap();
+    /// assert_eq!(entries, ["<sip:a@example.test>", "<sip:b@example.test>"]);
+    /// ```
+    pub fn split_entries(value: &str) -> Result<Vec<String>, EslArrayError> {
         let value = strip_brackets(value);
         match EslArray::parse(value) {
-            Ok(array) => UriInfo::from_entries(
-                array
-                    .items()
-                    .iter()
-                    .map(String::as_str),
-            ),
-            Err(EslArrayError::MissingPrefix) => UriInfo::parse(value),
-            Err(other) => Err(UriInfoError::Malformed(other.to_string())),
+            Ok(array) => Ok(array
+                .items()
+                .to_vec()),
+            Err(EslArrayError::MissingPrefix) => {
+                let value = value.trim();
+                if value.is_empty() {
+                    return Ok(Vec::new());
+                }
+                Ok(sip_header::split_comma_entries(value)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect())
+            }
+            Err(other) => Err(other),
         }
     }
 
@@ -172,17 +212,13 @@ impl EslHeaders {
     /// Structural `EslArrayError` cases (e.g. `TooManyItems`) are surfaced as
     /// [`HistoryInfoError::Malformed`] carrying the cause.
     pub fn parse_history_info(value: &str) -> Result<HistoryInfo, HistoryInfoError> {
-        let value = strip_brackets(value);
-        match EslArray::parse(value) {
-            Ok(array) => HistoryInfo::from_entries(
-                array
-                    .items()
-                    .iter()
-                    .map(String::as_str),
-            ),
-            Err(EslArrayError::MissingPrefix) => HistoryInfo::parse(value),
-            Err(other) => Err(HistoryInfoError::Malformed(other.to_string())),
-        }
+        let entries =
+            Self::split_entries(value).map_err(|e| HistoryInfoError::Malformed(e.to_string()))?;
+        HistoryInfo::from_entries(
+            entries
+                .iter()
+                .map(String::as_str),
+        )
     }
 }
 
@@ -432,6 +468,56 @@ mod tests {
         );
         let err = EslHeaders::parse_history_info(&value).expect_err("over-limit array must fail");
         assert!(matches!(err, HistoryInfoError::Malformed(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn split_entries_array_form() {
+        let entries =
+            EslHeaders::split_entries("ARRAY::<sip:a@example.test>|:<sip:b@example.test>")
+                .expect("ARRAY form");
+        assert_eq!(entries, ["<sip:a@example.test>", "<sip:b@example.test>"]);
+    }
+
+    #[test]
+    fn split_entries_rfc_comma_form() {
+        let entries = EslHeaders::split_entries(
+            "<sip:a@example.test>;text=\"one, two\",<sip:b@example.test>",
+        )
+        .expect("RFC form");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], "<sip:a@example.test>;text=\"one, two\"");
+    }
+
+    #[test]
+    fn split_entries_bracket_wrapped() {
+        let entries =
+            EslHeaders::split_entries("[<sip:a@example.test>;purpose=icon]").expect("bracket form");
+        assert_eq!(entries, ["<sip:a@example.test>;purpose=icon"]);
+    }
+
+    #[test]
+    fn split_entries_blank_value_yields_no_entries() {
+        let entries = EslHeaders::split_entries("  ").expect("blank value");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_history_info_blank_value_is_empty_error() {
+        let err = EslHeaders::parse_history_info("  ").expect_err("blank value must fail");
+        assert!(matches!(err, HistoryInfoError::Empty), "got {err:?}");
+    }
+
+    #[test]
+    fn split_entries_too_many_items_is_err() {
+        let value = format!(
+            "ARRAY::{}",
+            vec!["<sip:a@example.test>"; crate::variables::MAX_ARRAY_ITEMS + 1].join("|:")
+        );
+        let err = EslHeaders::split_entries(&value).expect_err("over-limit array must fail");
+        assert!(
+            matches!(err, EslArrayError::TooManyItems { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
