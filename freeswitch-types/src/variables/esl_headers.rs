@@ -98,6 +98,22 @@ impl EslHeaders {
     }
 }
 
+impl<K: Into<String>, V: Into<String>> FromIterator<(K, V)> for EslHeaders {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut headers = Self::new();
+        headers.extend(iter);
+        headers
+    }
+}
+
+impl<K: Into<String>, V: Into<String>> Extend<(K, V)> for EslHeaders {
+    fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
+        for (key, value) in iter {
+            self.insert(key, value);
+        }
+    }
+}
+
 impl From<IndexMap<String, String>> for EslHeaders {
     fn from(map: IndexMap<String, String>) -> Self {
         Self(map)
@@ -468,6 +484,25 @@ mod tests {
         );
         let err = EslHeaders::parse_history_info(&value).expect_err("over-limit array must fail");
         assert!(matches!(err, HistoryInfoError::Malformed(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn collects_from_key_value_pairs() {
+        let h: EslHeaders = [
+            ("Unique-ID", "uuid-1"),
+            ("Caller-Destination-Number", "911"),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(h.header_str("Unique-ID"), Some("uuid-1"));
+    }
+
+    #[test]
+    fn extend_adds_pairs() {
+        let mut h = EslHeaders::new();
+        h.insert("Unique-ID", "uuid-1");
+        h.extend([("Channel-Name", "sofia/a/b")]);
+        assert_eq!(h.len(), 2);
     }
 
     #[test]
