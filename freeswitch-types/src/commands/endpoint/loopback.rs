@@ -131,6 +131,44 @@ mod tests {
         assert_eq!(parsed, ep);
     }
 
+    /// `mod_loopback` splits the dial string into extension, context and
+    /// dialplan. Modelling two of the three folds `default/xml` into the
+    /// context, which then renders back as one segment the switch re-splits.
+    #[test]
+    fn loopback_carries_a_dialplan_segment() {
+        let ep: LoopbackEndpoint = "loopback/9199/default/xml"
+            .parse()
+            .unwrap();
+        assert_eq!(ep.extension, "9199");
+        assert_eq!(
+            ep.context
+                .as_deref(),
+            Some("default")
+        );
+        assert_eq!(
+            ep.dialplan
+                .as_deref(),
+            Some("xml")
+        );
+        assert_eq!(ep.to_string(), "loopback/9199/default/xml");
+    }
+
+    /// The dialplan is the third positional segment, so it cannot be written
+    /// without the second; the builder supplies the switch's own default.
+    #[test]
+    fn loopback_dialplan_without_a_context_fills_the_gap() {
+        let ep = LoopbackEndpoint::new("9199").with_dialplan("inline");
+        assert_eq!(ep.to_string(), "loopback/9199/default/inline");
+        assert_eq!(
+            ep.to_string()
+                .parse::<LoopbackEndpoint>()
+                .unwrap()
+                .dialplan
+                .as_deref(),
+            Some("inline")
+        );
+    }
+
     #[test]
     fn loopback_round_trip_no_context() {
         let ep = LoopbackEndpoint::new("9199");
@@ -147,6 +185,8 @@ mod tests {
             "loopback/9199",
             "loopback/100/default",
             "loopback/ext123/custom_ctx",
+            "loopback/9199/default/xml",
+            "loopback/100/custom_ctx/inline",
         ];
         for input in inputs {
             let parsed: LoopbackEndpoint = input
