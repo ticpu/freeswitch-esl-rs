@@ -555,9 +555,62 @@ mod tests {
         assert_eq!(qualified[1].name(), "AMR");
     }
 
+    fn filled_to_cap() -> CodecString {
+        (0..CodecString::MAX_SWITCH_ENTRIES)
+            .map(|_| CodecStringEntry::new("PCMU").unwrap())
+            .collect()
+    }
+
     #[test]
-    fn max_switch_entries_const() {
-        assert_eq!(CodecString::MAX_SWITCH_ENTRIES, 50);
+    fn push_at_the_switch_cap_is_refused() {
+        let mut cs = filled_to_cap();
+        let err = cs
+            .push(CodecStringEntry::new("PCMA").unwrap())
+            .unwrap_err();
+        assert!(matches!(err, CodecStringError::TooManyEntries { .. }));
+        assert_eq!(cs.len(), CodecString::MAX_SWITCH_ENTRIES);
+    }
+
+    #[test]
+    fn push_below_the_switch_cap_is_accepted() {
+        let mut cs = CodecString::new();
+        assert!(cs
+            .push(CodecStringEntry::new("PCMU").unwrap())
+            .is_ok());
+    }
+
+    #[test]
+    fn strict_parse_past_the_switch_cap_is_an_error() {
+        let s = vec!["PCMU"; CodecString::MAX_SWITCH_ENTRIES + 1].join(",");
+        let err = s
+            .parse::<CodecString>()
+            .unwrap_err();
+        assert!(matches!(err, CodecStringError::TooManyEntries { .. }));
+    }
+
+    #[test]
+    fn lenient_parse_past_the_switch_cap_warns() {
+        let s = vec!["PCMU"; CodecString::MAX_SWITCH_ENTRIES + 1].join(",");
+        let mut warnings = Vec::new();
+        let cs = CodecString::parse_lenient(&s, &mut warnings).unwrap();
+        assert_eq!(cs.len(), CodecString::MAX_SWITCH_ENTRIES + 1);
+        assert!(matches!(
+            warnings[0],
+            SdpWarning::CodecStringTruncated { .. }
+        ));
+    }
+
+    #[test]
+    fn empty_tokens_count_against_the_switch_cap() {
+        // separate_string_char_delim assigns a slot per token, empty ones included.
+        let s = format!("{},PCMU", ",".repeat(CodecString::MAX_SWITCH_ENTRIES - 1));
+        let mut warnings = Vec::new();
+        let cs = CodecString::parse_lenient(&s, &mut warnings).unwrap();
+        assert_eq!(cs.len(), 1);
+        assert!(matches!(
+            warnings[0],
+            SdpWarning::CodecStringTruncated { .. }
+        ));
     }
 
     // --- Step 5: dedup() ---
