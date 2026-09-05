@@ -11,7 +11,7 @@
 //! `event` command are refused. See docs/outbound-esl-quirks.md.
 //!
 //! Usage: cargo run --example outbound_server
-//!        ESL_BIND=127.0.0.1:8040 cargo run --example outbound_server
+//!        ESL_BIND=[::]:9000 cargo run --example outbound_server
 
 use freeswitch_esl_tokio::{
     AppCommand, EslClient, EslError, EslEventStream, EslEventType, EventFormat, EventHeader,

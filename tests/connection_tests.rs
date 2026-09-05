@@ -28,7 +28,7 @@ async fn test_auth_failure() {
 
     let (_, result) = tokio::join!(
         server.accept(),
-        EslClient::connect("127.0.0.1", port, "wrong_password")
+        EslClient::connect("localhost", port, "wrong_password")
     );
 
     match result {
@@ -347,7 +347,7 @@ async fn connect_refused_returns_connection_error() {
     let (listener, port) = setup_raw_pair().await;
     drop(listener);
 
-    let err = EslClient::connect("127.0.0.1", port, "pw")
+    let err = EslClient::connect("localhost", port, "pw")
         .await
         .unwrap_err();
     assert!(
@@ -370,7 +370,7 @@ async fn test_connection_mode_outbound() {
 
     let (accept_result, _mock_stream) = tokio::join!(
         EslClient::accept_outbound(&listener),
-        TcpStream::connect(("127.0.0.1", port))
+        TcpStream::connect(("localhost", port))
     );
 
     let (client, _events) = accept_result.unwrap();

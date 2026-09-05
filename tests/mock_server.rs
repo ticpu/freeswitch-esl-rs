@@ -19,9 +19,7 @@ pub struct MockClient {
 
 impl MockEslServer {
     pub async fn start(password: &str) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let (listener, _port) = setup_raw_pair().await;
         Self {
             listener,
             password: password.to_string(),
@@ -313,7 +311,7 @@ pub async fn setup_connected_pair_with_options(
 
     let (mock_client, esl_result) = tokio::join!(
         server.accept(),
-        freeswitch_esl_tokio::EslClient::connect_with_options("127.0.0.1", port, password, options)
+        freeswitch_esl_tokio::EslClient::connect_with_options("localhost", port, password, options)
     );
 
     let (esl_client, esl_events) = esl_result.unwrap();

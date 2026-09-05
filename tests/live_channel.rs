@@ -2,8 +2,8 @@
 //! (application/extension/inline), the channel timetable, uuid_setvar/getvar
 //! and uuid_kill round trips, and dial-string escaping per carrier.
 //!
-//! These tests require FreeSWITCH ESL on 127.0.0.1:8022 with password ClueCon.
-//! Run with: cargo test --test live_channel -- --ignored
+//! These tests require FreeSWITCH ESL on localhost:8022 with password ClueCon.
+//! Run with: cargo test --test 'live_*' -- --ignored
 
 mod live_common;
 

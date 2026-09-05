@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::sync::{OnceCell, Semaphore};
 use tokio::time::Instant;
 
-pub const ESL_HOST: &str = "127.0.0.1";
+pub const ESL_HOST: &str = "localhost";
 pub const ESL_PORT: u16 = 8022;
 pub const ESL_PASSWORD: &str = DEFAULT_ESL_PASSWORD;
 pub const MAX_CONCURRENT_CONNECTIONS: usize = 5;

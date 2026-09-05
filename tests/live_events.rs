@@ -2,8 +2,8 @@
 //! and heartbeat, the sendevent family, noevents/nixevent/filter, repeating
 //! SIP header round trips, multi-command api, reply status, and bgapi.
 //!
-//! These tests require FreeSWITCH ESL on 127.0.0.1:8022 with password ClueCon.
-//! Run with: cargo test --test live_events -- --ignored
+//! These tests require FreeSWITCH ESL on localhost:8022 with password ClueCon.
+//! Run with: cargo test --test 'live_*' -- --ignored
 
 mod live_common;
 

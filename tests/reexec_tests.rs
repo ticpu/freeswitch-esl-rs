@@ -147,7 +147,7 @@ async fn adopt_stream_with_empty_residual() {
         MockClient::from_stream(stream)
     });
 
-    let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+    let stream = tokio::net::TcpStream::connect(("localhost", port))
         .await
         .unwrap();
 
@@ -181,7 +181,7 @@ async fn adopt_stream_with_residual_bytes() {
         MockClient::from_stream(stream)
     });
 
-    let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+    let stream = tokio::net::TcpStream::connect(("localhost", port))
         .await
         .unwrap();
 
@@ -216,7 +216,7 @@ async fn adopt_stream_with_options() {
         MockClient::from_stream(stream)
     });
 
-    let stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+    let stream = tokio::net::TcpStream::connect(("localhost", port))
         .await
         .unwrap();
 

@@ -356,7 +356,7 @@ async fn test_outbound_connect_session() {
     // Mock FreeSWITCH connects to our listener, then we send connect
     let (accept_result, mock_stream) = tokio::join!(
         EslClient::accept_outbound(&listener),
-        TcpStream::connect(("127.0.0.1", port))
+        TcpStream::connect(("localhost", port))
     );
 
     let (client, _events) = accept_result.unwrap();

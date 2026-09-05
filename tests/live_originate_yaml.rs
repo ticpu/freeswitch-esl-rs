@@ -2,8 +2,8 @@
 //! loopback originate (see docs/originate-loopback-yaml.md), nested-bridge
 //! scoped variables, and the bowout pair.
 //!
-//! These tests require FreeSWITCH ESL on 127.0.0.1:8022 with password ClueCon.
-//! Run with: cargo test --test live_originate_yaml -- --ignored
+//! These tests require FreeSWITCH ESL on localhost:8022 with password ClueCon.
+//! Run with: cargo test --test 'live_*' -- --ignored
 
 mod live_common;
 

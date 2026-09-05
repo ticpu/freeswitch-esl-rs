@@ -2,8 +2,8 @@
 //! lifecycle, liveness, command timeout, userauth, outbound connect-response
 //! case preservation, log events, and header/codec normalization.
 //!
-//! These tests require FreeSWITCH ESL on 127.0.0.1:8022 with password ClueCon.
-//! Run with: cargo test --test live_freeswitch -- --ignored
+//! These tests require FreeSWITCH ESL on localhost:8022 with password ClueCon.
+//! Run with: cargo test --test 'live_*' -- --ignored
 
 mod live_common;
 
@@ -277,12 +277,12 @@ async fn live_outbound_connect_response_preserves_underscored_case() {
         .await
         .expect("subscribe BACKGROUND_JOB");
 
-    let listener = TcpListener::bind("127.0.0.1:0")
+    let listener = TcpListener::bind("[::]:0")
         .await
         .expect("bind outbound listener");
     let port = listener
         .local_addr()
-        .unwrap()
+        .expect("a bound listener has a local address")
         .port();
 
     // Inject a channel variable with mixed-case underscored name.
@@ -295,6 +295,8 @@ async fn live_outbound_connect_response_preserves_underscored_case() {
         .with_context("test")
         .with_variables(vars);
 
+    // The switch dials this literal, so it names the family the switch itself
+    // listens on; the listener above takes either.
     let cmd = Originate::application(
         Endpoint::Loopback(endpoint),
         Application::new("socket", Some(format!("127.0.0.1:{} async full", port))),
