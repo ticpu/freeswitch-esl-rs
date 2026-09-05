@@ -189,7 +189,9 @@ fn split_respecting_brackets(s: &str, sep: char) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::endpoint::{ErrorEndpoint, LoopbackEndpoint, SofiaEndpoint, SofiaGateway};
+    use crate::commands::endpoint::{
+        DialString, ErrorEndpoint, LoopbackEndpoint, SofiaEndpoint, SofiaGateway,
+    };
     use crate::commands::variables::VariablesType;
 
     // === Display ===
@@ -438,6 +440,38 @@ mod tests {
         } else {
             panic!("expected SofiaGateway");
         }
+    }
+
+    /// An enterprise block is global too. Read as part of the first endpoint it
+    /// either fails the parse or lands on one leg of a forked dial.
+    #[test]
+    fn from_str_with_enterprise_global_variables() {
+        let bridge: BridgeDialString = "<originate_timeout=60>sofia/internal/1000@domain"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            bridge
+                .variables()
+                .expect("enterprise block is global")
+                .get("originate_timeout"),
+            Some("60")
+        );
+        assert_eq!(bridge.groups()[0].len(), 1);
+    }
+
+    /// A channel block binds to the endpoint that follows it, so the global
+    /// slot must not take it.
+    #[test]
+    fn from_str_leaves_a_channel_block_on_its_endpoint() {
+        let bridge: BridgeDialString = "[leg_timeout=30]sofia/gateway/gw1/1234"
+            .parse()
+            .unwrap();
+        assert!(bridge
+            .variables()
+            .is_none());
+        assert!(bridge.groups()[0][0]
+            .variables()
+            .is_some());
     }
 
     #[test]
