@@ -1344,6 +1344,55 @@ mod tests {
         assert_eq!(parsed.to_string(), wire);
     }
 
+    /// A dial string carries caller-id and `sip_h_*` values, so a rejection
+    /// names the field it failed on and leaves the bytes on the error.
+    #[test]
+    fn errors_name_the_field_and_never_quote_the_input() {
+        let cases: [(&str, &str); 4] = [
+            (
+                "originate sofia/a/b 1000 XML default undef undef 30s",
+                "30s",
+            ),
+            ("originate error/NO_SUCH_CAUSE 1000", "NO_SUCH_CAUSE"),
+            ("originate ${group_call(support@example.com+Z)} 1000", "+Z"),
+            ("originate verto/15551234567 1000", "15551234567"),
+        ];
+        for (input, secret) in cases {
+            let msg = input
+                .parse::<Originate>()
+                .expect_err(input)
+                .to_string();
+            assert!(!msg.contains(secret), "{input} quoted its input: {msg}");
+        }
+
+        let msg = originate_split("originate 'never closed", ' ')
+            .expect_err("unclosed quote")
+            .to_string();
+        assert!(!msg.contains("never closed"), "quoted its input: {msg}");
+    }
+
+    /// A rejected timeout, cause or order has a cause of its own; stringifying
+    /// it into a message drops the chain a caller would match on.
+    #[test]
+    fn errors_keep_their_source() {
+        use std::error::Error;
+
+        for input in [
+            "originate sofia/a/b 1000 XML default undef undef 30s",
+            "originate error/NO_SUCH_CAUSE 1000",
+            "originate ${group_call(support@example.com+Z)} 1000",
+        ] {
+            assert!(
+                input
+                    .parse::<Originate>()
+                    .expect_err(input)
+                    .source()
+                    .is_some(),
+                "{input} has no source"
+            );
+        }
+    }
+
     #[test]
     fn originate_accessors() {
         let ep = Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("default"));
