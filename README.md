@@ -149,7 +149,7 @@ Background reader task
 '- broadcasts ConnectionStatus on disconnect
 ```
 
-See [docs/design-rationale.md](docs/design-rationale.md) for the full story.
+See [docs/design-rationale.md](https://github.com/ticpu/freeswitch-esl-tokio/blob/master/docs/design-rationale.md) for the full story.
 
 ## Usage
 
@@ -309,7 +309,7 @@ while let Some(Ok(event)) = events.recv().await {
 # }
 ```
 
-See [docs/outbound-esl-quirks.md](docs/outbound-esl-quirks.md) for outbound
+See [docs/outbound-esl-quirks.md](https://github.com/ticpu/freeswitch-esl-tokio/blob/master/docs/outbound-esl-quirks.md) for outbound
 mode gotchas (`connect_session` ordering, `async full` requirement, socket app
 quoting).
 
@@ -410,7 +410,7 @@ client.send_command(AppCommand::bridge(bridge)).await?;
 # }
 ```
 
-See [docs/dial-string-format.md](docs/dial-string-format.md) for the complete
+See [docs/dial-string-format.md](https://github.com/ticpu/freeswitch-esl-tokio/blob/master/docs/dial-string-format.md) for the complete
 dial string reference (variable scoping, `^^:` custom delimiters, enterprise
 `:_:` originate).
 
@@ -445,7 +445,7 @@ client.api(&dtmf.to_string()).await?;
 > [`commands/channel.rs`](freeswitch-types/src/commands/channel.rs), and
 > [`commands/conference.rs`](freeswitch-types/src/commands/conference.rs).
 
-See [docs/command-builders.md](docs/command-builders.md) for the full builder
+See [docs/command-builders.md](https://github.com/ticpu/freeswitch-esl-tokio/blob/master/docs/command-builders.md) for the full builder
 architecture, all channel/conference command types, and escaping rules.
 
 ## Config-driven commands (serde)
@@ -499,7 +499,7 @@ filters:
 
 The order of `events` does not matter: `CUSTOM` is terminal on the wire and the
 serializer always emits it last. See
-[docs/event-command-grammar.md](docs/event-command-grammar.md) for the grammar,
+[docs/event-command-grammar.md](https://github.com/ticpu/freeswitch-esl-tokio/blob/master/docs/event-command-grammar.md) for the grammar,
 what the raw string commands do not guarantee, and why a bare `CUSTOM`
 subscribes to nothing.
 
@@ -549,7 +549,7 @@ This is the format produced by `yaml_serde`. JSON libraries represent the
 same data differently (`{"sofia_gateway": {"gateway": ...}}` instead of a
 YAML tag), but both deserialize into the same Rust types.
 
-See [docs/originate-loopback-yaml.md](docs/originate-loopback-yaml.md) for a
+See [docs/originate-loopback-yaml.md](https://github.com/ticpu/freeswitch-esl-tokio/blob/master/docs/originate-loopback-yaml.md) for a
 complete YAML originate covering every field, how variables reach both
 loopback legs, and how to make a loopback pair bow out.
 
@@ -600,15 +600,19 @@ let pidf = body.by_media_type("application/pidf+xml");
 
 ## Codec strings and SDP (`sdp` feature)
 
+Off by default -- add `features = ["sdp"]` to the `freeswitch-esl-tokio`
+dependency line to reach the `sdp` module.
+
 `CodecString` models the FreeSWITCH codec-string grammar in both directions, so a
 codec string can be read back, rewritten, or checked rather than assembled by
 concatenation. `SdpCodecs` turns a peer's SDP offer into a typed codec list. The
 crate supplies the grammar's own operations — append, deduplicate, filter — and
 leaves the policy to you: there is no merge, because intersecting an offer while
 *generating* one is not something FreeSWITCH does, and it silently narrows a list
-that some interfaces require to stay complete.
+that some interfaces require to stay complete. The block below compiles only
+with the `sdp` feature enabled.
 
-```rust,no_run
+```rust,ignore
 # use freeswitch_esl_tokio::EslClient;
 use freeswitch_esl_tokio::sdp::{
     CodecImplementation, CodecString, CodecStringOptions, SdpCodecs,
@@ -650,7 +654,7 @@ Ordering is whatever you concatenate, since `dedup()` keeps the first occurrence
 offer-then-backup preserves the peer's preference and its qualifiers, backup-then-offer
 preserves yours.
 
-See [docs/codec-string-format.md](docs/codec-string-format.md) for the grammar, the
+See [docs/codec-string-format.md](https://github.com/ticpu/freeswitch-esl-tokio/blob/master/docs/codec-string-format.md) for the grammar, the
 characters a format-parameter value cannot carry, the G.722 rate/packetization trap,
 and the two places FreeSWITCH drops a codec-string entry without logging it.
 
@@ -872,15 +876,24 @@ See [bench/](bench/) for build instructions and details.
 ## Development
 
 ```sh
-./hooks/install.sh   # symlinks pre-commit hook
+./hooks/install.sh   # symlinks the pre-commit and pre-push hooks
 ```
 
 The pre-commit hook enforces:
 
+- Cargo.lock stays off branches -- it may only be committed on the release
+  tag's own detached commit
 - `cargo fmt --check` -- formatting
-- `cargo clippy -- -D warnings` -- lint warnings as errors
+- `cargo clippy --all-features --all-targets -- -D warnings` -- lint warnings as errors
 - `RUSTDOCFLAGS="-D missing_docs" cargo doc` -- all public items documented
-- `hooks/check-enums.py` -- validates `EslEventType`, `HangupCause`, `ChannelState`, `CallState`, and `SipHeader` enums against FreeSWITCH C source
+- `cargo test --workspace --all-features` -- the full test suite, doctests included
+- `hooks/check-enums.py` -- validates `EslEventType`, `HangupCause`, `ChannelState`, `CallState`,
+  `CoreMediaVariable` (`core-media-vars`), `ConferenceVariable` (`conference-vars`),
+  `SipHeaderPrefix` (`sip-header-prefixes`), and `EventHeader` (`event-headers`) against FreeSWITCH C source
+- `hooks/check-source-refs.py` -- verifies every `file.c:NNN` citation against the pinned FreeSWITCH commit
+
+The pre-push hook backstops the Cargo.lock check against a rebase or
+cherry-pick that reintroduces it after the commit gate ran.
 
 ### Testing
 
@@ -888,19 +901,20 @@ Unit and mock-server tests run without external dependencies:
 
 ```sh
 cargo test --lib
-cargo test --test integration_tests --test connection_tests
+cargo test --test integration_tests --test connection_tests \
+    --test command_wire_tests --test connection_failure_tests --test reexec_tests
 ```
 
 Live integration tests require FreeSWITCH ESL on `127.0.0.1:8022`
 (password `ClueCon`). They are `#[ignore]` by default:
 
 ```sh
-cargo test --test live_freeswitch -- --ignored
+cargo test --test 'live_*' -- --ignored
 ```
 
 They run in parallel against that one switch and raise its
 `sessions-per-second` to make that safe.
-[docs/live-test-switch.md](docs/live-test-switch.md) documents the dialplan,
+[docs/live-test-switch.md](https://github.com/ticpu/freeswitch-esl-tokio/blob/master/docs/live-test-switch.md) documents the dialplan,
 modules, and directory users they expect, and the two rules for writing a new
 one.
 

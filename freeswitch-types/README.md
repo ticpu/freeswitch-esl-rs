@@ -8,7 +8,7 @@ runtime dependency.
 
 Includes `SipHeaderAddr`, a standalone RFC 3261 `name-addr` parser with
 header-level parameters — usable in any SIP project, not just FreeSWITCH.
-With `default-features = false`, the only dependencies are `sip-uri` and
+With `default-features = false`, the only dependencies are `sip-header` and
 `percent-encoding`.
 
 Also provides FreeSWITCH ESL types (channel state, events, commands,
@@ -23,19 +23,22 @@ which re-exports everything from this crate.
 
 | Module | Contents |
 |--------|----------|
-| `sip_header_addr` | `SipHeaderAddr` — RFC 3261 `name-addr` parser with header-level parameters |
-| `sip_message` | `extract_header` — extract header values from raw SIP message text (RFC 3261 §7.3.1: folding, case-insensitive, multi-occurrence) |
-| `sip_header` | `SipHeader` enum, `SipHeaderLookup` trait, `extract_from()` for raw messages |
 | `channel` | `ChannelState`, `CallState`, `AnswerState`, `CallDirection`, `HangupCause`, `ChannelTimetable` (+ `TimetableField`, one named header at a time), `channel_driver()` |
 | `headers` | `EventHeader` enum (typed event header names) |
 | `lookup` | `HeaderLookup` trait (typed accessors for any key-value store) |
+| `lossy_values` | `LossyValues`/`LossyValue` — non-UTF-8 header-value signal *(requires `esl` feature)* |
+| `prelude` | `HeaderLookup`, `SipHeaderLookup`, and the header/variable enums, for a single glob import |
 | `sofia` | `SofiaChannelName` (borrow-based `sofia/<profile>/<user>@<host>` parser), `SofiaEventSubclass`, `GatewayRegState`, `SipUserPingStatus` |
-| `variables` | `ChannelVariable`, `CoreMediaVariable` (`unit()` → `RtpStatUnit`), `SofiaVariable`, `LoopbackVariable` (+ `LoopbackResignation`, the bowout marker, and `LoopbackChannelName`/`LoopbackLeg` — the name is the one field a resignation does not copy onto the surviving channel), `ConferenceVariable`, `SipPassthroughHeader` (unified `sip_h_*`/`sip_i_*`/etc. with `extract_from()`), `EslArray`, `MultipartBody` |
-| | `CarriedHeader` — the exhaustive mapping `SofiaVariable::carried_header()` returns from a channel variable to the SIP header(s) it carries |
+| `variables` | `ChannelVariable`, `CoreMediaVariable` (`unit()` → `RtpStatUnit`), `SofiaVariable`, `LoopbackVariable` (+ `LoopbackResignation`, the bowout marker, and `LoopbackChannelName`/`LoopbackLeg` — the name is the one field a resignation does not copy onto the surviving channel), `ConferenceVariable`, `SipPassthroughHeader` (unified `sip_h_*`/`sip_i_*`/etc. with `extract_from()`), `EslArray`, `MultipartBody`, `CarriedHeader` (the exhaustive mapping `SofiaVariable::carried_header()` returns from a channel variable to the SIP header(s) it carries) |
 | `event` | `EslEvent`, `EslEventType`, `EventFormat`, `EslEventPriority`, `LossyValues`/`LossyValue` (non-UTF-8 header-value signal) *(requires `esl` feature)* |
 | `commands` | `Originate`, `BridgeDialString`, `UuidKill`, `UuidBridge`, endpoint types *(requires `esl` feature)* |
 | `sdp` | `CodecString`/`CodecStringEntry` (the FreeSWITCH codec-string grammar, parse and emit, with `dedup`/`simplify` ported from the switch), `SdpCodecs` (SDP offer → typed codec list, plus `SdpMediaSection` for every `m=` line the offer carried — held streams included — and `NonCodecPayload` for what the switch negotiates outside the string), `CodecImplementation` (filter a codec string against what a switch has loaded) *(requires `sdp` feature)* |
-| `conference_info` | RFC 4575 `conference-info+xml` types *(requires `conference-info` feature)* |
+
+`SipHeaderAddr`, `extract_header`, `SipHeader`, `SipHeaderLookup`, and the
+RFC 4575 `conference-info+xml` types (behind the `conference-info` feature)
+are not modules of this crate -- they come from the re-exported
+[`sip-header`](https://docs.rs/sip-header) crate, reachable from the crate
+root or through `sip_header::conference_info`.
 
 ## Features
 
@@ -48,6 +51,8 @@ which re-exports everything from this crate.
 - **`conference-info`** — enables `ConferenceInfo::from_xml()`/`to_xml()` for
   parsing RFC 4575 `application/conference-info+xml` documents (pulls in
   `quick-xml`). Type definitions are always available without this feature.
+- **`sdp`** — enables the `sdp` module (`CodecString`, `SdpCodecs`,
+  `CodecImplementation`), pulling in `sdp-types`.
 
 ## Usage
 
@@ -83,12 +88,7 @@ assert_eq!(addr.sip_uri().unwrap().user(), Some("alice"));
 
 ### Command builders (requires `esl` feature)
 
-Not run as a doctest yet: round-trip parsing of a quoted `cid_name` value
-(`'Outbound Call'`) does not currently match its own `Display` output --
-parsing re-wraps the already-quoted string instead of stripping the quotes.
-Tracked as a `commands/` bug, not a documentation issue.
-
-```rust,ignore
+```rust
 use std::time::Duration;
 use freeswitch_types::commands::*;
 
