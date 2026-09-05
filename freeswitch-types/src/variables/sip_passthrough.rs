@@ -362,37 +362,27 @@ impl std::str::FromStr for SipPassthroughHeader {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         for &prefix in PREFIX_PATTERNS {
-            if let Some(suffix) = s.strip_prefix(prefix.as_str()) {
-                if suffix.is_empty() {
-                    return Err(ParseSipPassthroughError(s.to_string()));
-                }
-                let canonical = canonical_from_suffix(prefix, suffix);
-                return Ok(Self {
-                    prefix,
-                    canonical_name: canonical,
-                    wire: s.to_string(),
-                });
+            let pfx = prefix.as_str();
+            if !s
+                .get(..pfx.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(pfx))
+            {
+                continue;
             }
-        }
-
-        // Case-insensitive prefix matching for sip_i_ (FreeSWITCH may
-        // uppercase in some contexts)
-        let lower = s.to_ascii_lowercase();
-        if lower != s {
-            for &prefix in PREFIX_PATTERNS {
-                if let Some(suffix) = lower.strip_prefix(prefix.as_str()) {
-                    if suffix.is_empty() {
-                        return Err(ParseSipPassthroughError(s.to_string()));
-                    }
-                    let canonical = canonical_from_suffix(prefix, suffix);
-                    let wire = build_wire(prefix, &canonical);
-                    return Ok(Self {
-                        prefix,
-                        canonical_name: canonical,
-                        wire,
-                    });
-                }
+            let suffix = &s[pfx.len()..];
+            if suffix.is_empty() {
+                return Err(ParseSipPassthroughError(s.to_string()));
             }
+            let canonical = canonical_from_suffix(prefix, suffix);
+            let wire = match prefix {
+                SipHeaderPrefix::Invite => build_wire(prefix, &canonical),
+                _ => format!("{pfx}{suffix}"),
+            };
+            return Ok(Self {
+                prefix,
+                canonical_name: canonical,
+                wire,
+            });
         }
 
         Err(ParseSipPassthroughError(s.to_string()))
