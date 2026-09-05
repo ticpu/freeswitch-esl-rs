@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
 use super::strip_endpoint_prefix;
-use crate::commands::originate::OriginateError;
+use crate::commands::originate::{OriginateError, DEFAULT_CONTEXT};
 use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
 
-/// Internal loopback endpoint: `loopback/{extension}[/{context}]`.
+/// Internal loopback endpoint: `loopback/{extension}[/{context}[/{dialplan}]]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -19,6 +19,13 @@ pub struct LoopbackEndpoint {
         serde(default, skip_serializing_if = "Option::is_none")
     )]
     pub context: Option<String>,
+    /// Dialplan for the re-entered leg. `None` omits the segment, letting
+    /// FreeSWITCH use its default.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Option::is_none")
+    )]
+    pub dialplan: Option<String>,
     /// Per-channel variables prepended as `{key=value}`.
     #[cfg_attr(
         feature = "serde",
@@ -33,6 +40,7 @@ impl LoopbackEndpoint {
         Self {
             extension: extension.into(),
             context: None,
+            dialplan: None,
             variables: None,
         }
     }
@@ -42,12 +50,30 @@ impl LoopbackEndpoint {
         self.context = Some(context.into());
         self
     }
+
+    /// Set the dialplan. It is the third positional segment, so rendering one
+    /// without a context emits [`DEFAULT_CONTEXT`] in the gap.
+    pub fn with_dialplan(mut self, dialplan: impl Into<String>) -> Self {
+        self.dialplan = Some(dialplan.into());
+        self
+    }
 }
 
-impl_dial_string_with_variables!(LoopbackEndpoint, |this, f| match &this.context {
-    Some(ctx) => write!(f, "loopback/{}/{}", this.extension, ctx),
-    None => write!(f, "loopback/{}", this.extension),
-});
+impl_dial_string_with_variables!(
+    LoopbackEndpoint,
+    |this, f| match (&this.context, &this.dialplan) {
+        (None, None) => write!(f, "loopback/{}", this.extension),
+        (Some(ctx), None) => write!(f, "loopback/{}/{}", this.extension, ctx),
+        (ctx, Some(dialplan)) => write!(
+            f,
+            "loopback/{}/{}/{}",
+            this.extension,
+            ctx.as_deref()
+                .unwrap_or(DEFAULT_CONTEXT),
+            dialplan
+        ),
+    }
+);
 
 impl FromStr for LoopbackEndpoint {
     type Err = OriginateError;
@@ -55,13 +81,18 @@ impl FromStr for LoopbackEndpoint {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (variables, rest) =
             strip_endpoint_prefix(s, "loopback/", "loopback", DialStringCarrier::EslApi)?;
-        let (extension, context) = match rest.split_once('/') {
-            Some((ext, ctx)) => (ext, Some(ctx.to_string())),
-            None => (rest, None),
-        };
+        let mut segments = rest.splitn(3, '/');
+        let extension = segments
+            .next()
+            .unwrap_or(rest);
         Ok(Self {
             extension: extension.into(),
-            context,
+            context: segments
+                .next()
+                .map(str::to_string),
+            dialplan: segments
+                .next()
+                .map(str::to_string),
             variables,
         })
     }

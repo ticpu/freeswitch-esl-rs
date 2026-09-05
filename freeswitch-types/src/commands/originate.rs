@@ -21,7 +21,7 @@ const UNDEF: &str = "undef";
 
 /// The context FreeSWITCH itself falls back to, emitted when a later
 /// positional argument forces the slot to be present.
-const DEFAULT_CONTEXT: &str = "default";
+pub(super) const DEFAULT_CONTEXT: &str = "default";
 
 /// FreeSWITCH dialplan type for originate commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
