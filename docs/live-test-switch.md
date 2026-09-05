@@ -1,11 +1,11 @@
 # The live test switch
 
-`tests/live_freeswitch.rs` runs against a real FreeSWITCH. The tests are
+Every `tests/live_*.rs` file runs against a real FreeSWITCH. The tests are
 `#[ignore]`d so a normal `cargo test` skips them:
 
 ```sh
 ss -tlnp sport = :8022
-cargo test --test live_freeswitch -- --ignored
+cargo test --test 'live_*' -- --ignored
 ```
 
 Everything below is what those tests assume. A missing piece shows up as one

@@ -107,8 +107,9 @@ for `sip_h_*`/`sip_i_*` mappings).
   add `_with_options()` variant. Never grow parameter lists.
 - **Preserve wire context in error/status enums.** Disconnect notices, auth
   responses carry useful context — never discard it.
-- **Crate root re-exports: core and dptools only.** Module-specific types
-  (conference, sofia) stay in their submodules.
+- **Crate root re-exports: core, dptools, and wire state enums.** Command
+  builders that belong to one module (conference, sofia gateway commands) stay
+  in their submodules; sofia state enums and `SofiaChannelName` are core.
 
 - **`_mut()` accessors on serde command builders.** Structs that are both
   serde-deserializable and command builders (e.g. `Originate`, endpoint types)
@@ -145,9 +146,11 @@ Run `grep -r OldTypeName --include='*.{rs,md,toml,sh}'` to catch stragglers.
 
 ## Build & Test Workflow
 
-The pre-commit hook is the gate: fmt, clippy over `--workspace --all-features
---all-targets` (examples included), `-D missing_docs` and broken intra-doc
-links, the full test suite with doctests, and the enum/source-ref sync checks.
+The pre-commit hook is the gate: `Cargo.lock` kept off branches, fmt, clippy
+over `--workspace --all-features --all-targets` (examples included),
+`-D missing_docs` and broken intra-doc links, the full test suite with doctests,
+and the enum/source-ref sync checks. The source-ref check needs
+`FREESWITCH_SOURCE` exported and refuses the commit without it.
 Do not re-run any of those separately — a failing hook rejects the commit and
 prints the same thing.
 
@@ -170,7 +173,7 @@ of the event group constants (`CHANNEL_EVENTS`, `MEDIA_EVENTS`,
 `freeswitch-types/src/event.rs` and update them accordingly.
 
 When FreeSWITCH ESL is available on `127.0.0.1:8022`, also run live tests:
-`ss -tlnp sport = :8022` to check, then `cargo test --test live_freeswitch -- --ignored`.
+`ss -tlnp sport = :8022` to check, then `cargo test --test 'live_*' -- --ignored`.
 
 Live tests run in parallel against one shared switch, so a new one must
 correlate every event to its own channel UUID and reap the channels it created
