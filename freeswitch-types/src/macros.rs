@@ -7,7 +7,9 @@
 /// Generate a single-field parse-error newtype.
 ///
 /// Expands to `pub struct $Error(pub String)`, a `Display` impl emitting
-/// `"unknown <label>: <value>"`, and `impl std::error::Error`.
+/// `"unknown <label> (<n> bytes)"`, and `impl std::error::Error`. The rejected
+/// input stays on the public field; interpolating it would put wire content in
+/// every log line a consumer writes from `{e}`.
 ///
 /// ```ignore
 /// parse_error! { ParseFooError("foo"); }
@@ -20,7 +22,12 @@ macro_rules! parse_error {
 
         impl ::std::fmt::Display for $Error {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                write!(f, concat!("unknown ", $label, ": {}"), self.0)
+                write!(
+                    f,
+                    concat!("unknown ", $label, " ({} bytes)"),
+                    self.0
+                        .len()
+                )
             }
         }
 
