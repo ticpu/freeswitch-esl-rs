@@ -151,16 +151,20 @@ impl EslMessage {
     }
 }
 
+/// A message whose headers are consumed and whose body has not all arrived.
+#[derive(Debug)]
+struct PendingBody {
+    message_type: MessageType,
+    headers: IndexMap<String, String>,
+    body_length: usize,
+    lossy_values: LossyValues,
+}
+
 /// Parser state for handling incomplete messages
 #[derive(Debug)]
 enum ParseState {
     WaitingForHeaders,
-    WaitingForBody {
-        message_type: MessageType,
-        headers: IndexMap<String, String>,
-        body_length: usize,
-        lossy_values: LossyValues,
-    },
+    WaitingForBody(PendingBody),
 }
 
 /// ESL protocol parser
@@ -231,138 +235,115 @@ impl EslParser {
 
     /// Try to parse a complete message from the buffer
     pub fn parse_message(&mut self) -> EslResult<Option<EslMessage>> {
-        // Take ownership of the state so the WaitingForBody arm can move its
-        // fields into the finished message without cloning. Every path below
-        // either restores the taken state or assigns the correct next one.
+        // Take the state so the body frame can move its fields into the
+        // finished message; every path below assigns the next state.
         match std::mem::replace(&mut self.state, ParseState::WaitingForHeaders) {
-            ParseState::WaitingForHeaders => {
-                // Check if we have complete headers
-                let terminator = HEADER_TERMINATOR.as_bytes();
-
-                if let Some(headers_data) = self
-                    .buffer
-                    .extract_until_pattern(terminator)
-                {
-                    // Compact buffer to free consumed header data
-                    self.buffer
-                        .compact();
-
-                    // Parse headers
-                    let headers_str = String::from_utf8(headers_data)
-                        .map_err(|_| EslError::protocol_error("Invalid UTF-8 in headers"))?;
-
-                    let (headers, lossy_values) = self.parse_headers(&headers_str)?;
-
-                    // Every ESL message must have Content-Type. Missing means
-                    // protocol desync (e.g. from a corrupted Content-Length).
-                    let content_type = headers
-                        .get(HEADER_CONTENT_TYPE)
-                        .ok_or_else(|| {
-                            EslError::protocol_error(
-                                "Missing Content-Type header -- likely protocol desync",
-                            )
-                        })?;
-                    let message_type = MessageType::from_content_type(content_type)?;
-
-                    // Check if we need a body
-                    if let Some(length_str) = headers.get(HEADER_CONTENT_LENGTH) {
-                        let length: usize = length_str
-                            .parse()
-                            .map_err(|_| EslError::InvalidHeader {
-                                header: format!("Content-Length: {}", length_str),
-                            })?;
-
-                        // Validate message size to prevent protocol errors or memory exhaustion
-                        if length > MAX_MESSAGE_SIZE {
-                            return Err(EslError::protocol_error(format!(
-                                "Message too large: Content-Length {} exceeds limit {}. Protocol error or corrupted data.",
-                                length, MAX_MESSAGE_SIZE
-                            )));
-                        }
-
-                        if length > 0 {
-                            // Transition to waiting for body
-                            self.state = ParseState::WaitingForBody {
-                                message_type,
-                                headers,
-                                body_length: length,
-                                lossy_values,
-                            };
-                            // Try to parse body immediately
-                            self.parse_message()
-                        } else {
-                            // No body needed, complete message
-                            let message = EslMessage::new(message_type, headers, None)
-                                .with_lossy_values(lossy_values);
-                            self.state = ParseState::WaitingForHeaders;
-                            Ok(Some(message))
-                        }
-                    } else {
-                        // No Content-Length header, complete message without body.
-                        // The outbound `connect` response arrives this way: a
-                        // serialized event whose channel-data values ARE
-                        // percent-encoded, so lossy_values may be populated.
-                        let message = EslMessage::new(message_type, headers, None)
-                            .with_lossy_values(lossy_values);
-                        self.state = ParseState::WaitingForHeaders;
-                        Ok(Some(message))
-                    }
-                } else {
-                    // No complete headers yet
-                    Ok(None)
-                }
-            }
-            ParseState::WaitingForBody {
-                message_type,
-                headers,
-                body_length,
-                lossy_values,
-            } => {
-                if self
-                    .buffer
-                    .len()
-                    < body_length
-                {
-                    self.state = ParseState::WaitingForBody {
-                        message_type,
-                        headers,
-                        body_length,
-                        lossy_values,
-                    };
-                    return Ok(None);
-                }
-                let body_data = self
-                    .buffer
-                    .extract_bytes(body_length)
-                    .expect("body_length <= buffer.len(): verified above");
-                self.buffer
-                    .compact();
-                // Content-Length frames the body in bytes, so non-UTF-8 here
-                // is no desync: raw payloads (sendevent bodies, api output)
-                // arrive un-encoded. Decode lossily and keep the wire bytes
-                // as raw_body, unless strict mode restores the hard fail.
-                let mut raw_body = None;
-                let body_str = match String::from_utf8(body_data) {
-                    Ok(s) => s,
-                    Err(e) if self.strict_header_utf8 => {
-                        return Err(EslError::protocol_error(format!(
-                            "Invalid UTF-8 in body: {}",
-                            e.utf8_error()
-                        )));
-                    }
-                    Err(e) => {
-                        let bytes = e.into_bytes();
-                        let lossy = String::from_utf8_lossy(&bytes).into_owned();
-                        raw_body = Some(bytes);
-                        lossy
-                    }
-                };
-                let mut message = EslMessage::new(message_type, headers, Some(body_str))
-                    .with_lossy_values(lossy_values);
-                message.raw_body = raw_body;
-                Ok(Some(message))
-            }
+            ParseState::WaitingForHeaders => self.parse_header_frame(),
+            ParseState::WaitingForBody(pending) => self.parse_body_frame(pending),
         }
+    }
+
+    /// Consume a `\n\n`-terminated header block, then either finish the message
+    /// or hand a `Content-Length` on to [`parse_body_frame`](Self::parse_body_frame).
+    fn parse_header_frame(&mut self) -> EslResult<Option<EslMessage>> {
+        let Some(headers_data) = self
+            .buffer
+            .extract_until_pattern(HEADER_TERMINATOR.as_bytes())
+        else {
+            return Ok(None);
+        };
+        self.buffer
+            .compact();
+
+        let headers_str = String::from_utf8(headers_data)
+            .map_err(|_| EslError::protocol_error("Invalid UTF-8 in headers"))?;
+        let (headers, lossy_values) = self.parse_headers(&headers_str)?;
+
+        // Every ESL message must have Content-Type. Missing means
+        // protocol desync (e.g. from a corrupted Content-Length).
+        let content_type = headers
+            .get(HEADER_CONTENT_TYPE)
+            .ok_or_else(|| {
+                EslError::protocol_error("Missing Content-Type header -- likely protocol desync")
+            })?;
+        let message_type = MessageType::from_content_type(content_type)?;
+
+        let body_length = match headers.get(HEADER_CONTENT_LENGTH) {
+            Some(length_str) => length_str
+                .parse()
+                .map_err(|_| EslError::InvalidHeader {
+                    header: format!("Content-Length: {}", length_str),
+                })?,
+            // The outbound `connect` response arrives without one: a serialized
+            // event whose values are percent-encoded, so lossy_values may be set.
+            None => 0,
+        };
+
+        if body_length > MAX_MESSAGE_SIZE {
+            return Err(EslError::protocol_error(format!(
+                "Message too large: Content-Length {} exceeds limit {}. Protocol error or corrupted data.",
+                body_length, MAX_MESSAGE_SIZE
+            )));
+        }
+
+        if body_length == 0 {
+            return Ok(Some(
+                EslMessage::new(message_type, headers, None).with_lossy_values(lossy_values),
+            ));
+        }
+
+        self.parse_body_frame(PendingBody {
+            message_type,
+            headers,
+            body_length,
+            lossy_values,
+        })
+    }
+
+    /// Complete a message whose headers are already consumed, or park it back
+    /// in the parser state until the framed byte count has arrived.
+    fn parse_body_frame(&mut self, pending: PendingBody) -> EslResult<Option<EslMessage>> {
+        if self
+            .buffer
+            .len()
+            < pending.body_length
+        {
+            self.state = ParseState::WaitingForBody(pending);
+            return Ok(None);
+        }
+
+        let body_data = self
+            .buffer
+            .extract_bytes(pending.body_length)
+            .expect("body_length <= buffer.len(): verified above");
+        self.buffer
+            .compact();
+
+        // Content-Length frames the body in bytes, so non-UTF-8 here
+        // is no desync: raw payloads (sendevent bodies, api output)
+        // arrive un-encoded. Decode lossily and keep the wire bytes
+        // as raw_body, unless strict mode restores the hard fail.
+        let mut raw_body = None;
+        let body_str = match String::from_utf8(body_data) {
+            Ok(s) => s,
+            Err(e) if self.strict_header_utf8 => {
+                return Err(EslError::protocol_error(format!(
+                    "Invalid UTF-8 in body: {}",
+                    e.utf8_error()
+                )));
+            }
+            Err(e) => {
+                let bytes = e.into_bytes();
+                let lossy = String::from_utf8_lossy(&bytes).into_owned();
+                raw_body = Some(bytes);
+                lossy
+            }
+        };
+
+        let mut message = EslMessage::new(pending.message_type, pending.headers, Some(body_str))
+            .with_lossy_values(pending.lossy_values);
+        message.raw_body = raw_body;
+        Ok(Some(message))
     }
 
     /// Parse a single `Key: value` line, stripping `\r` and normalizing the key.

@@ -123,6 +123,55 @@ async fn fail_pending_reply(shared: &SharedState) {
     pending.stale_replies = 0;
 }
 
+/// Pick the body format from `Content-Type`, parse the event, hand it over.
+///
+/// `Break` ends the reader loop, which here only happens once the consumer has
+/// dropped the stream.
+fn dispatch_parsed_event(
+    message: EslMessage,
+    parser: &EslParser,
+    shared: &SharedState,
+    event_tx: &mpsc::Sender<Result<EslEvent, EslError>>,
+) -> ControlFlow<Option<DisconnectReason>> {
+    let ct = message
+        .headers
+        .get(HEADER_CONTENT_TYPE)
+        .map(|s| s.as_str());
+
+    // log/data uses single-level framing handled inside parse_event.
+    let format = if ct == Some(CONTENT_TYPE_LOG_DATA) {
+        EventFormat::Plain
+    } else {
+        match ct.map(EventFormat::from_content_type) {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => {
+                warn!("Unknown event content type: {}", e);
+                if !dispatch_event(
+                    event_tx,
+                    shared,
+                    Err(EslError::InvalidEventFormat {
+                        format: e
+                            .0
+                            .clone(),
+                    }),
+                ) {
+                    debug!("Event channel closed, reader exiting");
+                    return ControlFlow::Break(None);
+                }
+                return ControlFlow::Continue(());
+            }
+            None => EventFormat::Plain,
+        }
+    };
+
+    let event_result = parser.parse_event(message, format);
+    if !dispatch_event(event_tx, shared, event_result) {
+        debug!("Event channel closed, reader exiting");
+        return ControlFlow::Break(None);
+    }
+    ControlFlow::Continue(())
+}
+
 /// Routes one parsed message to the event channel or to the waiting command.
 ///
 /// `Break` ends the reader loop, carrying the same reason its exits return.
@@ -133,45 +182,7 @@ async fn dispatch_message(
     event_tx: &mpsc::Sender<Result<EslEvent, EslError>>,
 ) -> ControlFlow<Option<DisconnectReason>> {
     match message.message_type {
-        MessageType::Event => {
-            let ct = message
-                .headers
-                .get(HEADER_CONTENT_TYPE)
-                .map(|s| s.as_str());
-
-            // log/data uses single-level framing handled inside
-            // parse_event; skip the format check for it.
-            let format = if ct == Some(CONTENT_TYPE_LOG_DATA) {
-                EventFormat::Plain
-            } else {
-                match ct.map(EventFormat::from_content_type) {
-                    Some(Ok(f)) => f,
-                    Some(Err(e)) => {
-                        warn!("Unknown event content type: {}", e);
-                        if !dispatch_event(
-                            event_tx,
-                            shared,
-                            Err(EslError::InvalidEventFormat {
-                                format: e
-                                    .0
-                                    .clone(),
-                            }),
-                        ) {
-                            debug!("Event channel closed, reader exiting");
-                            return ControlFlow::Break(None);
-                        }
-                        return ControlFlow::Continue(());
-                    }
-                    None => EventFormat::Plain,
-                }
-            };
-
-            let event_result = parser.parse_event(message, format);
-            if !dispatch_event(event_tx, shared, event_result) {
-                debug!("Event channel closed, reader exiting");
-                return ControlFlow::Break(None);
-            }
-        }
+        MessageType::Event => return dispatch_parsed_event(message, parser, shared, event_tx),
         MessageType::CommandReply | MessageType::ApiResponse => {
             let mut pending = shared
                 .pending_reply
