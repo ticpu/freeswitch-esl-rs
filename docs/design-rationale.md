@@ -248,14 +248,16 @@ SIP peer. Lowercasing these would break outbound header passthrough, since
 `sofia_glue_get_extra_headers()` strips the prefix and emits the remainder
 as the SIP header name on the wire.
 
-Every entry point that builds a header map, whichever type carries it, funnels
-through `normalize_header_key()`.
-`EslEvent` maintains an `original_keys` alias map (`original → normalized`)
-populated when the original key differs from its normalized form, so that
-`header_str("unique-id")` resolves to the `"Unique-ID"` entry without
-allocating on every lookup — one extra hash probe in the fallback path.
-The alias map is derived state (`#[serde(skip)]`), rebuilt during
-deserialization by routing all headers through `set_header()`.
+Every header carrier holds one store type, `EslHeaders`, and that type
+normalizes on every write, deserialization included: a serialized payload is an
+entry point like the wire, so a store that derives its `Deserialize` brings the
+two-key problem back for whatever the payload spelled differently. Normalization
+is case-only — an underscore key passes through, a dashed key changes case and
+nothing else — so no stored spelling is lost, and applying it to a store that
+kept keys verbatim changes nothing a caller reads back except the case. Lookup
+is case-insensitive on every carrier through one lowercase alias index per
+store, so the same query on an event, a command reply or a hand-built map
+answers alike.
 
 ### Two spellings of one field are two keys
 
@@ -373,8 +375,11 @@ read subscriber data off it. Three protections keep both out of logs:
    renders the shape of what it rejected: a field name, an entry index, a byte
    length. The bytes stay on a public field for a caller that decides to print
    them. Interpolated, they reach every line a consumer logs from `{e}`, around
-   the redaction it applies to that same value on its own path. A codec string
-   the caller wrote is the exception.
+   the redaction it applies to that same value on its own path. This binds
+   warnings as much as errors, and errors a macro generates as much as ones
+   written by hand. Two exceptions: a codec string the caller wrote, and errors
+   sip-header renders with a URI parser's text embedded; the second closes when
+   that chain stops quoting, and the floor moves with it.
 
 These exist because production ESL daemons run with debug logging enabled
 during incident investigation. A sysadmin grepping logs should not find an ESL
@@ -613,6 +618,14 @@ conference-info), and `freeswitch-types` re-exports everything from
 builders on top. Existing users see no API change — all types remain
 importable from `freeswitch_types::`.
 
+The requirement on sip-header is an open range across its pre-1.0 minors, not a
+caret. Its types are re-exported here, so a downstream that also depends on
+sip-header directly must resolve to the same version or the re-exported type and
+its own are two types; the open range lets cargo unify them at whatever minor the
+downstream needs. The cost — a breaking sip-header minor can break a published
+`freeswitch-types` through a downstream `cargo update` — is carried because both
+crates have one author who releases them together.
+
 ### The ARRAY encoding problem
 
 The extraction was not a simple file move because of `EslArray`. FreeSWITCH
@@ -644,13 +657,15 @@ would hide a transport distinction that callers need to reason about.
 ### EslHeaders: making the transport boundary visible
 
 The clean solution was a newtype. [`EslHeaders`](../freeswitch-types/src/variables/esl_headers.rs)
-wraps `IndexMap<String, String>` and overrides the `SipHeaderLookup`
-default methods that do RFC parsing (`call_info`, `history_info`,
-`alert_info`) to peel the FreeSWITCH encoding — `ARRAY::` splitting via
-`EslArray` and `[...]` bracket stripping — before delegating to the
-RFC parsers (`UriInfo::from_entries`, `HistoryInfo::from_entries`).
-Raw lookups (`sip_header_str`) return the stored value untouched, so
-callers who want the wire form see exactly what FreeSWITCH sent.
+wraps `IndexMap<String, String>` and overrides every `SipHeaderLookup`
+default that parses a list-valued header — the ones sip-header itself marks
+multi-valued — to peel the FreeSWITCH encoding (`ARRAY::` splitting and
+`[...]` bracket stripping) through one splitter before handing entries to the
+RFC parsers. Overriding a named few leaves the rest failing on the same wire
+value the crate knows is ARRAY-encoded, so the set is the predicate, not a
+list. Raw lookups (`sip_header_str`) return the stored value untouched, so
+callers who want the wire form see exactly what FreeSWITCH sent. `EslEvent` and
+`EslResponse` are carriers around an `EslHeaders`; there is no second store.
 
 The type makes visible what was previously hidden:
 
@@ -894,6 +909,19 @@ codec string are therefore the inventory, and the accessors that feed the string
 view over the subset the switch negotiates, so retaining more never widens what a codec
 string or a format-parameter lookup can see. Excluded sections are parsed rather than
 skipped, so they contribute parse warnings the switch never had occasion to produce.
+
+## Dedup and default-stripping follow the switch's loop
+
+Duplicate removal keeps the switch's pass shape, dropped entries included in the
+comparison, over a cleaner set-based equivalent: the two agree only because the
+key is a pure function of the entry, and the switch's shape is the one a future
+edge case follows. It never removes the last entry bearing a name, because a
+deployment's default packetization is configured on the switch where this crate
+cannot see it, so a bare name must survive to take that value at match time.
+Stripping qualifiers that equal the crate's default table is allowed only on an
+entry that already matched a loaded implementation; the table is per name, so an
+unmatched qualifier can start matching once stripped. The mechanics, the G.722
+exemption among them, are in [codec-string-format.md](codec-string-format.md).
 
 ## Composition over policy
 
