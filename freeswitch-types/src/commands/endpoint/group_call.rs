@@ -1,7 +1,6 @@
-use std::fmt;
 use std::str::FromStr;
 
-use super::{extract_variables, write_variables};
+use super::extract_variables;
 use crate::commands::originate::OriginateError;
 use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
@@ -61,33 +60,12 @@ impl GroupCall {
         self.order = Some(order);
         self
     }
-
-    /// Set per-channel variables.
-    pub fn with_variables(mut self, variables: Variables) -> Self {
-        self.variables = Some(variables);
-        self
-    }
 }
 
-impl GroupCall {
-    pub(super) fn write_for(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-        carrier: DialStringCarrier,
-    ) -> fmt::Result {
-        write_variables(f, &self.variables, carrier)?;
-        match &self.order {
-            Some(o) => write!(f, "${{group_call({}@{}+{})}}", self.group, self.domain, o),
-            None => write!(f, "${{group_call({}@{})}}", self.group, self.domain),
-        }
-    }
-}
-
-impl fmt::Display for GroupCall {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.write_for(f, DialStringCarrier::EslApi)
-    }
-}
+impl_dial_string_with_variables!(GroupCall, |this, f| match &this.order {
+    Some(o) => write!(f, "${{group_call({}@{}+{})}}", this.group, this.domain, o),
+    None => write!(f, "${{group_call({}@{})}}", this.group, this.domain),
+});
 
 impl FromStr for GroupCall {
     type Err = OriginateError;

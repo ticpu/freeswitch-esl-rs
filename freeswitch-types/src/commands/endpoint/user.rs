@@ -1,7 +1,6 @@
-use std::fmt;
 use std::str::FromStr;
 
-use super::{strip_endpoint_prefix, write_variables};
+use super::strip_endpoint_prefix;
 use crate::commands::originate::OriginateError;
 use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
@@ -42,33 +41,12 @@ impl UserEndpoint {
         self.domain = Some(domain.into());
         self
     }
-
-    /// Set per-channel variables.
-    pub fn with_variables(mut self, variables: Variables) -> Self {
-        self.variables = Some(variables);
-        self
-    }
 }
 
-impl UserEndpoint {
-    pub(super) fn write_for(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-        carrier: DialStringCarrier,
-    ) -> fmt::Result {
-        write_variables(f, &self.variables, carrier)?;
-        match &self.domain {
-            Some(d) => write!(f, "user/{}@{}", self.name, d),
-            None => write!(f, "user/{}", self.name),
-        }
-    }
-}
-
-impl fmt::Display for UserEndpoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.write_for(f, DialStringCarrier::EslApi)
-    }
-}
+impl_dial_string_with_variables!(UserEndpoint, |this, f| match &this.domain {
+    Some(d) => write!(f, "user/{}@{}", this.name, d),
+    None => write!(f, "user/{}", this.name),
+});
 
 impl FromStr for UserEndpoint {
     type Err = OriginateError;

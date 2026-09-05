@@ -1,7 +1,6 @@
-use std::fmt;
 use std::str::FromStr;
 
-use super::{strip_endpoint_prefix, write_variables};
+use super::strip_endpoint_prefix;
 use crate::commands::originate::OriginateError;
 use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
@@ -43,33 +42,12 @@ impl LoopbackEndpoint {
         self.context = Some(context.into());
         self
     }
-
-    /// Set per-channel variables.
-    pub fn with_variables(mut self, variables: Variables) -> Self {
-        self.variables = Some(variables);
-        self
-    }
 }
 
-impl LoopbackEndpoint {
-    pub(super) fn write_for(
-        &self,
-        f: &mut fmt::Formatter<'_>,
-        carrier: DialStringCarrier,
-    ) -> fmt::Result {
-        write_variables(f, &self.variables, carrier)?;
-        match &self.context {
-            Some(ctx) => write!(f, "loopback/{}/{}", self.extension, ctx),
-            None => write!(f, "loopback/{}", self.extension),
-        }
-    }
-}
-
-impl fmt::Display for LoopbackEndpoint {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.write_for(f, DialStringCarrier::EslApi)
-    }
-}
+impl_dial_string_with_variables!(LoopbackEndpoint, |this, f| match &this.context {
+    Some(ctx) => write!(f, "loopback/{}/{}", this.extension, ctx),
+    None => write!(f, "loopback/{}", this.extension),
+});
 
 impl FromStr for LoopbackEndpoint {
     type Err = OriginateError;

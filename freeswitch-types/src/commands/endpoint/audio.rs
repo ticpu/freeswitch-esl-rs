@@ -39,12 +39,6 @@ impl AudioEndpoint {
         self
     }
 
-    /// Set per-channel variables.
-    pub fn with_variables(mut self, variables: Variables) -> Self {
-        self.variables = Some(variables);
-        self
-    }
-
     /// Format with the given module prefix (`portaudio`, `pulseaudio`, `alsa`),
     /// which the [`Endpoint`](super::Endpoint) variant supplies because this
     /// struct does not record which of the three modules it belongs to.
@@ -82,6 +76,8 @@ impl AudioEndpoint {
         })
     }
 }
+
+impl_dial_string_with_variables!(AudioEndpoint);
 
 /// **Warning:** This `Display` impl exists only to satisfy the `DialString: Display`
 /// trait bound. The `"audio"` prefix is not a valid FreeSWITCH endpoint.

@@ -5,6 +5,77 @@
 //! trait independently; the [`Endpoint`] enum wraps them for
 //! serialization and polymorphic storage.
 
+/// Emit the [`DialString`] impl and the `with_variables` builder for an endpoint
+/// struct holding `variables: Option<Variables>`. Given a body, also emit the
+/// carrier-aware `write_for` — variable-block prologue included — and the
+/// [`Display`](std::fmt::Display) that renders it for the default carrier.
+macro_rules! impl_dial_string_with_variables {
+    ($ty:ty) => {
+        impl $crate::commands::endpoint::DialString for $ty {
+            fn variables(&self) -> Option<&$crate::commands::variables::Variables> {
+                self.variables
+                    .as_ref()
+            }
+            fn variables_mut(&mut self) -> Option<&mut $crate::commands::variables::Variables> {
+                self.variables
+                    .as_mut()
+            }
+            fn set_variables(&mut self, vars: Option<$crate::commands::variables::Variables>) {
+                self.variables = vars;
+            }
+        }
+
+        impl $ty {
+            /// Set per-channel variables.
+            pub fn with_variables(
+                mut self,
+                variables: $crate::commands::variables::Variables,
+            ) -> Self {
+                self.variables = Some(variables);
+                self
+            }
+        }
+    };
+    ($ty:ty, |$this:ident, $f:ident| $body:expr) => {
+        impl_dial_string_with_variables!($ty);
+
+        impl $ty {
+            pub(super) fn write_for(
+                &self,
+                $f: &mut ::std::fmt::Formatter<'_>,
+                carrier: $crate::commands::variables::DialStringCarrier,
+            ) -> ::std::fmt::Result {
+                $crate::commands::endpoint::write_variables($f, &self.variables, carrier)?;
+                let $this = self;
+                $body
+            }
+        }
+
+        impl ::std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                self.write_for(f, $crate::commands::variables::DialStringCarrier::EslApi)
+            }
+        }
+    };
+}
+
+/// Dispatch a [`DialString`] method to whichever concrete endpoint the
+/// [`Endpoint`] variant wraps.
+macro_rules! forward_to_variant {
+    ($self:ident, $method:ident $(, $arg:expr)?) => {
+        match $self {
+            Self::Sofia(ep) => ep.$method($($arg)?),
+            Self::SofiaGateway(ep) => ep.$method($($arg)?),
+            Self::Loopback(ep) => ep.$method($($arg)?),
+            Self::User(ep) => ep.$method($($arg)?),
+            Self::SofiaContact(ep) => ep.$method($($arg)?),
+            Self::GroupCall(ep) => ep.$method($($arg)?),
+            Self::Error(ep) => ep.$method($($arg)?),
+            Self::PortAudio(ep) | Self::PulseAudio(ep) | Self::Alsa(ep) => ep.$method($($arg)?),
+        }
+    };
+}
+
 mod audio;
 mod error;
 mod group_call;
@@ -327,32 +398,6 @@ impl FromStr for Endpoint {
 // DialString impls
 // ---------------------------------------------------------------------------
 
-macro_rules! impl_dial_string_with_variables {
-    ($ty:ty) => {
-        impl DialString for $ty {
-            fn variables(&self) -> Option<&Variables> {
-                self.variables
-                    .as_ref()
-            }
-            fn variables_mut(&mut self) -> Option<&mut Variables> {
-                self.variables
-                    .as_mut()
-            }
-            fn set_variables(&mut self, vars: Option<Variables>) {
-                self.variables = vars;
-            }
-        }
-    };
-}
-
-impl_dial_string_with_variables!(SofiaEndpoint);
-impl_dial_string_with_variables!(SofiaGateway);
-impl_dial_string_with_variables!(LoopbackEndpoint);
-impl_dial_string_with_variables!(UserEndpoint);
-impl_dial_string_with_variables!(SofiaContact);
-impl_dial_string_with_variables!(GroupCall);
-impl_dial_string_with_variables!(AudioEndpoint);
-
 impl DialString for ErrorEndpoint {
     fn variables(&self) -> Option<&Variables> {
         None
@@ -365,40 +410,13 @@ impl DialString for ErrorEndpoint {
 
 impl DialString for Endpoint {
     fn variables(&self) -> Option<&Variables> {
-        match self {
-            Self::Sofia(ep) => ep.variables(),
-            Self::SofiaGateway(ep) => ep.variables(),
-            Self::Loopback(ep) => ep.variables(),
-            Self::User(ep) => ep.variables(),
-            Self::SofiaContact(ep) => ep.variables(),
-            Self::GroupCall(ep) => ep.variables(),
-            Self::Error(ep) => ep.variables(),
-            Self::PortAudio(ep) | Self::PulseAudio(ep) | Self::Alsa(ep) => ep.variables(),
-        }
+        forward_to_variant!(self, variables)
     }
     fn variables_mut(&mut self) -> Option<&mut Variables> {
-        match self {
-            Self::Sofia(ep) => ep.variables_mut(),
-            Self::SofiaGateway(ep) => ep.variables_mut(),
-            Self::Loopback(ep) => ep.variables_mut(),
-            Self::User(ep) => ep.variables_mut(),
-            Self::SofiaContact(ep) => ep.variables_mut(),
-            Self::GroupCall(ep) => ep.variables_mut(),
-            Self::Error(ep) => ep.variables_mut(),
-            Self::PortAudio(ep) | Self::PulseAudio(ep) | Self::Alsa(ep) => ep.variables_mut(),
-        }
+        forward_to_variant!(self, variables_mut)
     }
     fn set_variables(&mut self, vars: Option<Variables>) {
-        match self {
-            Self::Sofia(ep) => ep.set_variables(vars),
-            Self::SofiaGateway(ep) => ep.set_variables(vars),
-            Self::Loopback(ep) => ep.set_variables(vars),
-            Self::User(ep) => ep.set_variables(vars),
-            Self::SofiaContact(ep) => ep.set_variables(vars),
-            Self::GroupCall(ep) => ep.set_variables(vars),
-            Self::Error(ep) => ep.set_variables(vars),
-            Self::PortAudio(ep) | Self::PulseAudio(ep) | Self::Alsa(ep) => ep.set_variables(vars),
-        }
+        forward_to_variant!(self, set_variables, vars)
     }
 }
 
