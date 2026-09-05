@@ -304,6 +304,108 @@ mod tests {
     use crate::headers::EventHeader;
 
     #[test]
+    fn every_write_path_normalizes_the_key() {
+        let mut inserted = EslHeaders::new();
+        inserted.insert("unique-id", "abc-123");
+
+        let mut extended = EslHeaders::new();
+        extended.extend([("unique-id", "abc-123")]);
+
+        let map: IndexMap<String, String> = [("unique-id".to_string(), "abc-123".to_string())]
+            .into_iter()
+            .collect();
+
+        for h in [
+            inserted,
+            extended,
+            [("unique-id", "abc-123")]
+                .into_iter()
+                .collect(),
+            EslHeaders::from_map(map.clone()),
+            EslHeaders::from(map),
+        ] {
+            assert_eq!(
+                h.as_map()
+                    .keys()
+                    .collect::<Vec<_>>(),
+                vec!["Unique-ID"]
+            );
+            assert_eq!(h.unique_id(), Some("abc-123"));
+        }
+    }
+
+    #[test]
+    fn lookup_resolves_a_non_canonical_spelling() {
+        let mut h = EslHeaders::new();
+        h.insert("Unique-ID", "abc-123");
+        h.insert("Call-Info", "<sip:a@example.test>;purpose=icon");
+        assert_eq!(h.header_str("unique-id"), Some("abc-123"));
+        assert_eq!(h.header_str("UNIQUE-ID"), Some("abc-123"));
+        assert_eq!(
+            h.sip_header_str("call-info"),
+            Some("<sip:a@example.test>;purpose=icon")
+        );
+    }
+
+    #[test]
+    fn underscore_keys_keep_their_wire_casing() {
+        let mut h = EslHeaders::new();
+        h.insert("variable_sip_h_X-My-CUSTOM-Header", "val");
+        assert_eq!(
+            h.header_str("variable_sip_h_X-My-CUSTOM-Header"),
+            Some("val")
+        );
+        assert_eq!(h.header_str("variable_sip_h_x-my-custom-header"), None);
+    }
+
+    #[test]
+    fn two_spellings_of_one_header_are_one_entry() {
+        let mut h = EslHeaders::new();
+        h.insert("Channel-Read-Codec-Bit-Rate", "first");
+        h.insert("channel-read-codec-bit-rate", "second");
+        assert_eq!(h.len(), 1);
+        assert_eq!(h.header_str("Channel-Read-Codec-Bit-Rate"), Some("second"));
+    }
+
+    #[test]
+    fn remove_accepts_a_non_canonical_spelling() {
+        let mut h = EslHeaders::new();
+        h.insert("Unique-ID", "abc-123");
+        assert_eq!(h.remove("unique-id"), Some("abc-123".to_string()));
+        assert!(h.is_empty());
+        assert_eq!(h.header_str("Unique-ID"), None);
+        assert_eq!(h.remove("unique-id"), None);
+    }
+
+    #[test]
+    fn remove_by_canonical_key_drops_the_alias_too() {
+        let mut h = EslHeaders::new();
+        h.insert("unique-id", "abc-123");
+        assert_eq!(h.remove("Unique-ID"), Some("abc-123".to_string()));
+        assert_eq!(h.header_str("unique-id"), None);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn deserialization_normalizes_like_the_wire_does() {
+        let json = r#"{"unique-id":"abc-123","variable_sip_call_id":"call-1"}"#;
+        let h: EslHeaders = serde_json::from_str(json).expect("map payload");
+        assert_eq!(h.unique_id(), Some("abc-123"));
+        assert_eq!(h.variable_str("sip_call_id"), Some("call-1"));
+        assert_eq!(
+            h.as_map()
+                .keys()
+                .collect::<Vec<_>>(),
+            vec!["Unique-ID", "variable_sip_call_id"]
+        );
+
+        let round_tripped: EslHeaders =
+            serde_json::from_str(&serde_json::to_string(&h).expect("serialize"))
+                .expect("round trip");
+        assert_eq!(round_tripped, h);
+    }
+
+    #[test]
     fn header_str_passthrough() {
         let mut h = EslHeaders::new();
         h.insert("Unique-ID", "abc-123");
