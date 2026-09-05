@@ -211,11 +211,10 @@ def write_index(repo: Path, commit: str, tag: str, entries: dict[str, str]) -> N
 def open_tree(commit: str) -> FsTree:
     source = os.environ.get("FREESWITCH_SOURCE")
     if not source:
-        print(
-            "skipped: FREESWITCH_SOURCE is unset, so the pinned commit cannot be read",
-            file=sys.stderr,
+        fail(
+            "FREESWITCH_SOURCE is unset; export the path of a FreeSWITCH "
+            "clone containing the pinned commit"
         )
-        sys.exit(0)
     repo = Path(source)
     if not (repo / ".git").exists():
         fail(f"FREESWITCH_SOURCE={source} is not a git repository")

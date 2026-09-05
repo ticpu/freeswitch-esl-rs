@@ -27,4 +27,12 @@ for feature in "${FEATURES[@]}"; do
         --message-format=short
 done
 
+# Keep in sync with [features] in the root Cargo.toml -- both forward to a
+# freeswitch-types feature and must stay reachable from the ESL crate.
+echo "checking freeswitch-esl-tokio with --features sdp"
+cargo check -p freeswitch-esl-tokio --features sdp --message-format=short
+
+echo "checking freeswitch-esl-tokio with --features conference-info"
+cargo check -p freeswitch-esl-tokio --features conference-info --message-format=short
+
 echo "feature matrix ok"

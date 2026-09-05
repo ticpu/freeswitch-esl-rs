@@ -32,14 +32,20 @@ fi
 
 echo "Checking documentation coverage..."
 if ! doc_output=$(RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --workspace --all-features --no-deps 2>&1); then
-    echo "$doc_output" | grep '^error' | head -20
+    echo "$doc_output" | grep -E '^error|^\s*= (note|help):' | head -20
     echo "❌ Documentation errors. Run: RUSTDOCFLAGS='-D missing_docs -D rustdoc::broken_intra_doc_links' cargo doc --workspace --all-features --no-deps"
     exit 1
 fi
 
 echo "Running tests..."
 if ! test_output=$(cargo test --workspace --all-features 2>&1); then
-    echo "$test_output" | tail
+    if echo "$test_output" | grep -q '^failures:'; then
+        echo "$test_output" | sed -n '/^failures:/,$p'
+    else
+        # No `failures:` section means cargo test never reached the run phase
+        # (a build error) -- fall back to the tail so that isn't swallowed.
+        echo "$test_output" | tail -40
+    fi
     echo "❌ Tests failed. Fix them before committing."
     exit 1
 fi
