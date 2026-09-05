@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{extract_variables, write_variables};
+use super::{strip_endpoint_prefix, write_variables};
 use crate::commands::originate::OriginateError;
 use crate::commands::variables::DialStringCarrier;
 use crate::commands::variables::Variables;
@@ -70,19 +70,12 @@ impl AudioEndpoint {
 
     /// Parse from a dial string with the given module prefix.
     pub fn parse_with_prefix(s: &str, prefix: &str) -> Result<Self, OriginateError> {
-        let (variables, uri) = extract_variables(s, DialStringCarrier::EslApi)?;
-        let rest = uri
-            .strip_prefix(prefix)
-            .ok_or_else(|| OriginateError::ParseError(format!("not a {} endpoint", prefix)))?;
+        let (variables, rest) =
+            strip_endpoint_prefix(s, prefix, prefix, DialStringCarrier::EslApi)?;
         let destination = rest
             .strip_prefix('/')
-            .and_then(|d| {
-                if d.is_empty() {
-                    None
-                } else {
-                    Some(d.to_string())
-                }
-            });
+            .filter(|d| !d.is_empty())
+            .map(str::to_string);
         Ok(Self {
             destination,
             variables,

@@ -56,10 +56,9 @@ fn write_variables(
     Ok(())
 }
 
-/// Strip the leading variable block then a fixed endpoint prefix.
-///
-/// Returns `(variables, rest_after_prefix)`. The `kind` label is used in the
-/// `not a {kind} endpoint` error when the prefix is missing.
+/// Strip the leading variable block then a fixed endpoint prefix. A prefix that
+/// does not itself end a path segment (`alsa`, not `sofia/`) must be followed by
+/// `/` or by nothing, or `alsafoo/bar` strips to a bare `alsa`.
 pub(super) fn strip_endpoint_prefix<'a>(
     s: &'a str,
     prefix: &str,
@@ -69,6 +68,7 @@ pub(super) fn strip_endpoint_prefix<'a>(
     let (variables, uri) = extract_variables(s, carrier)?;
     let rest = uri
         .strip_prefix(prefix)
+        .filter(|rest| prefix.ends_with('/') || rest.is_empty() || rest.starts_with('/'))
         .ok_or_else(|| OriginateError::ParseError(format!("not a {} endpoint", kind)))?;
     Ok((variables, rest))
 }
