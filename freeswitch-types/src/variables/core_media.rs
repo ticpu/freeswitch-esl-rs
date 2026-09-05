@@ -4,9 +4,6 @@ use std::fmt;
 
 /// Unit of measurement for an RTP statistic channel variable.
 ///
-/// Returned by [`CoreMediaVariable::unit()`] to provide display and
-/// categorization metadata for RTP statistics. Use `Display` to format
-/// the unit as a human-readable suffix (e.g., `"bytes"`, `"ms"`, `"MOS"`).
 /// Dimensionless statistics ([`Ratio`](Self::Ratio), [`Count`](Self::Count))
 /// display as an empty string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -157,96 +154,38 @@ sip_header::define_header_enum! {
     }
 }
 
+/// Name suffix to unit, longest-first: `_media_packet_count` must not reach
+/// `_count`, and `_jb_size` counts packets rather than bytes.
+const UNIT_SUFFIXES: &[(&str, RtpStatUnit)] = &[
+    ("_bytes", RtpStatUnit::Bytes),
+    ("_octet_count", RtpStatUnit::Octets),
+    ("_packet_count", RtpStatUnit::Packets),
+    ("_largest_jb_size", RtpStatUnit::Packets),
+    ("_variance", RtpStatUnit::Milliseconds),
+    ("_mean_interval", RtpStatUnit::Milliseconds),
+    ("_loss_rate", RtpStatUnit::Ratio),
+    ("_burst_rate", RtpStatUnit::Ratio),
+    ("_flaw_total", RtpStatUnit::Count),
+    ("_quality_percentage", RtpStatUnit::Percent),
+    ("_mos", RtpStatUnit::Mos),
+];
+
+fn unit_from_suffix(name: &str) -> Option<RtpStatUnit> {
+    UNIT_SUFFIXES
+        .iter()
+        .find(|(suffix, _)| name.ends_with(suffix))
+        .map(|&(_, unit)| unit)
+}
+
 impl CoreMediaVariable {
     /// Unit of measurement for this RTP statistic.
+    ///
+    /// `switch_core_media_set_stats` names every statistic after what it
+    /// measures, so the unit comes off the name's suffix. A name carrying none
+    /// of them reads as dimensionless, which `unit_covers_every_variant`
+    /// refuses.
     pub fn unit(&self) -> RtpStatUnit {
-        use CoreMediaVariable::*;
-        match self {
-            RtpAudioInRawBytes
-            | RtpAudioInMediaBytes
-            | RtpAudioOutRawBytes
-            | RtpAudioOutMediaBytes
-            | RtpVideoInRawBytes
-            | RtpVideoInMediaBytes
-            | RtpVideoOutRawBytes
-            | RtpVideoOutMediaBytes
-            | RtpTextInRawBytes
-            | RtpTextInMediaBytes
-            | RtpTextOutRawBytes
-            | RtpTextOutMediaBytes => RtpStatUnit::Bytes,
-
-            RtpAudioInPacketCount
-            | RtpAudioInMediaPacketCount
-            | RtpAudioInSkipPacketCount
-            | RtpAudioInJitterPacketCount
-            | RtpAudioInDtmfPacketCount
-            | RtpAudioInCngPacketCount
-            | RtpAudioInFlushPacketCount
-            | RtpAudioInLargestJbSize
-            | RtpAudioOutPacketCount
-            | RtpAudioOutMediaPacketCount
-            | RtpAudioOutSkipPacketCount
-            | RtpAudioOutDtmfPacketCount
-            | RtpAudioOutCngPacketCount
-            | RtpAudioRtcpPacketCount
-            | RtpVideoInPacketCount
-            | RtpVideoInMediaPacketCount
-            | RtpVideoInSkipPacketCount
-            | RtpVideoInJitterPacketCount
-            | RtpVideoInDtmfPacketCount
-            | RtpVideoInCngPacketCount
-            | RtpVideoInFlushPacketCount
-            | RtpVideoInLargestJbSize
-            | RtpVideoOutPacketCount
-            | RtpVideoOutMediaPacketCount
-            | RtpVideoOutSkipPacketCount
-            | RtpVideoOutDtmfPacketCount
-            | RtpVideoOutCngPacketCount
-            | RtpVideoRtcpPacketCount
-            | RtpTextInPacketCount
-            | RtpTextInMediaPacketCount
-            | RtpTextInSkipPacketCount
-            | RtpTextInJitterPacketCount
-            | RtpTextInDtmfPacketCount
-            | RtpTextInCngPacketCount
-            | RtpTextInFlushPacketCount
-            | RtpTextInLargestJbSize
-            | RtpTextOutPacketCount
-            | RtpTextOutMediaPacketCount
-            | RtpTextOutSkipPacketCount
-            | RtpTextOutDtmfPacketCount
-            | RtpTextOutCngPacketCount
-            | RtpTextRtcpPacketCount => RtpStatUnit::Packets,
-
-            RtpAudioRtcpOctetCount | RtpVideoRtcpOctetCount | RtpTextRtcpOctetCount => {
-                RtpStatUnit::Octets
-            }
-
-            RtpAudioInJitterMinVariance
-            | RtpAudioInJitterMaxVariance
-            | RtpAudioInMeanInterval
-            | RtpVideoInJitterMinVariance
-            | RtpVideoInJitterMaxVariance
-            | RtpVideoInMeanInterval
-            | RtpTextInJitterMinVariance
-            | RtpTextInJitterMaxVariance
-            | RtpTextInMeanInterval => RtpStatUnit::Milliseconds,
-
-            RtpAudioInJitterLossRate
-            | RtpAudioInJitterBurstRate
-            | RtpVideoInJitterLossRate
-            | RtpVideoInJitterBurstRate
-            | RtpTextInJitterLossRate
-            | RtpTextInJitterBurstRate => RtpStatUnit::Ratio,
-
-            RtpAudioInFlawTotal | RtpVideoInFlawTotal | RtpTextInFlawTotal => RtpStatUnit::Count,
-
-            RtpAudioInQualityPercentage
-            | RtpVideoInQualityPercentage
-            | RtpTextInQualityPercentage => RtpStatUnit::Percent,
-
-            RtpAudioInMos | RtpVideoInMos | RtpTextInMos => RtpStatUnit::Mos,
-        }
+        unit_from_suffix(self.as_str()).unwrap_or(RtpStatUnit::Count)
     }
 }
 
@@ -271,166 +210,72 @@ mod tests {
     }
 
     #[test]
-    fn unit_bytes_variants() {
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInRawBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInMediaBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpAudioOutRawBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpAudioOutMediaBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoInRawBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoInMediaBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoOutRawBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoOutMediaBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpTextInRawBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpTextInMediaBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpTextOutRawBytes.unit(),
-            RtpStatUnit::Bytes
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpTextOutMediaBytes.unit(),
-            RtpStatUnit::Bytes
-        );
+    fn unit_reads_the_name_suffix() {
+        let cases = [
+            (CoreMediaVariable::RtpAudioInRawBytes, RtpStatUnit::Bytes),
+            (CoreMediaVariable::RtpTextOutMediaBytes, RtpStatUnit::Bytes),
+            (
+                CoreMediaVariable::RtpAudioInPacketCount,
+                RtpStatUnit::Packets,
+            ),
+            (
+                CoreMediaVariable::RtpVideoOutMediaPacketCount,
+                RtpStatUnit::Packets,
+            ),
+            (
+                CoreMediaVariable::RtpAudioRtcpPacketCount,
+                RtpStatUnit::Packets,
+            ),
+            (
+                CoreMediaVariable::RtpTextInLargestJbSize,
+                RtpStatUnit::Packets,
+            ),
+            (
+                CoreMediaVariable::RtpAudioRtcpOctetCount,
+                RtpStatUnit::Octets,
+            ),
+            (
+                CoreMediaVariable::RtpAudioInJitterMinVariance,
+                RtpStatUnit::Milliseconds,
+            ),
+            (
+                CoreMediaVariable::RtpVideoInJitterMaxVariance,
+                RtpStatUnit::Milliseconds,
+            ),
+            (
+                CoreMediaVariable::RtpTextInMeanInterval,
+                RtpStatUnit::Milliseconds,
+            ),
+            (
+                CoreMediaVariable::RtpAudioInJitterLossRate,
+                RtpStatUnit::Ratio,
+            ),
+            (
+                CoreMediaVariable::RtpTextInJitterBurstRate,
+                RtpStatUnit::Ratio,
+            ),
+            (CoreMediaVariable::RtpVideoInFlawTotal, RtpStatUnit::Count),
+            (
+                CoreMediaVariable::RtpAudioInQualityPercentage,
+                RtpStatUnit::Percent,
+            ),
+            (CoreMediaVariable::RtpTextInMos, RtpStatUnit::Mos),
+        ];
+        for (variable, unit) in cases {
+            assert_eq!(variable.unit(), unit, "{variable}");
+        }
     }
 
+    /// The fallback in `unit()` cannot be reached by a name in the enum; a
+    /// variable added without a unit-bearing suffix has to be classified here.
     #[test]
-    fn unit_packets_variants() {
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInPacketCount.unit(),
-            RtpStatUnit::Packets
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInLargestJbSize.unit(),
-            RtpStatUnit::Packets
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpAudioRtcpPacketCount.unit(),
-            RtpStatUnit::Packets
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoInSkipPacketCount.unit(),
-            RtpStatUnit::Packets
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpTextOutCngPacketCount.unit(),
-            RtpStatUnit::Packets
-        );
-    }
-
-    #[test]
-    fn unit_octets_variants() {
-        assert_eq!(
-            CoreMediaVariable::RtpAudioRtcpOctetCount.unit(),
-            RtpStatUnit::Octets
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoRtcpOctetCount.unit(),
-            RtpStatUnit::Octets
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpTextRtcpOctetCount.unit(),
-            RtpStatUnit::Octets
-        );
-    }
-
-    #[test]
-    fn unit_milliseconds_variants() {
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInJitterMinVariance.unit(),
-            RtpStatUnit::Milliseconds
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInJitterMaxVariance.unit(),
-            RtpStatUnit::Milliseconds
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInMeanInterval.unit(),
-            RtpStatUnit::Milliseconds
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoInJitterMinVariance.unit(),
-            RtpStatUnit::Milliseconds
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpTextInMeanInterval.unit(),
-            RtpStatUnit::Milliseconds
-        );
-    }
-
-    #[test]
-    fn unit_ratio_variants() {
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInJitterLossRate.unit(),
-            RtpStatUnit::Ratio
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInJitterBurstRate.unit(),
-            RtpStatUnit::Ratio
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoInJitterLossRate.unit(),
-            RtpStatUnit::Ratio
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpTextInJitterBurstRate.unit(),
-            RtpStatUnit::Ratio
-        );
-    }
-
-    #[test]
-    fn unit_count_percent_mos() {
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInFlawTotal.unit(),
-            RtpStatUnit::Count
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoInFlawTotal.unit(),
-            RtpStatUnit::Count
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpTextInFlawTotal.unit(),
-            RtpStatUnit::Count
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpAudioInQualityPercentage.unit(),
-            RtpStatUnit::Percent
-        );
-        assert_eq!(
-            CoreMediaVariable::RtpVideoInQualityPercentage.unit(),
-            RtpStatUnit::Percent
-        );
-        assert_eq!(CoreMediaVariable::RtpAudioInMos.unit(), RtpStatUnit::Mos);
-        assert_eq!(CoreMediaVariable::RtpVideoInMos.unit(), RtpStatUnit::Mos);
-        assert_eq!(CoreMediaVariable::RtpTextInMos.unit(), RtpStatUnit::Mos);
+    fn unit_covers_every_variant() {
+        for variable in CoreMediaVariable::ALL {
+            assert!(
+                unit_from_suffix(variable.as_str()).is_some(),
+                "{variable} matches no unit suffix"
+            );
+        }
     }
 
     #[test]
