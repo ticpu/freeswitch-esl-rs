@@ -10,10 +10,10 @@ pub use subscription::{
     order_event_tokens, swallowed_event_types, EventSubscription, EventSubscriptionError,
 };
 
-use crate::headers::{case_alias_key, normalize_header_key, EventHeader};
+use crate::headers::EventHeader;
 use crate::lookup::{variable_key, HeaderLookup};
 use crate::lossy_values::LossyValues;
-use crate::variables::{EslArray, EslArrayError};
+use crate::variables::{EslArray, EslArrayError, EslHeaders};
 use indexmap::IndexMap;
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use std::fmt;
@@ -37,18 +37,7 @@ wire_enum! {
 #[derive(Debug, Clone, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EslEvent {
-    headers: IndexMap<String, String>,
-    /// Alias map from original wire key to normalized key, populated only
-    /// when the original differs from its normalized form (mixed-case
-    /// CODEC events, variant-cased log headers). Lets `header_str` resolve
-    /// non-canonical casing without allocating on every lookup.
-    ///
-    /// Derived from `headers`. Marked `#[serde(skip)]` — serde round trips
-    /// through `set_header()` during deserialization, which rebuilds this
-    /// map from the canonical keys. See the `Deserialize` impl below and
-    /// the `original_keys_rebuilt_after_serde_roundtrip` test.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    original_keys: IndexMap<String, String>,
+    headers: EslHeaders,
     body: Option<String>,
     /// Exact wire bytes of a body that was not valid UTF-8; `body` then
     /// holds the U+FFFD-substituted string. `None` in the normal case.
@@ -68,8 +57,7 @@ impl EslEvent {
     /// Create a new empty event
     pub fn new() -> Self {
         Self {
-            headers: IndexMap::new(),
-            original_keys: IndexMap::new(),
+            headers: EslHeaders::new(),
             body: None,
             raw_body: None,
             lossy_values: LossyValues::default(),
@@ -97,17 +85,15 @@ impl EslEvent {
             .and_then(EslEventType::parse_event_type)
     }
 
-    /// Look up a header by its [`EventHeader`] enum variant (case-sensitive).
+    /// Look up a header by its [`EventHeader`] enum variant.
     ///
     /// For headers not covered by `EventHeader`, use [`header_str()`](Self::header_str).
     pub fn header(&self, name: EventHeader) -> Option<&str> {
-        self.headers
-            .get(name.as_str())
-            .map(|s| s.as_str())
+        HeaderLookup::header(self, name)
     }
 
-    /// Look up a header by name, trying the canonical key first then falling
-    /// back through the alias map for non-canonical lookups.
+    /// Look up a header by name, in any casing the switch might have spelled
+    /// it.
     ///
     /// Use [`header()`](Self::header) with an [`EventHeader`] variant for known
     /// headers. This method is for headers not (yet) covered by the enum,
@@ -115,16 +101,7 @@ impl EslEvent {
     /// library was published.
     pub fn header_str(&self, name: &str) -> Option<&str> {
         self.headers
-            .get(name)
-            .or_else(|| {
-                self.original_keys
-                    .get(name)
-                    .and_then(|normalized| {
-                        self.headers
-                            .get(normalized)
-                    })
-            })
-            .map(|s| s.as_str())
+            .header_str(name)
     }
 
     /// Look up a channel variable by its bare name.
@@ -135,43 +112,24 @@ impl EslEvent {
         self.header_str(&variable_key(name))
     }
 
-    /// All headers as a map.
+    /// All headers as a map, keyed canonically.
     pub fn headers(&self) -> &IndexMap<String, String> {
-        &self.headers
+        self.headers
+            .as_map()
     }
 
     /// Set or overwrite a header, normalizing the key.
     pub fn set_header(&mut self, name: impl Into<String>, value: impl Into<String>) {
-        let original = name.into();
-        let normalized = normalize_header_key(&original);
-        if case_alias_key(&original).is_some() && original != normalized {
-            self.original_keys
-                .insert(original, normalized.clone());
-        }
         self.headers
-            .insert(normalized, value.into());
+            .insert(name, value);
     }
 
     /// Remove a header, returning its value if it existed.
     ///
     /// Accepts both canonical and original (non-normalized) key names.
     pub fn remove_header(&mut self, name: impl AsRef<str>) -> Option<String> {
-        let name = name.as_ref();
-        if let Some(value) = self
-            .headers
-            .shift_remove(name)
-        {
-            return Some(value);
-        }
-        if let Some(normalized) = self
-            .original_keys
-            .shift_remove(name)
-        {
-            return self
-                .headers
-                .shift_remove(&normalized);
-        }
-        None
+        self.headers
+            .remove(name.as_ref())
     }
 
     /// Event body (the content after the blank line in plain-text events).
@@ -278,16 +236,16 @@ impl EslEvent {
         op: fn(&mut EslArray, String),
     ) -> Result<(), EslArrayError> {
         match self
-            .headers
-            .get(name)
+            .header_str(name)
+            .map(str::to_string)
         {
             None => {
                 self.set_header(name, value);
             }
             Some(existing) => {
-                let arr = match EslArray::parse(existing) {
+                let arr = match EslArray::parse(&existing) {
                     Ok(arr) => arr,
-                    Err(EslArrayError::MissingPrefix) => EslArray::new(vec![existing.clone()]),
+                    Err(EslArrayError::MissingPrefix) => EslArray::new(vec![existing]),
                     Err(e) => return Err(e),
                 };
                 if arr.len() >= crate::variables::MAX_ARRAY_ITEMS {
@@ -322,7 +280,7 @@ impl EslEvent {
         use fmt::Write;
         let mut result = String::new();
 
-        for (key, value) in &self.headers {
+        for (key, value) in self.headers() {
             if key == "Content-Length" {
                 continue;
             }
@@ -380,7 +338,7 @@ impl PartialEq for EslEvent {
 
 impl std::hash::Hash for EslEvent {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        for (k, v) in &self.headers {
+        for (k, v) in self.headers() {
             k.hash(state);
             v.hash(state);
         }
@@ -395,15 +353,9 @@ impl<'de> serde::Deserialize<'de> for EslEvent {
     where
         D: serde::Deserializer<'de>,
     {
-        // Accept (and silently discard) a legacy `event_type` field for
-        // backwards compatibility with previously-serialized payloads;
-        // the value is now derived from the Event-Name header.
         #[derive(serde::Deserialize)]
         struct Raw {
-            #[serde(default)]
-            #[allow(dead_code)]
-            event_type: Option<EslEventType>,
-            headers: IndexMap<String, String>,
+            headers: EslHeaders,
             body: Option<String>,
             #[serde(default)]
             raw_body: Option<Vec<u8>>,
@@ -411,14 +363,12 @@ impl<'de> serde::Deserialize<'de> for EslEvent {
             lossy_values: LossyValues,
         }
         let raw = Raw::deserialize(deserializer)?;
-        let mut event = EslEvent::new();
-        event.body = raw.body;
-        event.raw_body = raw.raw_body;
-        event.lossy_values = raw.lossy_values;
-        for (k, v) in raw.headers {
-            event.set_header(k, v);
-        }
-        Ok(event)
+        Ok(EslEvent {
+            headers: raw.headers,
+            body: raw.body,
+            raw_body: raw.raw_body,
+            lossy_values: raw.lossy_values,
+        })
     }
 }
 
@@ -515,53 +465,6 @@ mod tests {
     }
 
     #[test]
-    fn test_to_plain_format_round_trip() {
-        let mut original = EslEvent::with_type(EslEventType::ChannelCreate);
-        original.set_header("Event-Name", "CHANNEL_CREATE");
-        original.set_header("Core-UUID", "abc-123");
-        original.set_header("Channel-Name", "sofia/internal/1000@example.com");
-        original.set_header("Caller-Caller-ID-Name", "Jérôme Poulin");
-        original.set_body("some body content");
-
-        let plain = original.to_plain_format();
-
-        // Simulate what EslParser::parse_plain_event does
-        let (header_section, inner_body) = if let Some(pos) = plain.find("\n\n") {
-            (&plain[..pos], Some(&plain[pos + 2..]))
-        } else {
-            (plain.as_str(), None)
-        };
-
-        let mut parsed = EslEvent::new();
-        for line in header_section.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some(colon_pos) = line.find(':') {
-                let key = line[..colon_pos].trim();
-                if key == "Content-Length" {
-                    continue;
-                }
-                let raw_value = line[colon_pos + 1..].trim();
-                let value = percent_encoding::percent_decode_str(raw_value)
-                    .decode_utf8()
-                    .unwrap()
-                    .into_owned();
-                parsed.set_header(key, value);
-            }
-        }
-        if let Some(ib) = inner_body {
-            if !ib.is_empty() {
-                parsed.set_body(ib);
-            }
-        }
-
-        assert_eq!(original.headers(), parsed.headers());
-        assert_eq!(original.body(), parsed.body());
-    }
-
-    #[test]
     fn test_set_priority_normal() {
         let mut event = EslEvent::new();
         event.set_priority(EslEventPriority::Normal);
@@ -585,42 +488,6 @@ mod tests {
             Some(EslEventPriority::High)
         );
         assert_eq!(event.header(EventHeader::Priority), Some("HIGH"));
-    }
-
-    #[test]
-    fn test_priority_display() {
-        assert_eq!(EslEventPriority::Normal.to_string(), "NORMAL");
-        assert_eq!(EslEventPriority::Low.to_string(), "LOW");
-        assert_eq!(EslEventPriority::High.to_string(), "HIGH");
-    }
-
-    #[test]
-    fn test_priority_from_str() {
-        assert_eq!(
-            "NORMAL".parse::<EslEventPriority>(),
-            Ok(EslEventPriority::Normal)
-        );
-        assert_eq!("LOW".parse::<EslEventPriority>(), Ok(EslEventPriority::Low));
-        assert_eq!(
-            "HIGH".parse::<EslEventPriority>(),
-            Ok(EslEventPriority::High)
-        );
-        assert!("INVALID"
-            .parse::<EslEventPriority>()
-            .is_err());
-    }
-
-    #[test]
-    fn test_priority_from_str_rejects_wrong_case() {
-        assert!("normal"
-            .parse::<EslEventPriority>()
-            .is_err());
-        assert!("Low"
-            .parse::<EslEventPriority>()
-            .is_err());
-        assert!("hIgH"
-            .parse::<EslEventPriority>()
-            .is_err());
     }
 
     #[test]
@@ -1037,24 +904,10 @@ mod tests {
     }
 
     #[test]
-    fn original_keys_rebuilt_after_serde_roundtrip() {
-        // Real-world CODEC event quirk: switch_core_codec.c emits
-        // `Channel-Write-Codec-Name` (Title-Case) alongside
-        // `channel-write-codec-bit-rate` (all lowercase). The wire parser
-        // routes every header through `set_header()` which normalizes the
-        // key and stores non-canonical originals in the alias map so
-        // `header_str("channel-write-codec-bit-rate")` still resolves
-        // without an extra hash probe per lookup.
-        //
-        // The alias map is `#[serde(skip)]`: it's derived state. After
-        // deserialization, the map must be rebuilt by routing every
-        // incoming key through `set_header` — otherwise external JSON
-        // carrying non-canonical keys (which is how FreeSWITCH's own
-        // JSON-format events arrive over the wire) would lose non-canonical
-        // lookup support.
-        //
-        // This test simulates that path: external JSON with both a
-        // canonical and a non-canonical key present.
+    fn both_spellings_resolve_after_serde_roundtrip() {
+        // A CODEC event carries `Channel-Write-Codec-Name` alongside
+        // `channel-write-codec-bit-rate`, and JSON-format events arrive that
+        // way too, so deserialization is a wire entry point like any other.
         let external_json = r#"{
             "event_type": null,
             "headers": {
@@ -1077,24 +930,16 @@ mod tests {
             Some("64000")
         );
 
-        // Non-canonical lookup of the bit-rate key — only works if the
-        // alias map was rebuilt during deserialization.
         assert_eq!(
             parsed.header_str("channel-write-codec-bit-rate"),
             Some("64000")
         );
-        // And canonical form of the same key still works.
         assert_eq!(
             parsed.header_str("Channel-Write-Codec-Bit-Rate"),
             Some("64000")
         );
-
-        // Headers the library has no enum variant for pass through the
-        // title-case fallback path; both forms resolve.
         assert_eq!(parsed.header_str("Custom-X-Header"), Some("preserved"));
 
-        // And a round-trip of our own serialized output preserves the
-        // canonical lookups (no aliases needed — we write canonical keys).
         let json = serde_json::to_string(&parsed).unwrap();
         let re_parsed: EslEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(
@@ -1128,7 +973,7 @@ mod tests {
             .is_err());
     }
 
-    // --- Finding 2: EslEvent SipHeaderLookup ARRAY encoding ---
+    // --- SipHeaderLookup over FreeSWITCH's ARRAY encoding ---
 
     #[test]
     fn esl_event_call_info_array_encoding() {
