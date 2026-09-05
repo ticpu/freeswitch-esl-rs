@@ -482,6 +482,50 @@ mod tests {
         assert!(SipPassthroughHeader::request_raw("").is_err());
     }
 
+    /// A rejected header name is caller-supplied and routinely carries
+    /// subscriber identity, so the value stays on the field.
+    #[test]
+    fn invalid_name_error_names_the_shape_not_the_value() {
+        let err = SipPassthroughHeader::request_raw("X-Tenant\nInjected").unwrap_err();
+        let msg = err.to_string();
+        assert!(!msg.contains("X-Tenant"), "error quoted its input: {msg}");
+        assert!(
+            msg.contains("17 bytes"),
+            "error does not give the byte length: {msg}"
+        );
+        assert_eq!(err.0, "X-Tenant\nInjected");
+    }
+
+    #[test]
+    fn empty_name_error_says_which_rule_it_broke() {
+        let msg = SipPassthroughHeader::request_raw("")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("empty"), "{msg}");
+    }
+
+    #[test]
+    fn parse_error_names_the_shape_not_the_value() {
+        let msg = "X-Tenant: secret"
+            .parse::<SipPassthroughHeader>()
+            .unwrap_err()
+            .to_string();
+        assert!(!msg.contains("secret"), "error quoted its input: {msg}");
+        assert!(
+            msg.contains("16 bytes"),
+            "error does not give the byte length: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_error_separates_a_missing_header_name_from_a_missing_prefix() {
+        let msg = "sip_h_"
+            .parse::<SipPassthroughHeader>()
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("no header name"), "{msg}");
+    }
+
     // --- Display trait ---
 
     #[test]
