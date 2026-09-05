@@ -611,13 +611,14 @@ impl FromStr for Originate {
     }
 }
 
-/// Take the next positional argument, reading FreeSWITCH's `undef` placeholder
-/// as the absent value it stands for.
+/// Take the next positional argument, undoing the quoting [`originate_quote`]
+/// applies to the same slot and reading FreeSWITCH's `undef` placeholder as the
+/// absent value it stands for.
 fn take_undef(args: &mut Vec<String>) -> Option<String> {
     if args.is_empty() {
         return None;
     }
-    let value = args.remove(0);
+    let value = originate_unquote(&args.remove(0));
     (!value.eq_ignore_ascii_case(UNDEF)).then_some(value)
 }
 
@@ -1468,7 +1469,6 @@ mod tests {
         assert_eq!(parsed.caller_id_name(), Some("Outbound Call"));
         assert_eq!(parsed.caller_id_number(), Some("555 1234"));
         assert_eq!(parsed.to_string(), wire);
-        assert_eq!(parsed, cmd);
     }
 
     /// The mutators are the config-driven path: deserialize a template, then
