@@ -1,28 +1,35 @@
 //! Plain-text, log/data, and JSON event body parsing.
 
-use super::{EslMessage, EslParser, MessageType};
+use super::{decode_header_block, EslMessage, EslParser, MessageType};
 use crate::{
-    constants::{HEADER_TERMINATOR, UNDEF_VALUE},
+    constants::HEADER_TERMINATOR,
     error::{EslError, EslResult},
     event::{EslEvent, EslEventType},
     headers::EventHeader,
     LossyValues,
 };
 
+/// How [`decode_serialized_event`] reads a payload.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DecodeOptions {
+    /// Hard-fail on a value that is not UTF-8 once percent-decoded, instead of
+    /// substituting U+FFFD and recording the key.
+    pub(crate) strict_utf8: bool,
+    /// Drop a header whose value is the empty-value sentinel, which suits a
+    /// read-back (a channel dump) and not the pushed event stream, where the
+    /// sentinel is what the switch sent.
+    pub(crate) skip_undef: bool,
+}
+
 /// Decode a `switch_event_serialize(encode=TRUE)` payload: percent-encoded
 /// `Name: value` lines, then either nothing or `Content-Length` and a `\n\n`
 /// followed by the inner body.
-///
-/// `skip_undef` drops a header whose value is the empty-value sentinel before
-/// it is stored, which suits a read-back (a channel dump) and not the pushed
-/// event stream, where the sentinel is what the switch sent.
 ///
 /// The returned event carries no `raw_body`: the payload is already a decoded
 /// `&str`, so there are no exact wire bytes left to hand back.
 pub(crate) fn decode_serialized_event(
     payload: &str,
-    strict_utf8: bool,
-    skip_undef: bool,
+    options: DecodeOptions,
 ) -> EslResult<EslEvent> {
     let mut event = EslEvent::new();
     let mut lossy = LossyValues::default();
@@ -36,20 +43,13 @@ pub(crate) fn decode_serialized_event(
         None => (payload, None),
     };
 
-    for line in header_section.lines() {
-        if let Some((key, raw_value)) = EslParser::parse_header_line(line)? {
-            let value = EslParser::decode_value(
-                &key,
-                &raw_value,
-                "event header",
-                EslParser::lossy_sink(strict_utf8, &mut lossy),
-            )?;
-            if skip_undef && value == UNDEF_VALUE {
-                continue;
-            }
-            event.set_header(key, value);
-        }
-    }
+    decode_header_block(
+        header_section,
+        "event header",
+        options.skip_undef,
+        EslParser::lossy_sink(options.strict_utf8, &mut lossy),
+        |key, value| event.set_header(key, value),
+    )?;
 
     event.set_lossy_values(lossy);
 
@@ -100,7 +100,13 @@ impl EslParser {
             .as_deref()
             .ok_or_else(|| EslError::protocol_error("Plain event missing body"))?;
 
-        let mut event = decode_serialized_event(body, self.strict_header_utf8, false)?;
+        let mut event = decode_serialized_event(
+            body,
+            DecodeOptions {
+                strict_utf8: self.strict_header_utf8,
+                skip_undef: false,
+            },
+        )?;
 
         // The inner body's wire bytes are the tail of raw_body: event headers
         // are percent-encoded ASCII and U+FFFD substitution never touches

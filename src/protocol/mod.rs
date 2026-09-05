@@ -7,7 +7,7 @@ use crate::{
         CONTENT_TYPE_API_RESPONSE, CONTENT_TYPE_AUTH_REQUEST, CONTENT_TYPE_COMMAND_REPLY,
         CONTENT_TYPE_LOG_DATA, CONTENT_TYPE_TEXT_EVENT_JSON, CONTENT_TYPE_TEXT_EVENT_PLAIN,
         CONTENT_TYPE_TEXT_EVENT_XML, HEADER_CONTENT_LENGTH, HEADER_CONTENT_TYPE, HEADER_TERMINATOR,
-        MAX_MESSAGE_SIZE,
+        MAX_MESSAGE_SIZE, UNDEF_VALUE,
     },
     error::{EslError, EslResult},
     event::{EslEvent, EventFormat},
@@ -20,7 +20,32 @@ use percent_encoding::percent_decode_str;
 mod event_format;
 mod xml;
 
-pub(crate) use event_format::decode_serialized_event;
+pub(crate) use event_format::{decode_serialized_event, DecodeOptions};
+
+/// Decode one `Key: value` block, handing every decoded pair to `sink`.
+///
+/// `skip_undef` drops the empty-value sentinel before the sink sees it, which
+/// suits a read-back and not the pushed event stream, where the sentinel is
+/// what the switch sent.
+fn decode_header_block(
+    block: &str,
+    context: &'static str,
+    skip_undef: bool,
+    mut lossy: Option<&mut LossyValues>,
+    mut sink: impl FnMut(String, String),
+) -> EslResult<()> {
+    for line in block.lines() {
+        let Some((key, raw_value)) = EslParser::parse_header_line(line)? else {
+            continue;
+        };
+        let value = EslParser::decode_value(&key, &raw_value, context, lossy.as_deref_mut())?;
+        if skip_undef && value == UNDEF_VALUE {
+            continue;
+        }
+        sink(key, value);
+    }
+    Ok(())
+}
 
 /// ESL message types.
 ///
@@ -378,17 +403,15 @@ impl EslParser {
     ) -> EslResult<(IndexMap<String, String>, LossyValues)> {
         let mut headers = IndexMap::new();
         let mut lossy = LossyValues::default();
-        for line in headers_str.lines() {
-            if let Some((key, raw_value)) = Self::parse_header_line(line)? {
-                let value = Self::decode_value(
-                    &key,
-                    &raw_value,
-                    "header",
-                    Self::lossy_sink(self.strict_header_utf8, &mut lossy),
-                )?;
+        decode_header_block(
+            headers_str,
+            "header",
+            false,
+            Self::lossy_sink(self.strict_header_utf8, &mut lossy),
+            |key, value| {
                 headers.insert(key, value);
-            }
-        }
+            },
+        )?;
         Ok((headers, lossy))
     }
 

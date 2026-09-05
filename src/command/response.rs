@@ -6,7 +6,7 @@ use crate::{
     event::EslEvent,
     headers::EventHeader,
     lookup::HeaderLookup,
-    protocol::decode_serialized_event,
+    protocol::{decode_serialized_event, DecodeOptions},
     EslHeaders, LossyValues,
 };
 use freeswitch_types::variable_key;
@@ -153,7 +153,13 @@ pub fn parse_channel_dump_with_options(
             format: format.to_string(),
         });
     }
-    decode_serialized_event(payload, options.strict_header_utf8(), true)
+    decode_serialized_event(
+        payload,
+        DecodeOptions {
+            strict_utf8: options.strict_header_utf8(),
+            skip_undef: true,
+        },
+    )
 }
 
 /// Reply-Text classification per the ESL wire protocol.
