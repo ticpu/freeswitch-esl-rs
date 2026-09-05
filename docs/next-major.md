@@ -50,6 +50,7 @@ site, making a wrong carrier unrepresentable rather than merely unlikely. The
 cost is ergonomic and it breaks `format!("{vars}")` everywhere, so it is worth
 weighing against how often the default is actually wrong in practice.
 
+
 ## freeswitch-esl-tokio 3.0
 
 ### `subscribe_events_raw` and `nixevent_raw` should return what they swallowed
@@ -70,3 +71,79 @@ The types above are re-exported from the crate root, so any change to their
 public surface breaks this crate's too. There is no separate work item — the
 bump is the work. Sequence the release accordingly: `freeswitch-types` 2.0
 publishes first, then this crate.
+
+### `EslHeaders::parse_uri_info` and `parse_history_info` flatten the ARRAY error
+
+Both map an `EslArrayError` into `UriInfoError::Malformed(String)` /
+`HistoryInfoError::Malformed(String)`, so a caller cannot tell a cap breach
+from a malformed URI without matching message text, and the source chain is
+gone. The fix is an `EslHeaders`-owned error wrapping both, which changes the
+return type.
+
+### `SipPassthroughHeader::is_array_header` answers `false` for unknown headers
+
+An unknown header name is neither single- nor multi-valued; `bool` cannot say
+so, and a custom `X-*` header carrying a comma list is reported single-valued.
+Return `Option<bool>`.
+
+### `UuidHold.off: bool` should be `HoldAction`
+
+`ConferenceHold` spells hold-versus-unhold with the `HoldAction` wire enum;
+`UuidHold` spells it with a bare bool. Reuse the enum.
+
+### `EventFormat::from_str` is case-insensitive on a wire token
+
+The value goes on the wire in `event <format> ...`, so under the FromStr casing
+rule it should be strict canonical like every other `wire_enum!`. Tightening
+rejects input it accepts today.
+
+### `Originate` uses three mutation vocabularies
+
+`name_mut`/`args_mut`, five `set_*` for `Option` fields, and
+`endpoint_mut`/`target_mut` on one builder; readers `dialplan_type`,
+`context_str`, `caller_id_name` do not match builders `dialplan`, `context`,
+`cid_name`. Pick `_mut()` pairs and one field vocabulary; add `Variables::get_mut`
+with it. The `set_*` methods take `Option<impl Into<String>>`, so clearing a field
+needs a turbofish (`set_context(None::<String>)`); the replacement takes a
+concrete `Option` or offers `clear_*`.
+
+### `EventSubscription::custom_subclass_list` should be `custom_subclasses`
+
+Every other pair on the type is `x()`/`x_mut()`; this reader is the odd one.
+
+### `InvalidHeaderName` should follow the `Parse*Error` / `*Error` naming
+
+Its siblings `ParseSipPassthroughError` and `EslArrayError` set the two
+conventions; this one follows neither.
+
+### `parse_originate_target` should be `pub(crate)`
+
+Public, re-exported nowhere, one caller inside `Originate::from_str`.
+
+
+### `FilterDelete { header: "all" }` duplicates `FilterDeleteAll`
+
+Both emit the same wire; the first warns at runtime that its `value` is
+ignored. Reject `"all"` in `FilterDelete` or drop the special case.
+
+### `getvar` should be `getvar_raw`
+
+Its `Ok` may be the `-ERR`-shaped filler the switch returns for an unset
+variable; `getvar_opt` is the honest accessor and wants the plain name.
+
+### `AppCommand::transfer` takes two positional `Option`s
+
+`transfer(extension, Option<DialplanType>, Option<&str>)` documents the
+interaction of its options instead of typing it. An options struct or named
+variants.
+
+### `EslError::ReexecFailed`, `JsonError`, `XmlError` carry no source
+
+Each stringifies the underlying error into a `String` field. Boxed `#[source]`
+fields keep the dependency types out of the signature and restore the chain;
+changing the field types is the break.
+
+### `impl futures_util::Stream for EslEventStream` puts futures-util in the public API
+
+A futures-util major becomes a semver break for this crate. Move behind a
+feature, or wait for `Stream` in std.
