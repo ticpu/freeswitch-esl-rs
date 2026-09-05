@@ -432,8 +432,6 @@ mod tests {
         );
     }
 
-    // --- T2: JSON event format end-to-end through parser pipeline ---
-
     #[test]
     fn test_json_event_end_to_end() {
         let mut parser = EslParser::new();

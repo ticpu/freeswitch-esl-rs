@@ -171,24 +171,17 @@ const DEFAULT_COMMAND_TIMEOUT_MS: u64 = 5000;
 
 /// Slot for the in-flight command waiter and its stale-reply counter.
 ///
-/// ESL is a serial protocol with no correlation IDs. After a command times
-/// out the server may still send the late reply. `stale_replies` tracks how
-/// many such late replies to silently discard so the next command's reply
-/// is not consumed by the wrong waiter.
-///
-/// `stale_replies > 0` can coexist with `waiting: Some` — the next command
-/// installs its waiter while the timed-out command's reply is still in
-/// flight. The reader always drains the stale count before dispatching to
-/// `waiting`, which is what restores correlation.
+/// ESL carries no correlation IDs, so a reply arriving after its command timed
+/// out has to be discarded before the next waiter can consume it by mistake.
 struct PendingReply {
     /// Waiter for the currently in-flight command (`None` between commands).
     waiting: Option<oneshot::Sender<EslMessage>>,
-    /// Number of stale replies to discard before resuming normal dispatch.
+    /// Late replies the reader drains before dispatching to `waiting`. Non-zero
+    /// coexists with `waiting: Some`: the next command installs while one is
+    /// still in flight.
     stale_replies: u32,
-    /// Set by the reader loop on exit. Checked under this same lock before
-    /// installing a waiter: either the flag is seen (fail fast) or the waiter
-    /// is installed before `fail_pending_reply` runs (woken by the take).
-    /// Closes the TOCTOU window between `is_connected()` and the install.
+    /// Set by the reader loop on exit and checked under this same lock before a
+    /// waiter is installed, which closes the window after `is_connected()`.
     reader_dead: bool,
 }
 

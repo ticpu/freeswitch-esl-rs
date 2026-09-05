@@ -91,13 +91,8 @@ impl EslClient {
                     .pending_reply
                     .lock()
                     .await;
-                // waiting.take() == Some means the reader has NOT yet consumed
-                // this sender — the server reply is still in flight and will
-                // arrive at the next waiter. Count it so the reader can discard
-                // that one stale reply instead of routing it to the next command.
-                // waiting.take() == None means the reader already took the sender
-                // and raced the timeout (its send() failed into the dropped rx).
-                // The reply is already consumed; do not increment.
+                // take() == Some: the reply is still in flight and would land on
+                // the next waiter, so count it. None: the reader already took it.
                 if pending
                     .waiting
                     .take()

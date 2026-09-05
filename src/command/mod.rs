@@ -894,8 +894,6 @@ mod tests {
             .is_err());
     }
 
-    // --- T6: redact_wire for SendMsg/SendEvent ---
-
     #[test]
     fn test_redact_wire_sendmsg() {
         let mut event = EslEvent::new();

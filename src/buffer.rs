@@ -9,9 +9,7 @@ use bytes::{Buf, BytesMut};
 /// Buffer wrapper for efficient ESL protocol parsing
 pub struct EslBuffer {
     buffer: BytesMut,
-    /// How far into `buffer` we have already scanned for a pattern.
-    /// Backed up by `pattern_len - 1` on each new search to catch patterns
-    /// that straddle the previously-scanned boundary.
+    /// Watermark of bytes already searched by [`EslBuffer::find_pattern`].
     scan_offset: usize,
 }
 
@@ -91,13 +89,8 @@ impl EslBuffer {
         Ok(())
     }
 
-    /// Find the position of `pattern` in the buffer using `memchr::memmem`.
-    ///
-    /// A scan-offset watermark avoids re-scanning bytes that were already
-    /// searched in a previous call. On each call the search starts from
-    /// `watermark - (pattern.len() - 1)` to catch patterns that straddle
-    /// the old boundary. The watermark advances to the end of the buffer on
-    /// a miss, and to just past the found pattern on a hit.
+    /// Find `pattern`, resuming from the scan watermark and backing up
+    /// `pattern.len() - 1` so a match straddling it is not skipped.
     pub fn find_pattern(&mut self, pattern: &[u8]) -> Option<usize> {
         if pattern.is_empty()
             || self
@@ -107,7 +100,6 @@ impl EslBuffer {
         {
             return None;
         }
-        // Back up enough to catch a pattern straddling the previous watermark
         let start = self
             .scan_offset
             .saturating_sub(

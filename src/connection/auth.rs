@@ -127,9 +127,6 @@ pub(super) async fn authenticate(
     {
         Ok(msg) => msg,
         Err(EslError::Timeout { timeout_ms }) => {
-            // FreeSWITCH mod_event_socket.c uses char reply[512] for the
-            // userauth response. When Allowed-Events is long, switch_snprintf
-            // truncates the output and the \n\n terminator is never sent.
             match salvage_truncated_auth_response(io.parser) {
                 Ok(Some(msg)) => {
                     warn!(
@@ -160,15 +157,11 @@ pub(super) async fn authenticate(
     Ok(response)
 }
 
-/// Salvage a truncated `userauth` response from the parser buffer.
+/// Salvage a truncated `userauth` response, on the auth path only.
 ///
-/// FreeSWITCH `mod_event_socket.c` formats the userauth reply into
-/// `char reply[512]`. When the `Allowed-Events` list is long,
-/// `switch_snprintf` truncates the output and the `\n\n` terminator
-/// the parser expects is never written, causing a read timeout.
-///
-/// This function extracts whatever headers arrived before the
-/// truncation point. Only valid during the auth handshake.
+/// `mod_event_socket.c` formats the reply into `char reply[512]`; a long
+/// `Allowed-Events` list makes `switch_snprintf` truncate it, and the `\n\n`
+/// the parser waits for is never written.
 fn salvage_truncated_auth_response(parser: &mut EslParser) -> EslResult<Option<EslMessage>> {
     if !parser.is_waiting_for_headers() {
         return Ok(None);

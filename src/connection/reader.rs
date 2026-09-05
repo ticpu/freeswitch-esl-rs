@@ -96,16 +96,11 @@ pub(super) async fn reader_loop(
     fail_pending_reply(&shared).await;
 }
 
-/// A reader-loop exit means no further replies can arrive on this socket.
+/// Fail the in-flight waiter: dropping its `oneshot::Sender` resolves
+/// `send_command` to `ConnectionClosed` rather than its full command timeout.
 ///
-/// The writer lock is held through the whole send-and-wait cycle, so at most
-/// one waiter exists. Dropping its `oneshot::Sender` resolves the awaiting
-/// `send_command`'s `rx` to `Err`, which maps to `EslError::ConnectionClosed`
-/// — instead of the caller waiting out the full command timeout.
-///
-/// `reader_dead` is set under the same lock so a `send_command` that reaches
-/// its install block after this ran fails fast instead of installing a
-/// waiter no task will ever wake.
+/// `reader_dead` is set under the same lock so a later install fails fast
+/// instead of waiting on a task that is gone.
 async fn fail_pending_reply(shared: &SharedState) {
     let mut pending = shared
         .pending_reply
@@ -209,10 +204,6 @@ async fn dispatch_message(
                     .send(message)
                     .is_err()
                 {
-                    // Caller's receiver was dropped: timeout raced the
-                    // delivery. The timeout arm did not increment
-                    // stale_replies (it saw waiting=None), so this reply
-                    // is already accounted for — no counter adjustment.
                     debug!("Reply channel closed before delivery (timeout race); reply discarded");
                 }
             } else {

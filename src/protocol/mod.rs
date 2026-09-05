@@ -49,10 +49,8 @@ fn decode_header_block(
 
 /// ESL message types.
 ///
-/// Marked `#[non_exhaustive]` because new ESL `Content-Type` values added
-/// upstream will turn into new variants here rather than a catch-all
-/// `Unknown` — unrecognized content-types are now hard protocol errors,
-/// surfaced by [`MessageType::from_content_type`].
+/// An unrecognized `Content-Type` is a protocol error rather than an `Unknown`
+/// variant; see [`MessageType::from_content_type`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub(crate) enum MessageType {
@@ -312,10 +310,8 @@ impl EslParser {
         self.buffer
             .compact();
 
-        // Content-Length frames the body in bytes, so non-UTF-8 here
-        // is no desync: raw payloads (sendevent bodies, api output)
-        // arrive un-encoded. Decode lossily and keep the wire bytes
-        // as raw_body, unless strict mode restores the hard fail.
+        // Content-Length frames the body in bytes, so non-UTF-8 is no desync:
+        // decode lossily and keep the wire bytes, unless strict says otherwise.
         let mut raw_body = None;
         let body_str = match String::from_utf8(body_data) {
             Ok(s) => s,
@@ -389,11 +385,8 @@ impl EslParser {
         Ok((headers, lossy))
     }
 
-    /// The accumulator [`decode_value`](Self::decode_value) records into, or
-    /// `None` under `strict` to select the hard-fail path.
-    ///
-    /// Takes no `self`: [`decode_serialized_event`] runs without a parser
-    /// instance, whose construction would allocate the read buffer.
+    /// Where [`decode_value`](Self::decode_value) records, or `None` under
+    /// `strict`. No `self`: [`decode_serialized_event`] holds no parser.
     fn lossy_sink(strict: bool, acc: &mut LossyValues) -> Option<&mut LossyValues> {
         if strict {
             None
@@ -430,13 +423,8 @@ impl EslParser {
         Ok(event)
     }
 
-    /// Percent-decode a header value (FreeSWITCH percent-encodes serialized
-    /// event values). `context` labels the error site (`"header"` for the
-    /// envelope/response block, `"event header"` for an event body).
-    ///
-    /// - `lossy == None` (strict): invalid UTF-8 returns `InvalidUtf8InHeader`.
-    /// - `lossy == Some` (lenient): invalid UTF-8 is decoded lossily (U+FFFD)
-    ///   and the key + on-wire `raw_value` are recorded in the accumulator.
+    /// Percent-decode a header value; `context` labels the error site. A
+    /// `lossy` accumulator records U+FFFD substitutions instead of erroring.
     fn decode_value(
         key: &str,
         raw_value: &str,
@@ -461,13 +449,8 @@ impl EslParser {
         }
     }
 
-    /// Carry the envelope's lossy-decode signal onto the parsed event, keeping
-    /// whatever the event's own values already recorded — every format's parser
-    /// ends here so neither half can shadow the other.
-    ///
-    /// JSON/XML cannot map wire bytes back to the decoded body, so `raw_body`
-    /// is the whole envelope body — the signal (and source bytes) must still
-    /// be observable per the warnings-ride-as-data policy.
+    /// Merge the envelope's lossy signal with the event's own; every format's
+    /// parser ends here, so neither half can shadow the other.
     fn carry_lossy_signal(event: &mut EslEvent, lossy: LossyValues, raw_body: Option<Vec<u8>>) {
         if !lossy.is_empty() {
             let mut merged = lossy;
