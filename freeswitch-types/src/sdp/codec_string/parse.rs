@@ -1,9 +1,19 @@
 //! Tokenizer and single-entry parser shared by [`CodecString`] and [`CodecStringEntry`].
 
+use std::iter::Peekable;
+use std::str::Chars;
+
 use crate::sdp::error::{CodecStringError, SdpWarning};
+use crate::sdp::num::atoi_prefix;
 
 use super::entry::CodecStringEntry;
 use super::CodecString;
+
+/// Whether a matching close quote lies ahead, mirroring the C `strchr(ptr + 1, '\'')`.
+fn has_closing_quote(rest: &Peekable<Chars<'_>>) -> bool {
+    rest.clone()
+        .any(|c| c == '\'')
+}
 
 /// Inner parser shared by [`FromStr`] (strict, `warnings = None`) and
 /// [`CodecString::parse_lenient`] (lenient, `warnings = Some`).
@@ -100,14 +110,8 @@ pub(super) fn split_codec_string(s: &str) -> Vec<String> {
                 current.push('\\');
             }
         } else if ch == '\'' {
-            // Quote toggle — affects split point but is stripped by cleanup_token.
-            // Only toggle when there's a matching closing quote ahead (mirrors C
-            // `strchr(ptr+1, '\'')` check), OR we're already inside quotes.
-            if inside_quotes
-                || chars
-                    .clone()
-                    .any(|c| c == '\'')
-            {
+            // Quote state affects the split point; cleanup_token strips the quote itself.
+            if inside_quotes || has_closing_quote(&chars) {
                 inside_quotes = !inside_quotes;
             }
             current.push('\'');
@@ -172,13 +176,7 @@ fn cleanup_token(raw: &str) -> String {
                 }
             }
         } else if ch == '\'' {
-            // Toggle quote state. C only toggles when inside_quotes is already set
-            // OR there is a matching closing ' ahead. We track it the same way we
-            // did in the split step.
-            let has_closing = chars
-                .clone()
-                .any(|c| c == '\'');
-            if inside_quotes || has_closing {
+            if inside_quotes || has_closing_quote(&chars) {
                 inside_quotes = !inside_quotes;
                 // Quote char is NOT output; only update end_len when entering quotes.
                 if inside_quotes {
@@ -258,92 +256,74 @@ pub(super) fn parse_entry(
     Ok(entry)
 }
 
-/// Classify one `@`-delimited qualifier part by substring scan — order: i, k/h, b, c —
-/// and assign it. Unknown letter or overflow: strict (`None`) = `Err`, lenient = warn + skip.
-fn apply_qualifier_part(
-    entry: &mut CodecStringEntry,
-    part: &str,
-    mut warnings: Option<&mut Vec<SdpWarning>>,
-) -> Result<(), CodecStringError> {
-    let letter_found = part.contains('i')
-        || part.contains('h')
-        || part.contains('k')
-        || part.contains('b')
-        || part.contains('c');
-
-    if !letter_found {
-        let reason = format!("no recognised qualifier letter in {part:?}");
-        return match warnings.as_deref_mut() {
-            None => Err(CodecStringError::qualifier_parse_error(
-                part.to_string(),
-                reason,
-            )),
-            Some(acc) => {
-                acc.push(SdpWarning::codec_string_qualifier(part.to_string(), reason));
-                Ok(())
-            }
-        };
-    }
-
-    // Helper that returns None on overflow (no leading digits is also None).
-    let parsed = atoi_prefix(part);
-
-    let Some(value) = apply_qualifier(part, parsed, warnings)? else {
-        return Ok(());
-    };
-
-    if part.contains('i') {
-        *entry.ptime_mut() = Some(value);
-    } else if part.contains('h') || part.contains('k') {
-        *entry.rate_mut() = Some(value);
-    } else if part.contains('b') {
-        *entry.bitrate_mut() = Some(value);
-    } else if part.contains('c') {
-        *entry.channels_mut() = Some(value);
-    }
-
-    Ok(())
+/// Which field a `@`-delimited part sets.
+#[derive(Debug, Clone, Copy)]
+enum Qualifier {
+    Ptime,
+    Rate,
+    Bitrate,
+    Channels,
 }
 
-/// Handle the strict/lenient decision for a parsed qualifier value.
-///
-/// Returns `Ok(Some(v))` when the value is valid, `Ok(None)` in lenient mode when
-/// the value is invalid (a warning has been pushed), or `Err` in strict mode.
-fn apply_qualifier(
+/// Scan a part for its qualifier letter in FreeSWITCH's own order — `i`, then
+/// `k`/`h`, then `b`, then `c` — as a substring search, not a suffix check.
+fn classify(part: &str) -> Option<Qualifier> {
+    if part.contains('i') {
+        Some(Qualifier::Ptime)
+    } else if part.contains('h') || part.contains('k') {
+        Some(Qualifier::Rate)
+    } else if part.contains('b') {
+        Some(Qualifier::Bitrate)
+    } else if part.contains('c') {
+        Some(Qualifier::Channels)
+    } else {
+        None
+    }
+}
+
+/// The strict/lenient decision for a qualifier this parser cannot use: strict
+/// (`warnings = None`) fails, lenient records the fault and the part is skipped.
+fn qualifier_fault(
     part: &str,
-    parsed: Option<u32>,
+    reason: &str,
     warnings: Option<&mut Vec<SdpWarning>>,
-) -> Result<Option<u32>, CodecStringError> {
-    match parsed {
-        Some(v) => Ok(Some(v)),
-        None => {
-            let reason = format!("value in {part:?} overflows u32 or has no leading digits");
-            match warnings {
-                None => Err(CodecStringError::qualifier_parse_error(part, reason)),
-                Some(acc) => {
-                    acc.push(SdpWarning::codec_string_qualifier(part, reason));
-                    Ok(None)
-                }
-            }
+) -> Result<(), CodecStringError> {
+    match warnings {
+        None => Err(CodecStringError::qualifier_parse_error(part, reason)),
+        Some(acc) => {
+            acc.push(SdpWarning::codec_string_qualifier(part, reason));
+            Ok(())
         }
     }
 }
 
-/// Parse a number from the start of a string, stopping at the first non-digit.
-///
-/// Returns `None` when there are no leading digits (including overflow — the caller
-/// must distinguish between "no digits" and "overflow" using the raw string if needed).
-fn atoi_prefix(s: &str) -> Option<u32> {
-    let end = s
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(s.len());
-    if end == 0 {
-        None
-    } else {
-        s[..end]
-            .parse::<u32>()
-            .ok()
+/// Classify one `@`-delimited qualifier part and assign it.
+fn apply_qualifier_part(
+    entry: &mut CodecStringEntry,
+    part: &str,
+    warnings: Option<&mut Vec<SdpWarning>>,
+) -> Result<(), CodecStringError> {
+    let Some(qualifier) = classify(part) else {
+        return qualifier_fault(part, "no recognised qualifier letter", warnings);
+    };
+
+    let Some(value) = atoi_prefix(part).0 else {
+        let reason = if part.starts_with(|c: char| c.is_ascii_digit()) {
+            "value overflows u32"
+        } else {
+            "no leading digits"
+        };
+        return qualifier_fault(part, reason, warnings);
+    };
+
+    match qualifier {
+        Qualifier::Ptime => *entry.ptime_mut() = Some(value),
+        Qualifier::Rate => *entry.rate_mut() = Some(value),
+        Qualifier::Bitrate => *entry.bitrate_mut() = Some(value),
+        Qualifier::Channels => *entry.channels_mut() = Some(value),
     }
+
+    Ok(())
 }
 
 #[cfg(test)]

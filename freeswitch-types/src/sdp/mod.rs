@@ -18,6 +18,7 @@ pub mod codec_string;
 pub mod codecs;
 /// Error and warning types for SDP codec parsing and codec-string construction.
 pub mod error;
+pub(crate) mod num;
 /// Options controlling which qualifiers are emitted when converting an SDP codec entry.
 pub mod options;
 pub(crate) mod static_payload;

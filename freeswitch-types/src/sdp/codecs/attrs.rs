@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::sdp::error::{SdpCodecError, SdpWarning};
+use crate::sdp::num::atoi_prefix;
 use crate::sdp::static_payload;
 use crate::sdp::SdpDirection;
 
@@ -28,28 +29,16 @@ impl<'a> AttrCursor<'a> {
             .trim_start_matches([' ', '\t']);
     }
 
-    /// Skip whitespace, take the run of ASCII digits, parse it, skip trailing
-    /// whitespace — mirrors `parse_ul`'s `strspn` on both sides of the number.
-    fn number<T: std::str::FromStr>(&mut self) -> Option<T> {
+    /// Skip whitespace, take the run of ASCII digits, skip trailing whitespace —
+    /// mirrors `parse_ul`'s `strspn` on both sides of the number. The cursor does
+    /// not advance when there is no number to take.
+    fn number<T: TryFrom<u32>>(&mut self) -> Option<T> {
         self.skip_ws();
-        let end = self
-            .rest
-            .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(
-                self.rest
-                    .len(),
-            );
-        if end == 0 {
-            return None;
-        }
-        let (digits, rest) = self
-            .rest
-            .split_at(end);
+        let (value, rest) = atoi_prefix(self.rest);
+        let value = value?;
         self.rest = rest;
         self.skip_ws();
-        digits
-            .parse()
-            .ok()
+        T::try_from(value).ok()
     }
 
     /// Skip whitespace, then take the maximal run of chars that are neither
@@ -242,17 +231,15 @@ pub(super) fn parse_ptime_value(
     attr: &str,
 ) -> Option<u32> {
     // Strip trailing fractional part — upstream uses atoi, which does the same.
-    let int_str = if let Some((prefix, _)) = raw.split_once('.') {
-        prefix
-    } else {
-        raw
-    };
-    match int_str.parse::<u32>() {
-        Ok(0) | Err(_) => {
+    let int_str = raw
+        .split_once('.')
+        .map_or(raw, |(prefix, _)| prefix);
+    match atoi_prefix(int_str) {
+        (Some(n), "") if n != 0 => Some(n),
+        _ => {
             warnings.push(SdpWarning::unparseable_numeric_attribute(attr, raw));
             None
         }
-        Ok(n) => Some(n),
     }
 }
 
