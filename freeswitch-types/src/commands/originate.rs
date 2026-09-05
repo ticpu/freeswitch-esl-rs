@@ -627,6 +627,9 @@ pub enum OriginateError {
     EmptyInlineApplications,
     /// Extension target cannot use inline dialplan.
     ExtensionWithInlineDialplan,
+    /// A dial string carried a variable block for an endpoint type that has
+    /// nowhere to keep it, such as `error/`.
+    VariablesNotSupported,
 }
 
 impl std::fmt::Display for OriginateError {
@@ -639,6 +642,9 @@ impl std::fmt::Display for OriginateError {
             }
             Self::ExtensionWithInlineDialplan => {
                 f.write_str("extension target is incompatible with inline dialplan")
+            }
+            Self::VariablesNotSupported => {
+                f.write_str("this endpoint type carries no variable block")
             }
         }
     }

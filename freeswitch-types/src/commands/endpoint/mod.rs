@@ -223,11 +223,54 @@ impl Endpoint {
         // parse what is left; re-attaching avoids every endpoint's FromStr
         // having to thread a carrier it would only forward.
         let (variables, rest) = extract_variables(s, carrier)?;
-        let mut endpoint: Self = rest.parse()?;
+        let mut endpoint = Self::parse_bare(rest)?;
         if variables.is_some() {
             endpoint.set_variables(variables);
+            if endpoint
+                .variables()
+                .is_none()
+            {
+                return Err(OriginateError::VariablesNotSupported);
+            }
         }
         Ok(endpoint)
+    }
+
+    /// Dispatch on the module prefix of a dial string whose variable block has
+    /// already been taken off.
+    fn parse_bare(uri: &str) -> Result<Self, OriginateError> {
+        if uri.starts_with("${sofia_contact(") {
+            Ok(Self::SofiaContact(uri.parse()?))
+        } else if uri.starts_with("${group_call(") {
+            Ok(Self::GroupCall(uri.parse()?))
+        } else if uri.starts_with("error/") {
+            Ok(Self::Error(uri.parse()?))
+        } else if uri.starts_with("loopback/") {
+            Ok(Self::Loopback(uri.parse()?))
+        } else if uri.starts_with("sofia/gateway/") {
+            Ok(Self::SofiaGateway(uri.parse()?))
+        } else if uri.starts_with("sofia/") {
+            Ok(Self::Sofia(uri.parse()?))
+        } else if uri.starts_with("user/") {
+            Ok(Self::User(uri.parse()?))
+        } else if uri.starts_with("portaudio") {
+            Ok(Self::PortAudio(AudioEndpoint::parse_with_prefix(
+                uri,
+                "portaudio",
+            )?))
+        } else if uri.starts_with("pulseaudio") {
+            Ok(Self::PulseAudio(AudioEndpoint::parse_with_prefix(
+                uri,
+                "pulseaudio",
+            )?))
+        } else if uri.starts_with("alsa") {
+            Ok(Self::Alsa(AudioEndpoint::parse_with_prefix(uri, "alsa")?))
+        } else {
+            Err(OriginateError::ParseError(format!(
+                "unknown endpoint type: {}",
+                uri
+            )))
+        }
     }
 }
 
@@ -260,46 +303,7 @@ impl FromStr for Endpoint {
     type Err = OriginateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (variables, uri) = extract_variables(s, DialStringCarrier::EslApi)?;
-        // Re-assemble with variables for individual FromStr impls
-        let full = if variables.is_some() {
-            s.to_string()
-        } else {
-            uri.to_string()
-        };
-
-        if uri.starts_with("${sofia_contact(") {
-            Ok(Self::SofiaContact(full.parse()?))
-        } else if uri.starts_with("${group_call(") {
-            Ok(Self::GroupCall(full.parse()?))
-        } else if uri.starts_with("error/") {
-            Ok(Self::Error(full.parse()?))
-        } else if uri.starts_with("loopback/") {
-            Ok(Self::Loopback(full.parse()?))
-        } else if uri.starts_with("sofia/gateway/") {
-            Ok(Self::SofiaGateway(full.parse()?))
-        } else if uri.starts_with("sofia/") {
-            Ok(Self::Sofia(full.parse()?))
-        } else if uri.starts_with("user/") {
-            Ok(Self::User(full.parse()?))
-        } else if uri.starts_with("portaudio") {
-            Ok(Self::PortAudio(AudioEndpoint::parse_with_prefix(
-                &full,
-                "portaudio",
-            )?))
-        } else if uri.starts_with("pulseaudio") {
-            Ok(Self::PulseAudio(AudioEndpoint::parse_with_prefix(
-                &full,
-                "pulseaudio",
-            )?))
-        } else if uri.starts_with("alsa") {
-            Ok(Self::Alsa(AudioEndpoint::parse_with_prefix(&full, "alsa")?))
-        } else {
-            Err(OriginateError::ParseError(format!(
-                "unknown endpoint type: {}",
-                uri
-            )))
-        }
+        Self::parse_for(s, DialStringCarrier::EslApi)
     }
 }
 
