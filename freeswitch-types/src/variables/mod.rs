@@ -49,35 +49,26 @@ pub trait VariableName {
     }
 }
 
-impl VariableName for ChannelVariable {
-    fn as_str(&self) -> &str {
-        ChannelVariable::as_str(self)
-    }
+/// Forwards to the inherent `as_str()` a `define_header_enum!` enum already has.
+macro_rules! impl_variable_name {
+    ($($enum:ident),+ $(,)?) => {
+        $(
+            impl VariableName for $enum {
+                fn as_str(&self) -> &str {
+                    $enum::as_str(self)
+                }
+            }
+        )+
+    };
 }
 
-impl VariableName for SofiaVariable {
-    fn as_str(&self) -> &str {
-        SofiaVariable::as_str(self)
-    }
-}
-
-impl VariableName for CoreMediaVariable {
-    fn as_str(&self) -> &str {
-        CoreMediaVariable::as_str(self)
-    }
-}
-
-impl VariableName for LoopbackVariable {
-    fn as_str(&self) -> &str {
-        LoopbackVariable::as_str(self)
-    }
-}
-
-impl VariableName for ConferenceVariable {
-    fn as_str(&self) -> &str {
-        ConferenceVariable::as_str(self)
-    }
-}
+impl_variable_name!(
+    ChannelVariable,
+    SofiaVariable,
+    CoreMediaVariable,
+    LoopbackVariable,
+    ConferenceVariable,
+);
 
 #[cfg(test)]
 mod tests {
