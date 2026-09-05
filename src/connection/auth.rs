@@ -113,11 +113,10 @@ pub(super) async fn authenticate(
                     );
                     msg
                 }
+                // Nothing to salvage: the read timeout is the whole story. A
+                // salvage that refused for a named reason is that reason.
                 Ok(None) => return Err(EslError::Timeout { timeout_ms }),
-                Err(e) => {
-                    debug!("Truncated auth response salvage failed: {}", e);
-                    return Err(EslError::Timeout { timeout_ms });
-                }
+                Err(e) => return Err(e),
             }
         }
         Err(e) => return Err(e),
@@ -333,9 +332,11 @@ mod tests {
                 .await
                 .unwrap();
             let mut discard = [0u8; 128];
-            sock.read(&mut discard)
+            let n = sock
+                .read(&mut discard)
                 .await
                 .unwrap();
+            assert!(n > 0, "client sent no auth command");
             // A truncated block that is not an auth reply at all: the salvage
             // must say so rather than let the read timeout stand as the cause.
             sock.write_all(b"Content-Type: text/event-plain\nReply-Text: +OK\n")
