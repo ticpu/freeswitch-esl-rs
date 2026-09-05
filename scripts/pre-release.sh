@@ -19,7 +19,7 @@ cargo fmt --all
 "$SCRIPT_DIR/check-msrv.sh"
 cargo clippy --workspace --release --all-features -- -D warnings
 cargo test --workspace --release --all-features
-cargo test --test live_freeswitch -- --ignored
+cargo test --test 'live_*' -- --ignored
 cargo build --workspace --release --all-features
 cargo build --examples --all-features
 cargo check --workspace --all-features --target x86_64-pc-windows-msvc
