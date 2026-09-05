@@ -46,6 +46,9 @@ impl EslArray {
     /// Wire marker every `ARRAY::` value starts with.
     pub const PREFIX: &'static str = ARRAY_HEADER;
 
+    /// Separator between items after the prefix.
+    pub const SEPARATOR: &'static str = ARRAY_SEPARATOR;
+
     /// Parse an `ARRAY::` formatted string.
     ///
     /// Returns [`EslArrayError::MissingPrefix`] if the prefix is absent, or

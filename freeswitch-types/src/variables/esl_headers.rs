@@ -21,7 +21,7 @@ use sip_header::{HistoryInfo, HistoryInfoError, SipHeaderLookup, UriInfo, UriInf
 
 use crate::headers::{case_alias_key, normalize_header_key};
 use crate::lookup::HeaderLookup;
-use crate::variables::{EslArray, EslArrayError};
+use crate::variables::{EslArray, EslArrayError, MAX_ARRAY_ITEMS};
 
 /// A flat header store that decodes FreeSWITCH ARRAY and bracket encoding
 /// when answering typed SIP header queries.
@@ -191,6 +191,40 @@ fn strip_brackets(s: &str) -> &str {
     s
 }
 
+/// The one splitter every list-valued lookup here goes through: bracket
+/// unwrapping, then `ARRAY::` splitting, falling back to the RFC comma split.
+fn split_entries_ref(value: &str) -> Result<Vec<&str>, EslArrayError> {
+    let value = strip_brackets(value);
+    match value.strip_prefix(EslArray::PREFIX) {
+        Some(body) => {
+            let items: Vec<&str> = body
+                .split(EslArray::SEPARATOR)
+                .collect();
+            if items.len() > MAX_ARRAY_ITEMS {
+                return Err(EslArrayError::TooManyItems {
+                    count: items.len(),
+                    max: MAX_ARRAY_ITEMS,
+                });
+            }
+            Ok(items)
+        }
+        None => {
+            let value = value.trim();
+            if value.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(sip_header::split_comma_entries(value))
+            }
+        }
+    }
+}
+
+/// A structurally invalid ESL encoding hands the value back whole, so the RFC
+/// parser reports it rather than this layer dropping entries.
+fn entries_or_whole(value: &str) -> Vec<&str> {
+    split_entries_ref(value).unwrap_or_else(|_| vec![value])
+}
+
 impl EslHeaders {
     /// Parse a FreeSWITCH-transported SIP URI-list value into typed [`UriInfo`]
     /// entries, handling both `ARRAY::` encoding and bracket wrapping.
@@ -259,23 +293,46 @@ impl EslHeaders {
     /// assert_eq!(entries, ["<sip:a@example.test>", "<sip:b@example.test>"]);
     /// ```
     pub fn split_entries(value: &str) -> Result<Vec<String>, EslArrayError> {
-        let value = strip_brackets(value);
-        match EslArray::parse(value) {
-            Ok(array) => Ok(array
-                .items()
-                .to_vec()),
-            Err(EslArrayError::MissingPrefix) => {
-                let value = value.trim();
-                if value.is_empty() {
-                    return Ok(Vec::new());
-                }
-                Ok(sip_header::split_comma_entries(value)
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect())
-            }
-            Err(other) => Err(other),
+        Ok(split_entries_ref(value)?
+            .into_iter()
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Entries of a header `sip-header` marks multi-valued, for
+    /// [`sip_header_all_str`](SipHeaderLookup::sip_header_all_str). Any other
+    /// header answers with its value whole: only a list may be split.
+    #[doc(hidden)]
+    pub fn split_multi_value<'a>(value: Option<&'a str>, name: &str) -> Vec<&'a str> {
+        let Some(value) = value else {
+            return Vec::new();
+        };
+        let multi = name
+            .parse::<sip_header::SipHeader>()
+            .is_ok_and(|h| h.is_multi_valued());
+        if multi {
+            entries_or_whole(value)
+        } else {
+            vec![value]
         }
+    }
+
+    /// Parse a FreeSWITCH-transported `Contact` value into typed entries,
+    /// handling both `ARRAY::` encoding and bracket wrapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseSipHeaderAddrError`](sip_header::ParseSipHeaderAddrError)
+    /// when an entry is not a name-addr, an addr-spec or the `*` wildcard.
+    #[doc(hidden)]
+    pub fn parse_contact(
+        value: &str,
+    ) -> Result<Vec<sip_header::ContactValue>, sip_header::ParseSipHeaderAddrError> {
+        let mut contacts = Vec::new();
+        for entry in entries_or_whole(value) {
+            contacts.extend(sip_header::contact::parse_contact_list(entry)?);
+        }
+        Ok(contacts)
     }
 
     /// Parse a FreeSWITCH-transported `History-Info` value into a typed
@@ -299,20 +356,31 @@ impl EslHeaders {
 }
 
 /// Internal: emits the [`SipHeaderLookup`] method overrides that peel
-/// FreeSWITCH's ARRAY and bracket encoding before RFC parsing. Invoke inside
-/// an `impl SipHeaderLookup for T` block. Not part of the stable API.
+/// FreeSWITCH's ARRAY and bracket encoding before RFC parsing — one for
+/// `sip_header_all_str`, which every list-valued default routes through, plus
+/// one per default that reads a single value instead. Invoke inside an
+/// `impl SipHeaderLookup for T` block. Not part of the stable API.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! esl_sip_header_overrides {
-    () => {
-        fn call_info(
+    (@uri_info $method:ident, $header:ident) => {
+        fn $method(
             &self,
         ) -> Result<Option<$crate::sip_header::UriInfo>, $crate::sip_header::UriInfoError> {
-            match self.sip_header($crate::sip_header::SipHeader::CallInfo) {
+            match self.sip_header($crate::sip_header::SipHeader::$header) {
                 Some(s) => $crate::variables::EslHeaders::parse_uri_info(s).map(Some),
                 None => Ok(None),
             }
         }
+    };
+    () => {
+        fn sip_header_all_str<'a>(&'a self, name: &str) -> Vec<&'a str> {
+            $crate::variables::EslHeaders::split_multi_value(self.sip_header_str(name), name)
+        }
+
+        $crate::esl_sip_header_overrides!(@uri_info call_info, CallInfo);
+        $crate::esl_sip_header_overrides!(@uri_info alert_info, AlertInfo);
+        $crate::esl_sip_header_overrides!(@uri_info error_info, ErrorInfo);
 
         fn history_info(
             &self,
@@ -323,12 +391,15 @@ macro_rules! esl_sip_header_overrides {
             }
         }
 
-        fn alert_info(
+        fn contact(
             &self,
-        ) -> Result<Option<$crate::sip_header::UriInfo>, $crate::sip_header::UriInfoError> {
-            match self.sip_header($crate::sip_header::SipHeader::AlertInfo) {
-                Some(s) => $crate::variables::EslHeaders::parse_uri_info(s).map(Some),
-                None => Ok(None),
+        ) -> Result<
+            Vec<$crate::sip_header::ContactValue>,
+            $crate::sip_header::ParseSipHeaderAddrError,
+        > {
+            match self.sip_header($crate::sip_header::SipHeader::Contact) {
+                Some(s) => $crate::variables::EslHeaders::parse_contact(s),
+                None => Ok(Vec::new()),
             }
         }
     };
