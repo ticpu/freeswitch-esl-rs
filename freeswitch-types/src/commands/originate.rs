@@ -1447,6 +1447,30 @@ mod tests {
         }
     }
 
+    /// A caller-id with a space is quoted on the way out, so the quotes are
+    /// this crate's own framing and have to come back off on the way in. Left
+    /// on, they are re-quoted at every hop and the switch dials the quotes.
+    #[test]
+    fn quoted_caller_id_round_trips_without_gaining_quotes() {
+        let ep = Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test"));
+        let cmd = Originate::application(ep, Application::simple("park"))
+            .cid_name("Outbound Call")
+            .cid_num("555 1234");
+        let wire = cmd.to_string();
+        assert_eq!(
+            wire,
+            "originate loopback/9199/test &park() XML default 'Outbound Call' '555 1234'"
+        );
+
+        let parsed: Originate = wire
+            .parse()
+            .unwrap();
+        assert_eq!(parsed.caller_id_name(), Some("Outbound Call"));
+        assert_eq!(parsed.caller_id_number(), Some("555 1234"));
+        assert_eq!(parsed.to_string(), wire);
+        assert_eq!(parsed, cmd);
+    }
+
     /// The mutators are the config-driven path: deserialize a template, then
     /// override per call. Clearing a field is half of that and had no coverage.
     #[test]
