@@ -4,10 +4,10 @@ use crate::{
     constants::{HEADER_REPLY_TEXT, REPLY_PREFIX_ERR, REPLY_PREFIX_OK, REPLY_PREFIX_USAGE},
     error::{EslError, EslResult},
     event::EslEvent,
-    headers::{case_alias_key, normalize_header_key, EventHeader},
+    headers::EventHeader,
     lookup::HeaderLookup,
     protocol::decode_serialized_event,
-    LossyValues,
+    EslHeaders, LossyValues,
 };
 use freeswitch_types::variable_key;
 use indexmap::IndexMap;
@@ -186,18 +186,12 @@ pub enum ReplyStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use = "an ESL reply can be -ERR: read it with api_result(), or check() if there is no payload to read"]
 pub struct EslResponse {
-    headers: IndexMap<String, String>,
+    headers: EslHeaders,
     body: Option<String>,
     /// Exact wire bytes of a body that was not valid UTF-8; `body` then
     /// holds the U+FFFD-substituted string. `None` in the normal case.
     raw_body: Option<Vec<u8>>,
     status: ReplyStatus,
-    /// Lowercase alias map for case-insensitive lookup of dash-cased FS
-    /// framing headers (`Reply-Text`, `Content-Type`, `Job-UUID`, ...).
-    /// Keys containing `_` (channel variables and `sip_h_*` / `sip_i_*`
-    /// passthrough headers) are intentionally excluded so SIP wire
-    /// casing is preserved — same rule as `normalize_header_key`.
-    case_index: IndexMap<String, String>,
     /// Header keys whose percent-decoded value was not valid UTF-8 and was
     /// decoded lossily. Populated for serialized responses such as the
     /// outbound `connect` channel data; empty in the normal case.
@@ -216,18 +210,8 @@ impl EslResponse {
     /// `sip_h_*`, and `sip_i_*` keys, which must preserve original SIP
     /// wire casing.
     pub fn new(headers: IndexMap<String, String>, body: Option<String>) -> Self {
-        let headers: IndexMap<String, String> = headers
-            .into_iter()
-            .map(|(key, value)| (normalize_header_key(&key), value))
-            .collect();
-        let case_index = headers
-            .keys()
-            .filter_map(|k| case_alias_key(k).map(|alias| (alias, k.clone())))
-            .collect();
-        let status = match headers
-            .get(HEADER_REPLY_TEXT)
-            .map(|s| s.as_str())
-        {
+        let headers = EslHeaders::from_map(headers);
+        let status = match headers.header_str(HEADER_REPLY_TEXT) {
             None | Some("") => ReplyStatus::Ok,
             Some(t) if t.starts_with(REPLY_PREFIX_OK) => ReplyStatus::Ok,
             Some(t) if t.starts_with(REPLY_PREFIX_ERR) => ReplyStatus::Err,
@@ -238,7 +222,6 @@ impl EslResponse {
             body,
             raw_body: None,
             status,
-            case_index,
             lossy_values: LossyValues::default(),
         }
     }
@@ -297,31 +280,20 @@ impl EslResponse {
     }
 
     fn lookup_header(&self, name: &str) -> Option<&str> {
-        if let Some(v) = self
-            .headers
-            .get(name)
-        {
-            return Some(v.as_str());
-        }
-        self.case_index
-            .get(&name.to_ascii_lowercase())
-            .and_then(|canonical| {
-                self.headers
-                    .get(canonical)
-            })
-            .map(|s| s.as_str())
+        self.headers
+            .header_str(name)
     }
 
-    /// All response headers.
+    /// All response headers, keyed canonically.
     pub fn headers(&self) -> &IndexMap<String, String> {
-        &self.headers
+        self.headers
+            .as_map()
     }
 
     /// Raw `Reply-Text` header value (e.g. `+OK`, `-ERR invalid command`).
     pub fn reply_text(&self) -> Option<&str> {
         self.headers
-            .get(HEADER_REPLY_TEXT)
-            .map(|s| s.as_str())
+            .header_str(HEADER_REPLY_TEXT)
     }
 
     /// `Job-UUID` header from `bgapi` responses.
@@ -330,8 +302,7 @@ impl EslResponse {
     /// and as a separate `Job-UUID` header. This reads the dedicated header.
     pub fn job_uuid(&self) -> Option<&str> {
         self.headers
-            .get(EventHeader::JobUuid.as_str())
-            .map(|s| s.as_str())
+            .header(EventHeader::JobUuid)
     }
 
     /// UUID of the event fired by `sendevent`.
@@ -784,7 +755,7 @@ mod tests {
         );
     }
 
-    // --- Finding 2: EslResponse SipHeaderLookup ARRAY encoding ---
+    // --- SipHeaderLookup over FreeSWITCH's ARRAY encoding ---
 
     #[test]
     fn esl_response_call_info_array_encoding() {
