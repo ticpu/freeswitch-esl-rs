@@ -45,7 +45,7 @@ pub trait VariableName {
     /// [`HeaderLookup::variable()`](crate::HeaderLookup::variable), which takes
     /// the bare name.
     fn header_name(&self) -> String {
-        format!("{}{}", crate::VARIABLE_PREFIX, self.as_str())
+        crate::lookup::variable_key(self.as_str())
     }
 }
 

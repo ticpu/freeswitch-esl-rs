@@ -20,7 +20,7 @@ use indexmap::IndexMap;
 use sip_header::{HistoryInfo, HistoryInfoError, SipHeaderLookup, UriInfo, UriInfoError};
 
 use crate::headers::{case_alias_key, normalize_header_key};
-use crate::lookup::HeaderLookup;
+use crate::lookup::{variable_key, HeaderLookup};
 use crate::variables::{EslArray, EslArrayError, MAX_ARRAY_ITEMS};
 
 /// A flat header store that decodes FreeSWITCH ARRAY and bracket encoding
@@ -419,7 +419,7 @@ impl HeaderLookup for EslHeaders {
     }
 
     fn variable_str(&self, name: &str) -> Option<&str> {
-        self.get(&format!("{}{name}", crate::VARIABLE_PREFIX))
+        self.get(&variable_key(name))
     }
 }
 

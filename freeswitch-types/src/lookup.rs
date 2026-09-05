@@ -24,6 +24,12 @@ use crate::variables::{
 use sip_header::SipHeaderLookup;
 use std::str::FromStr;
 
+/// Wire key of a channel variable: the [`VARIABLE_PREFIX`](crate::VARIABLE_PREFIX)
+/// ahead of its bare name.
+pub fn variable_key(name: &str) -> String {
+    format!("{}{name}", crate::VARIABLE_PREFIX)
+}
+
 /// Parse an optional wire header value into a typed result.
 ///
 /// Collapses the common `match self.header(...) { Some(s) => Ok(Some(s.parse()?)),
@@ -118,10 +124,20 @@ pub trait HeaderLookup: SipHeaderLookup {
         self.variable_str(name.as_str())
     }
 
+    /// First of `names` the store carries, probed in order.
+    ///
+    /// For a field the switch spells more than one way: each spelling is its
+    /// own [`EventHeader`] variant, and this unions them without deciding
+    /// which event carries which.
+    fn first_header<const N: usize>(&self, names: [EventHeader; N]) -> Option<&str> {
+        names
+            .into_iter()
+            .find_map(|name| self.header(name))
+    }
+
     /// `Unique-ID` header, falling back to `Caller-Unique-ID`.
     fn unique_id(&self) -> Option<&str> {
-        self.header(EventHeader::UniqueId)
-            .or_else(|| self.header(EventHeader::CallerUniqueId))
+        self.first_header([EventHeader::UniqueId, EventHeader::CallerUniqueId])
     }
 
     /// `Job-UUID` header from `bgapi` `BACKGROUND_JOB` events.
@@ -280,8 +296,7 @@ pub trait HeaderLookup: SipHeaderLookup {
     /// The spelling does not follow from the event type, so use
     /// `header(EventHeader::…)` when a spelling-exact lookup is what you want.
     fn profile_name(&self) -> Option<&str> {
-        self.header(EventHeader::ProfileName)
-            .or_else(|| self.header(EventHeader::ProfileNameSnake))
+        self.first_header([EventHeader::ProfileName, EventHeader::ProfileNameSnake])
     }
 
     /// `module_name` header -- the literal `mod_sofia` on the events above.
@@ -369,17 +384,15 @@ pub trait HeaderLookup: SipHeaderLookup {
     /// (`running_state`) during teardown, so it is not the end-of-life signal --
     /// see [`is_terminal_channel_state`](Self::is_terminal_channel_state).
     fn channel_state_number(&self) -> Result<Option<ChannelState>, ParseChannelStateError> {
-        match self.header(EventHeader::ChannelStateNumber) {
-            Some(s) => {
-                let n: u8 = s
-                    .parse()
-                    .map_err(|_| ParseChannelStateError(s.to_string()))?;
-                ChannelState::from_number(n)
-                    .ok_or_else(|| ParseChannelStateError(s.to_string()))
-                    .map(Some)
-            }
-            None => Ok(None),
-        }
+        let Some(raw) = self.header(EventHeader::ChannelStateNumber) else {
+            return Ok(None);
+        };
+        let rejected = || ParseChannelStateError(raw.to_string());
+        parse_opt::<u8>(Some(raw))
+            .map_err(|_| rejected())?
+            .and_then(ChannelState::from_number)
+            .ok_or_else(rejected)
+            .map(Some)
     }
 
     /// Whether this event is the one that ends the channel: a `CHANNEL_STATE`
@@ -453,16 +466,13 @@ impl HeaderLookup for std::collections::HashMap<String, String> {
     }
 
     fn variable_str(&self, name: &str) -> Option<&str> {
-        self.get(&format!("{}{name}", crate::VARIABLE_PREFIX))
+        self.get(&variable_key(name))
             .map(|s| s.as_str())
     }
 }
 
-// No blanket `HeaderLookup` / `SipHeaderLookup` on `indexmap::IndexMap<String,
-// String>` — both traits are external, so the orphan rules forbid the pair.
-// Wrap in [`EslHeaders`](crate::EslHeaders) instead, which is what callers
-// actually want: ARRAY-aware parsing, `variable_` prefix handling, and
-// bracket stripping are only correct for ESL-sourced headers anyway.
+// No blanket impl on `indexmap::IndexMap<String, String>`: both traits are
+// external, so the orphan rules forbid the pair. Wrap in `EslHeaders`.
 
 #[cfg(test)]
 mod tests {
@@ -490,7 +500,7 @@ mod tests {
         }
         fn variable_str(&self, name: &str) -> Option<&str> {
             self.0
-                .get(&format!("{}{name}", crate::VARIABLE_PREFIX))
+                .get(&variable_key(name))
                 .map(|s| s.as_str())
         }
     }
@@ -812,6 +822,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "esl")]
     #[test]
     fn priority_typed() {
         let s = store_with(&[("priority", "HIGH")]);
@@ -820,6 +831,15 @@ mod tests {
                 .unwrap(),
             Some(EslEventPriority::High)
         );
+        assert_eq!(
+            store_with(&[])
+                .priority()
+                .unwrap(),
+            None
+        );
+        assert!(store_with(&[("priority", "BOGUS")])
+            .priority()
+            .is_err());
     }
 
     #[test]
@@ -1003,65 +1023,126 @@ mod tests {
             .is_err());
     }
 
+    /// Accessor under test, named for the assertion message.
+    type RawAccessor = (&'static str, fn(&TestStore) -> Option<&str>);
+    /// An accessor reported as two booleans: parsed to nothing, and refused.
+    type TypedAccessor = (&'static str, fn(&TestStore) -> bool, fn(&TestStore) -> bool);
+
+    const RAW_ACCESSORS: &[RawAccessor] = &[
+        ("channel_name", |s| s.channel_name()),
+        ("caller_id_number", |s| s.caller_id_number()),
+        ("caller_id_name", |s| s.caller_id_name()),
+        ("destination_number", |s| s.destination_number()),
+        ("callee_id_number", |s| s.callee_id_number()),
+        ("callee_id_name", |s| s.callee_id_name()),
+        ("event_subclass", |s| s.event_subclass()),
+        ("job_uuid", |s| s.job_uuid()),
+        ("pl_data", |s| s.pl_data()),
+        ("sip_event", |s| s.sip_event()),
+        ("gateway_name", |s| s.gateway_name()),
+        ("channel_presence_id", |s| s.channel_presence_id()),
+        ("event_date_timestamp", |s| s.event_date_timestamp()),
+        ("event_sequence", |s| s.event_sequence()),
+        ("dtmf_duration", |s| s.dtmf_duration()),
+        ("dtmf_source", |s| s.dtmf_source()),
+    ];
+
+    const TYPED_ACCESSORS: &[TypedAccessor] = &[
+        (
+            "channel_state",
+            |s| {
+                s.channel_state()
+                    .unwrap()
+                    .is_none()
+            },
+            |s| {
+                s.channel_state()
+                    .is_err()
+            },
+        ),
+        (
+            "channel_state_number",
+            |s| {
+                s.channel_state_number()
+                    .unwrap()
+                    .is_none()
+            },
+            |s| {
+                s.channel_state_number()
+                    .is_err()
+            },
+        ),
+        (
+            "call_state",
+            |s| {
+                s.call_state()
+                    .unwrap()
+                    .is_none()
+            },
+            |s| {
+                s.call_state()
+                    .is_err()
+            },
+        ),
+        (
+            "answer_state",
+            |s| {
+                s.answer_state()
+                    .unwrap()
+                    .is_none()
+            },
+            |s| {
+                s.answer_state()
+                    .is_err()
+            },
+        ),
+        (
+            "call_direction",
+            |s| {
+                s.call_direction()
+                    .unwrap()
+                    .is_none()
+            },
+            |s| {
+                s.call_direction()
+                    .is_err()
+            },
+        ),
+        (
+            "presence_call_direction",
+            |s| {
+                s.presence_call_direction()
+                    .unwrap()
+                    .is_none()
+            },
+            |s| {
+                s.presence_call_direction()
+                    .is_err()
+            },
+        ),
+        (
+            "hangup_cause",
+            |s| {
+                s.hangup_cause()
+                    .unwrap()
+                    .is_none()
+            },
+            |s| {
+                s.hangup_cause()
+                    .is_err()
+            },
+        ),
+    ];
+
     #[test]
     fn missing_headers_return_none() {
         let s = store_with(&[]);
-        assert_eq!(
-            s.channel_state()
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            s.channel_state_number()
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            s.call_state()
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            s.answer_state()
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            s.call_direction()
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            s.priority()
-                .unwrap(),
-            None
-        );
-        assert_eq!(
-            s.hangup_cause()
-                .unwrap(),
-            None
-        );
-        assert_eq!(s.channel_name(), None);
-        assert_eq!(s.caller_id_number(), None);
-        assert_eq!(s.caller_id_name(), None);
-        assert_eq!(s.destination_number(), None);
-        assert_eq!(s.callee_id_number(), None);
-        assert_eq!(s.callee_id_name(), None);
-        assert_eq!(s.event_subclass(), None);
-        assert_eq!(s.job_uuid(), None);
-        assert_eq!(s.pl_data(), None);
-        assert_eq!(s.sip_event(), None);
-        assert_eq!(s.gateway_name(), None);
-        assert_eq!(s.channel_presence_id(), None);
-        assert_eq!(
-            s.presence_call_direction()
-                .unwrap(),
-            None
-        );
-        assert_eq!(s.event_date_timestamp(), None);
-        assert_eq!(s.event_sequence(), None);
-        assert_eq!(s.dtmf_duration(), None);
-        assert_eq!(s.dtmf_source(), None);
+        for (name, accessor) in RAW_ACCESSORS {
+            assert_eq!(accessor(&s), None, "{name}");
+        }
+        for (name, absent_is_none, _) in TYPED_ACCESSORS {
+            assert!(absent_is_none(&s), "{name}");
+        }
     }
 
     #[test]
@@ -1125,32 +1206,10 @@ mod tests {
             ("Answer-State", "bogus"),
             ("Call-Direction", "bogus"),
             ("Presence-Call-Direction", "bogus"),
-            ("priority", "BOGUS"),
             ("Hangup-Cause", "BOGUS"),
         ]);
-        assert!(s
-            .channel_state()
-            .is_err());
-        assert!(s
-            .channel_state_number()
-            .is_err());
-        assert!(s
-            .call_state()
-            .is_err());
-        assert!(s
-            .answer_state()
-            .is_err());
-        assert!(s
-            .call_direction()
-            .is_err());
-        assert!(s
-            .presence_call_direction()
-            .is_err());
-        assert!(s
-            .priority()
-            .is_err());
-        assert!(s
-            .hangup_cause()
-            .is_err());
+        for (name, _, unparseable_is_err) in TYPED_ACCESSORS {
+            assert!(unparseable_is_err(&s), "{name}");
+        }
     }
 }

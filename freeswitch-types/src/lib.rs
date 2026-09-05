@@ -75,7 +75,7 @@ pub use event::{
     EventSubscriptionError, ParseEventFormatError, ParseEventTypeError, ParsePriorityError,
 };
 pub use headers::{case_alias_key, normalize_header_key, EventHeader, ParseEventHeaderError};
-pub use lookup::HeaderLookup;
+pub use lookup::{variable_key, HeaderLookup};
 #[cfg(feature = "esl")]
 pub use lossy_values::{LossyValue, LossyValues};
 pub use sip_header::{

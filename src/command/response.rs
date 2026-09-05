@@ -7,8 +7,9 @@ use crate::{
     headers::{case_alias_key, normalize_header_key, EventHeader},
     lookup::HeaderLookup,
     protocol::decode_serialized_event,
-    LossyValues, VARIABLE_PREFIX,
+    LossyValues,
 };
+use freeswitch_types::variable_key;
 use indexmap::IndexMap;
 
 /// Parse a FreeSWITCH API response body into a result.
@@ -462,8 +463,7 @@ impl HeaderLookup for EslResponse {
     }
 
     fn variable_str(&self, name: &str) -> Option<&str> {
-        let key = format!("{VARIABLE_PREFIX}{name}");
-        self.header_str(&key)
+        self.header_str(&variable_key(name))
     }
 }
 
