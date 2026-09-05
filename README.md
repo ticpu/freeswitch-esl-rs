@@ -558,7 +558,7 @@ loopback legs, and how to make a loopback pair bow out.
 ```rust
 use freeswitch_esl_tokio::variables::{EslArray, MultipartBody, SipPassthroughHeader};
 use freeswitch_esl_tokio::HeaderLookup;
-use freeswitch_types::sip_header::SipHeader;
+use freeswitch_esl_tokio::sip_header::SipHeader;
 # use freeswitch_esl_tokio::commands::Variables;
 # fn demo(event: &impl HeaderLookup, vars: &mut Variables, raw_multipart: &str) {
 
@@ -772,8 +772,7 @@ accessors for free:
 
 ```rust
 use std::collections::HashMap;
-use freeswitch_esl_tokio::HeaderLookup;
-use freeswitch_types::SipHeaderLookup;
+use freeswitch_esl_tokio::{HeaderLookup, SipHeaderLookup};
 
 struct TrackedChannel {
     data: HashMap<String, String>,

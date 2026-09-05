@@ -1,7 +1,8 @@
-//! FreeSWITCH protocol types: channel state, events, headers, commands, and variables.
 // The esl_event_types! macro uses TT-munching filter arms over ~90 variants,
 // requiring a higher recursion limit than the default 128.
 #![recursion_limit = "512"]
+
+//! FreeSWITCH protocol types: channel state, events, headers, commands, and variables.
 //!
 //! This crate provides the domain types for FreeSWITCH's Event Socket Library (ESL)
 //! protocol without any async runtime dependency. Use it standalone for CDR parsing,
@@ -64,9 +65,9 @@ pub use channel::{
 pub use commands::{
     Application, BridgeDialString, DialString, DialStringCarrier, DialplanType, Endpoint,
     EndpointDisplay, GroupCallOrder, Originate, OriginateError, OriginateTarget,
-    ParseDialplanTypeError, ParseGroupCallOrderError, UuidAnswer, UuidBridge, UuidDeflect,
-    UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar, UuidTransfer, Variables,
-    VariablesDisplay, VariablesType,
+    ParseDialplanTypeError, ParseGroupCallOrderError, ParseHoldActionError, ParseMuteActionError,
+    UuidAnswer, UuidBridge, UuidDeflect, UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar,
+    UuidTransfer, Variables, VariablesDisplay, VariablesType,
 };
 #[cfg(feature = "esl")]
 pub use event::{
@@ -90,9 +91,10 @@ pub use sofia::{
 #[cfg(feature = "esl")]
 pub use variables::EslHeaders;
 pub use variables::{
-    ChannelVariable, CoreMediaVariable, EslArray, EslArrayError, MultipartBody, MultipartBodyError,
-    MultipartItem, ParseChannelVariableError, ParseCoreMediaVariableError, RtpStatUnit,
-    SipHeaderPrefix, SipPassthroughHeader, VariableName, MAX_ARRAY_ITEMS,
+    CarriedHeader, ChannelVariable, CoreMediaVariable, EslArray, EslArrayError, InvalidHeaderName,
+    MultipartBody, MultipartBodyError, MultipartItem, ParseChannelVariableError,
+    ParseCoreMediaVariableError, ParseSipPassthroughError, RtpStatUnit, SipHeaderPrefix,
+    SipPassthroughHeader, VariableName, MAX_ARRAY_ITEMS,
 };
 
 #[cfg(all(doctest, feature = "esl"))]

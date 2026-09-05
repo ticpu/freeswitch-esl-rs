@@ -20,7 +20,10 @@ pub use channel::{
     UuidAnswer, UuidBridge, UuidDeflect, UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar,
     UuidTransfer,
 };
-pub use conference::{ConferenceDtmf, ConferenceHold, ConferenceMute, HoldAction, MuteAction};
+pub use conference::{
+    ConferenceDtmf, ConferenceHold, ConferenceMute, HoldAction, MuteAction, ParseHoldActionError,
+    ParseMuteActionError,
+};
 pub use endpoint::{
     AudioEndpoint, DialString, EndpointDisplay, ErrorEndpoint, GroupCall, GroupCallOrder,
     LoopbackEndpoint, ParseGroupCallOrderError, SofiaContact, SofiaEndpoint, SofiaGateway,

@@ -147,26 +147,34 @@ pub(crate) mod protocol;
 // Re-export sub-modules from freeswitch-types for path-based access
 #[cfg(feature = "sdp")]
 pub use freeswitch_types::sdp;
-pub use freeswitch_types::{channel, commands, event, headers, lookup, prelude, sofia, variables};
+pub use freeswitch_types::{
+    channel, commands, event, headers, lookup, lossy_values, prelude, sofia, variables,
+};
+pub use freeswitch_types::{sip_header, sip_uri};
 
 // Re-export domain types from freeswitch-types
 pub use freeswitch_types::{
-    channel_driver, AnswerState, Application, BridgeDialString, CallDirection, CallState,
-    ChannelState, ChannelTimetable, ChannelVariable, CoreMediaVariable, DialString,
-    DialStringCarrier, DialplanType, Endpoint, EndpointDisplay, EslArray, EslArrayError, EslEvent,
-    EslEventPriority, EslEventType, EslHeaders, EventFormat, EventHeader, EventSubscription,
-    EventSubscriptionError, GatewayPingStatus, GatewayRegState, GroupCallOrder, HangupCause,
-    HeaderLookup, LossyValue, LossyValues, MultipartBody, MultipartBodyError, MultipartItem,
-    Originate, OriginateError, OriginateTarget, ParseAnswerStateError, ParseCallDirectionError,
-    ParseCallStateError, ParseChannelStateError, ParseChannelVariableError,
-    ParseCoreMediaVariableError, ParseDialplanTypeError, ParseEventFormatError,
-    ParseEventHeaderError, ParseEventTypeError, ParseGatewayPingStatusError,
-    ParseGatewayRegStateError, ParseGroupCallOrderError, ParseHangupCauseError, ParsePriorityError,
+    case_alias_key, channel_driver, extract_header, normalize_header_key, AnswerState, Application,
+    BridgeDialString, CallDirection, CallState, CarriedHeader, ChannelState, ChannelTimetable,
+    ChannelVariable, CoreMediaVariable, DialString, DialStringCarrier, DialplanType, Endpoint,
+    EndpointDisplay, EslArray, EslArrayError, EslEvent, EslEventPriority, EslEventType, EslHeaders,
+    EventFormat, EventHeader, EventSubscription, EventSubscriptionError, GatewayPingStatus,
+    GatewayRegState, GroupCallOrder, HangupCause, HeaderLookup, HistoryInfo, HistoryInfoEntry,
+    HistoryInfoError, HistoryInfoReason, InvalidHeaderName, LogLevel, LossyValue, LossyValues,
+    MultipartBody, MultipartBodyError, MultipartItem, Originate, OriginateError, OriginateTarget,
+    ParseAnswerStateError, ParseCallDirectionError, ParseCallStateError, ParseChannelStateError,
+    ParseChannelVariableError, ParseCoreMediaVariableError, ParseDialplanTypeError,
+    ParseEventFormatError, ParseEventHeaderError, ParseEventTypeError, ParseGatewayPingStatusError,
+    ParseGatewayRegStateError, ParseGroupCallOrderError, ParseHangupCauseError,
+    ParseHoldActionError, ParseLogLevelError, ParseMuteActionError, ParsePriorityError,
+    ParseSipHeaderAddrError, ParseSipHeaderError, ParseSipPassthroughError,
     ParseSipUserPingStatusError, ParseSofiaEventSubclassError, ParseTimetableError, RtpStatUnit,
-    SipHeaderPrefix, SipPassthroughHeader, SipUserPingStatus, SofiaChannelName, SofiaEventSubclass,
-    TimetableField, TimetablePrefix, UuidAnswer, UuidBridge, UuidDeflect, UuidGetVar, UuidHold,
-    UuidKill, UuidSendDtmf, UuidSetVar, UuidTransfer, VariableName, Variables, VariablesDisplay,
-    VariablesType, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT, MAX_ARRAY_ITEMS, VARIABLE_PREFIX,
+    SipGeolocation, SipGeolocationRef, SipHeader, SipHeaderAddr, SipHeaderLookup, SipHeaderPrefix,
+    SipPassthroughHeader, SipUserPingStatus, SofiaChannelName, SofiaEventSubclass, TimetableField,
+    TimetablePrefix, UriInfo, UriInfoEntry, UriInfoError, UuidAnswer, UuidBridge, UuidDeflect,
+    UuidGetVar, UuidHold, UuidKill, UuidSendDtmf, UuidSetVar, UuidTransfer, VariableName,
+    Variables, VariablesDisplay, VariablesType, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    MAX_ARRAY_ITEMS, VARIABLE_PREFIX,
 };
 
 #[cfg(doctest)]
@@ -178,10 +186,10 @@ pub use app::dptools::AppCommand;
 pub use bgjob::{BgJobResult, BgJobTracker};
 pub use command::{
     parse_api_body, parse_channel_dump, parse_channel_dump_with_options, ChannelDumpOptions,
-    CommandBuilder, EslCommand, EslResponse, ExecuteOptions, ReplyStatus,
+    CommandBuilder, EslCommand, EslResponse, ExecuteOptions, ReplyStatus, Secret,
 };
 pub use connection::{
-    ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions,
+    AuthMethod, ConnectionMode, ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions,
     EslEventStream,
 };
 pub use constants::UNDEF_VALUE;
