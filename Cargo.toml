@@ -19,6 +19,10 @@ exclude = ["CLAUDE.md", "hooks/", "tests/", "docs/"]
 
 [features]
 sdp = ["freeswitch-types/sdp"]
+conference-info = ["freeswitch-types/conference-info"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dependencies]
 freeswitch-types = { path = "freeswitch-types", version = "1.5.0-rc.6" }

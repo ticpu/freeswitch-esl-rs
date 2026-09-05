@@ -20,6 +20,9 @@ esl = ["dep:indexmap"]
 conference-info = ["sip-header/conference-info"]
 sdp = ["dep:sdp-types"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 sip-header = { version = ">=0.3.10, <1", features = ["draft"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
