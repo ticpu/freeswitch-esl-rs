@@ -23,9 +23,9 @@ pub enum RtpStatUnit {
     Mos,
     /// Jitter variance or mean interval in milliseconds.
     Milliseconds,
-    /// Dimensionless ratio (loss rate, burst rate).
+    /// Dimensionless fraction in `0.0..=1.0` (loss rate, burst rate); parse as float.
     Ratio,
-    /// Dimensionless count (flaw total).
+    /// Dimensionless integer tally (flaw total); parse as unsigned.
     Count,
 }
 
