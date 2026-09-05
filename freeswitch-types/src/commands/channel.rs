@@ -289,27 +289,23 @@ mod tests {
     const UUID: &str = "abc12345-6789-0abc-def0-123456789abc";
     const OTHER: &str = "def12345-6789-0abc-def0-123456789abc";
 
+    /// Every type here is `#[non_exhaustive]`, so its constructor is the only
+    /// path an external caller has and the only one worth pinning.
     #[test]
     fn uuid_answer() {
-        let cmd = UuidAnswer { uuid: UUID.into() };
+        let cmd = UuidAnswer::new(UUID);
         assert_eq!(cmd.to_string(), format!("uuid_answer {}", UUID));
     }
 
     #[test]
     fn uuid_bridge() {
-        let cmd = UuidBridge {
-            uuid: UUID.into(),
-            other: OTHER.into(),
-        };
+        let cmd = UuidBridge::new(UUID, OTHER);
         assert_eq!(cmd.to_string(), format!("uuid_bridge {} {}", UUID, OTHER));
     }
 
     #[test]
     fn uuid_deflect() {
-        let cmd = UuidDeflect {
-            uuid: UUID.into(),
-            uri: "sip:user@host".into(),
-        };
+        let cmd = UuidDeflect::new(UUID, "sip:user@host");
         assert_eq!(
             cmd.to_string(),
             format!("uuid_deflect {} sip:user@host", UUID)
@@ -318,19 +314,13 @@ mod tests {
 
     #[test]
     fn uuid_hold_on() {
-        let cmd = UuidHold {
-            uuid: UUID.into(),
-            off: false,
-        };
+        let cmd = UuidHold::hold(UUID);
         assert_eq!(cmd.to_string(), format!("uuid_hold {}", UUID));
     }
 
     #[test]
     fn uuid_hold_off() {
-        let cmd = UuidHold {
-            uuid: UUID.into(),
-            off: true,
-        };
+        let cmd = UuidHold::unhold(UUID);
         assert_eq!(cmd.to_string(), format!("uuid_hold off {}", UUID));
     }
 
@@ -351,20 +341,13 @@ mod tests {
 
     #[test]
     fn uuid_getvar() {
-        let cmd = UuidGetVar {
-            uuid: UUID.into(),
-            key: "sip_call_id".into(),
-        };
+        let cmd = UuidGetVar::new(UUID, "sip_call_id");
         assert_eq!(cmd.to_string(), format!("uuid_getvar {} sip_call_id", UUID));
     }
 
     #[test]
     fn uuid_setvar() {
-        let cmd = UuidSetVar {
-            uuid: UUID.into(),
-            key: "hangup_after_bridge".into(),
-            value: "true".into(),
-        };
+        let cmd = UuidSetVar::new(UUID, "hangup_after_bridge", "true");
         assert_eq!(
             cmd.to_string(),
             format!("uuid_setvar {} hangup_after_bridge true", UUID)
@@ -373,11 +356,7 @@ mod tests {
 
     #[test]
     fn uuid_transfer_no_dialplan() {
-        let cmd = UuidTransfer {
-            uuid: UUID.into(),
-            destination: "1000".into(),
-            dialplan: None,
-        };
+        let cmd = UuidTransfer::new(UUID, "1000");
         assert_eq!(cmd.to_string(), format!("uuid_transfer {} 1000", UUID));
     }
 
@@ -389,10 +368,7 @@ mod tests {
 
     #[test]
     fn uuid_send_dtmf() {
-        let cmd = UuidSendDtmf {
-            uuid: UUID.into(),
-            dtmf: "1234#".into(),
-        };
+        let cmd = UuidSendDtmf::new(UUID, "1234#");
         assert_eq!(cmd.to_string(), format!("uuid_send_dtmf {} 1234#", UUID));
     }
 }

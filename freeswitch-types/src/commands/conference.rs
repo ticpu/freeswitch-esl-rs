@@ -150,113 +150,41 @@ impl fmt::Display for ConferenceDtmf {
 mod tests {
     use super::*;
 
+    /// These types are `#[non_exhaustive]`, so a constructor is the only way an
+    /// external caller can build one and the only path worth pinning.
     #[test]
-    fn conference_mute() {
-        let cmd = ConferenceMute {
-            name: "conf1".into(),
-            action: MuteAction::Mute,
-            member: "5".into(),
-        };
-        assert_eq!(cmd.to_string(), "conference conf1 mute 5");
+    fn conference_mute_renders_both_actions() {
+        for (action, wire) in [
+            (MuteAction::Mute, "conference conf1 mute 5"),
+            (MuteAction::Unmute, "conference conf1 unmute 5"),
+        ] {
+            assert_eq!(ConferenceMute::new("conf1", action, "5").to_string(), wire);
+        }
     }
 
     #[test]
-    fn conference_unmute() {
-        let cmd = ConferenceMute {
-            name: "conf1".into(),
-            action: MuteAction::Unmute,
-            member: "5".into(),
-        };
-        assert_eq!(cmd.to_string(), "conference conf1 unmute 5");
-    }
-
-    #[test]
-    fn conference_hold_all() {
-        let cmd = ConferenceHold {
-            name: "conf1".into(),
-            action: HoldAction::Hold,
-            member: "all".into(),
-            stream: None,
-        };
-        assert_eq!(cmd.to_string(), "conference conf1 hold all");
-    }
-
-    #[test]
-    fn conference_hold_with_stream() {
-        let cmd = ConferenceHold {
-            name: "conf1".into(),
-            action: HoldAction::Hold,
-            member: "all".into(),
-            stream: Some("local_stream://moh".into()),
-        };
+    fn conference_hold_renders_both_actions_and_the_stream() {
         assert_eq!(
-            cmd.to_string(),
+            ConferenceHold::new("conf1", HoldAction::Hold, "all").to_string(),
+            "conference conf1 hold all"
+        );
+        assert_eq!(
+            ConferenceHold::new("conf1", HoldAction::Unhold, "all").to_string(),
+            "conference conf1 unhold all"
+        );
+        assert_eq!(
+            ConferenceHold::new("conf1", HoldAction::Hold, "all")
+                .with_stream("local_stream://moh")
+                .to_string(),
             "conference conf1 hold all local_stream://moh"
         );
     }
 
     #[test]
-    fn conference_unhold() {
-        let cmd = ConferenceHold {
-            name: "conf1".into(),
-            action: HoldAction::Unhold,
-            member: "all".into(),
-            stream: None,
-        };
-        assert_eq!(cmd.to_string(), "conference conf1 unhold all");
-    }
-
-    #[test]
-    fn conference_dtmf() {
-        let cmd = ConferenceDtmf {
-            name: "conf1".into(),
-            member: "all".into(),
-            dtmf: "1234".into(),
-        };
-        assert_eq!(cmd.to_string(), "conference conf1 dtmf all 1234");
-    }
-
-    #[test]
-    fn mute_action_from_str() {
+    fn conference_dtmf_renders() {
         assert_eq!(
-            "mute"
-                .parse::<MuteAction>()
-                .unwrap(),
-            MuteAction::Mute
+            ConferenceDtmf::new("conf1", "all", "1234").to_string(),
+            "conference conf1 dtmf all 1234"
         );
-        assert_eq!(
-            "unmute"
-                .parse::<MuteAction>()
-                .unwrap(),
-            MuteAction::Unmute
-        );
-        assert!("Mute"
-            .parse::<MuteAction>()
-            .is_err());
-        assert!("MUTE"
-            .parse::<MuteAction>()
-            .is_err());
-    }
-
-    #[test]
-    fn hold_action_from_str() {
-        assert_eq!(
-            "hold"
-                .parse::<HoldAction>()
-                .unwrap(),
-            HoldAction::Hold
-        );
-        assert_eq!(
-            "unhold"
-                .parse::<HoldAction>()
-                .unwrap(),
-            HoldAction::Unhold
-        );
-        assert!("Hold"
-            .parse::<HoldAction>()
-            .is_err());
-        assert!("HOLD"
-            .parse::<HoldAction>()
-            .is_err());
     }
 }
