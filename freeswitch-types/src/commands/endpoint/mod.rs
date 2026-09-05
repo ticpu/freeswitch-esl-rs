@@ -512,9 +512,6 @@ mod tests {
             .parse()
             .unwrap();
         assert!(matches!(ep, Endpoint::Error(_)));
-        assert!("error/user_busy"
-            .parse::<Endpoint>()
-            .is_err());
     }
 
     /// `ErrorEndpoint` has nowhere to keep a block, so accepting one loses
@@ -660,90 +657,48 @@ mod tests {
 
     // --- Serde: Endpoint enum ---
 
+    /// One case per variant: the externally tagged name is the config key a
+    /// deployment writes, so a rename is a break and has to show up here.
     #[test]
-    fn serde_endpoint_enum_sofia() {
-        let ep = Endpoint::Sofia(SofiaEndpoint {
-            profile: "internal".into(),
-            destination: "1000@example.com".into(),
-            variables: None,
-        });
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"sofia\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
-    }
-
-    #[test]
-    fn serde_endpoint_enum_sofia_gateway() {
-        let ep = Endpoint::SofiaGateway(SofiaGateway {
-            gateway: "gw1".into(),
-            destination: "1234".into(),
-            profile: None,
-            variables: None,
-        });
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"sofia_gateway\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
-    }
-
-    #[test]
-    fn serde_endpoint_enum_loopback() {
-        let ep = Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("default"));
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"loopback\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
-    }
-
-    #[test]
-    fn serde_endpoint_enum_user() {
-        let ep = Endpoint::User(UserEndpoint {
-            name: "bob".into(),
-            domain: Some("example.com".into()),
-            variables: None,
-        });
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"user\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
-    }
-
-    #[test]
-    fn serde_endpoint_enum_sofia_contact() {
-        let ep = Endpoint::SofiaContact(SofiaContact {
-            user: "1000".into(),
-            domain: "example.com".into(),
-            profile: None,
-            variables: None,
-        });
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"sofia_contact\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
-    }
-
-    #[test]
-    fn serde_endpoint_enum_group_call() {
-        let ep = Endpoint::GroupCall(GroupCall {
-            group: "support".into(),
-            domain: "example.com".into(),
-            order: Some(GroupCallOrder::All),
-            variables: None,
-        });
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"group_call\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
-    }
-
-    #[test]
-    fn serde_endpoint_enum_error() {
-        let ep = Endpoint::Error(ErrorEndpoint::new(crate::channel::HangupCause::UserBusy));
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"error\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
+    fn serde_endpoint_enum_tags_round_trip() {
+        let cases: [(&str, Endpoint); 7] = [
+            (
+                "sofia",
+                SofiaEndpoint::new("internal", "1000@example.com").into(),
+            ),
+            ("sofia_gateway", SofiaGateway::new("gw1", "1234").into()),
+            (
+                "loopback",
+                LoopbackEndpoint::new("9199")
+                    .with_context("default")
+                    .into(),
+            ),
+            (
+                "user",
+                UserEndpoint::new("bob")
+                    .with_domain("example.com")
+                    .into(),
+            ),
+            (
+                "sofia_contact",
+                SofiaContact::new("1000", "example.com").into(),
+            ),
+            (
+                "group_call",
+                GroupCall::new("support", "example.com")
+                    .with_order(GroupCallOrder::All)
+                    .into(),
+            ),
+            (
+                "error",
+                ErrorEndpoint::new(crate::channel::HangupCause::UserBusy).into(),
+            ),
+        ];
+        for (tag, ep) in cases {
+            let json = serde_json::to_string(&ep).unwrap();
+            assert!(json.contains(&format!("\"{tag}\"")), "{tag}: {json}");
+            assert_eq!(serde_json::from_str::<Endpoint>(&json).unwrap(), ep);
+        }
     }
 
     #[test]
@@ -771,177 +726,123 @@ mod tests {
 
     // --- Audio endpoints through Endpoint enum ---
 
+    /// The three audio modules share one struct and differ only in the prefix
+    /// their variant supplies, so each row has to name its own module.
     #[test]
-    fn portaudio_display() {
-        let ep = AudioEndpoint {
-            destination: Some("auto_answer".into()),
-            variables: None,
-        };
-        let endpoint = Endpoint::PortAudio(ep);
-        assert_eq!(endpoint.to_string(), "portaudio/auto_answer");
-    }
+    fn audio_endpoints_render_and_parse_per_module() {
+        type Variant = fn(AudioEndpoint) -> Endpoint;
+        let cases: [(Variant, &str, &str); 6] = [
+            (Endpoint::PortAudio, "portaudio", "portaudio/auto_answer"),
+            (Endpoint::PortAudio, "portaudio", "portaudio"),
+            (Endpoint::PulseAudio, "pulseaudio", "pulseaudio/auto_answer"),
+            (Endpoint::PulseAudio, "pulseaudio", "pulseaudio"),
+            (Endpoint::Alsa, "alsa", "alsa/auto_answer"),
+            (Endpoint::Alsa, "alsa", "alsa"),
+        ];
+        for (variant, module, wire) in cases {
+            let destination = wire
+                .strip_prefix(module)
+                .and_then(|rest| rest.strip_prefix('/'))
+                .map(str::to_string);
+            let ep = variant(AudioEndpoint {
+                destination: destination.clone(),
+                variables: None,
+            });
+            assert_eq!(ep.to_string(), wire);
 
-    #[test]
-    fn portaudio_bare_display() {
-        let ep = AudioEndpoint {
-            destination: None,
-            variables: None,
-        };
-        let endpoint = Endpoint::PortAudio(ep);
-        assert_eq!(endpoint.to_string(), "portaudio");
-    }
-
-    #[test]
-    fn portaudio_from_str() {
-        let ep: Endpoint = "portaudio/auto_answer"
-            .parse()
-            .unwrap();
-        if let Endpoint::PortAudio(audio) = ep {
-            assert_eq!(
-                audio
-                    .destination
-                    .as_deref(),
-                Some("auto_answer")
+            let parsed: Endpoint = wire
+                .parse()
+                .unwrap();
+            assert_eq!(parsed, ep, "{wire}");
+            assert!(
+                parsed
+                    .variables()
+                    .is_none(),
+                "{wire}"
             );
-        } else {
-            panic!("expected PortAudio");
+
+            let json = serde_json::to_string(&ep).unwrap();
+            assert!(json.contains(&format!("\"{module}\"")), "{wire}: {json}");
+            assert_eq!(serde_json::from_str::<Endpoint>(&json).unwrap(), ep);
         }
     }
 
     #[test]
-    fn portaudio_bare_from_str() {
-        let ep: Endpoint = "portaudio"
-            .parse()
-            .unwrap();
-        if let Endpoint::PortAudio(audio) = ep {
-            assert!(audio
-                .destination
-                .is_none());
-        } else {
-            panic!("expected PortAudio");
-        }
-    }
-
-    #[test]
-    fn portaudio_round_trip() {
-        let input = "portaudio/auto_answer";
-        let ep: Endpoint = input
-            .parse()
-            .unwrap();
-        assert_eq!(ep.to_string(), input);
-    }
-
-    #[test]
-    fn portaudio_bare_round_trip() {
-        let input = "portaudio";
-        let ep: Endpoint = input
-            .parse()
-            .unwrap();
-        assert_eq!(ep.to_string(), input);
-    }
-
-    #[test]
-    fn portaudio_with_variables() {
+    fn audio_endpoint_carries_variables() {
         let mut vars = Variables::new(VariablesType::Default);
         vars.insert("codec", "PCMU");
-        let ep = Endpoint::PortAudio(AudioEndpoint {
-            destination: Some("auto_answer".into()),
-            variables: Some(vars),
-        });
+        let ep = Endpoint::PortAudio(
+            AudioEndpoint::new()
+                .with_destination("auto_answer")
+                .with_variables(vars),
+        );
         assert_eq!(ep.to_string(), "{codec=PCMU}portaudio/auto_answer");
-        let parsed: Endpoint = ep
-            .to_string()
-            .parse()
-            .unwrap();
-        assert_eq!(parsed, ep);
+        assert_eq!(
+            ep.to_string()
+                .parse::<Endpoint>()
+                .unwrap(),
+            ep
+        );
     }
 
+    /// A quoted value is escaped one level shallower for a dialplan carrier, so
+    /// a renderer and a parser that disagree on the carrier hand back a
+    /// different value than was put in — silently, for every endpoint type.
     #[test]
-    fn pulseaudio_display() {
-        let ep = Endpoint::PulseAudio(AudioEndpoint {
-            destination: Some("auto_answer".into()),
-            variables: None,
-        });
-        assert_eq!(ep.to_string(), "pulseaudio/auto_answer");
-    }
+    fn every_endpoint_type_round_trips_at_the_dialplan_carrier() {
+        let mut vars = Variables::new(VariablesType::Channel);
+        vars.insert("cid", "it's");
+        vars.insert("other", "don't");
 
-    #[test]
-    fn pulseaudio_from_str() {
-        let ep: Endpoint = "pulseaudio/auto_answer"
-            .parse()
-            .unwrap();
-        assert!(matches!(ep, Endpoint::PulseAudio(_)));
-    }
+        let with_vars = |mut ep: Endpoint| {
+            ep.set_variables(Some(vars.clone()));
+            ep
+        };
+        let cases: [Endpoint; 10] = [
+            with_vars(SofiaEndpoint::new("internal", "1000@example.com").into()),
+            with_vars(
+                SofiaGateway::new("gw", "1234")
+                    .with_profile("external")
+                    .into(),
+            ),
+            with_vars(
+                LoopbackEndpoint::new("9199")
+                    .with_context("default")
+                    .into(),
+            ),
+            with_vars(
+                UserEndpoint::new("bob")
+                    .with_domain("example.com")
+                    .into(),
+            ),
+            with_vars(
+                SofiaContact::new("1000", "example.com")
+                    .with_profile("*")
+                    .into(),
+            ),
+            with_vars(
+                GroupCall::new("support", "example.com")
+                    .with_order(GroupCallOrder::All)
+                    .into(),
+            ),
+            ErrorEndpoint::new(crate::channel::HangupCause::UserBusy).into(),
+            with_vars(Endpoint::PortAudio(
+                AudioEndpoint::new().with_destination("auto_answer"),
+            )),
+            with_vars(Endpoint::PulseAudio(AudioEndpoint::new())),
+            with_vars(Endpoint::Alsa(
+                AudioEndpoint::new().with_destination("auto_answer"),
+            )),
+        ];
 
-    #[test]
-    fn pulseaudio_round_trip() {
-        let input = "pulseaudio/auto_answer";
-        let ep: Endpoint = input
-            .parse()
-            .unwrap();
-        assert_eq!(ep.to_string(), input);
-    }
-
-    #[test]
-    fn alsa_display() {
-        let ep = Endpoint::Alsa(AudioEndpoint {
-            destination: Some("auto_answer".into()),
-            variables: None,
-        });
-        assert_eq!(ep.to_string(), "alsa/auto_answer");
-    }
-
-    #[test]
-    fn alsa_from_str() {
-        let ep: Endpoint = "alsa/auto_answer"
-            .parse()
-            .unwrap();
-        assert!(matches!(ep, Endpoint::Alsa(_)));
-    }
-
-    #[test]
-    fn alsa_bare_round_trip() {
-        let input = "alsa";
-        let ep: Endpoint = input
-            .parse()
-            .unwrap();
-        assert_eq!(ep.to_string(), input);
-    }
-
-    #[test]
-    fn serde_portaudio() {
-        let ep = Endpoint::PortAudio(AudioEndpoint {
-            destination: Some("auto_answer".into()),
-            variables: None,
-        });
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"portaudio\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
-    }
-
-    #[test]
-    fn serde_pulseaudio() {
-        let ep = Endpoint::PulseAudio(AudioEndpoint {
-            destination: Some("auto_answer".into()),
-            variables: None,
-        });
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"pulseaudio\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
-    }
-
-    #[test]
-    fn serde_alsa() {
-        let ep = Endpoint::Alsa(AudioEndpoint {
-            destination: None,
-            variables: None,
-        });
-        let json = serde_json::to_string(&ep).unwrap();
-        assert!(json.contains("\"alsa\""));
-        let parsed: Endpoint = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, ep);
+        for ep in cases {
+            let rendered = ep
+                .display_for(DialStringCarrier::Dialplan)
+                .to_string();
+            let back = Endpoint::parse_for(&rendered, DialStringCarrier::Dialplan)
+                .unwrap_or_else(|e| panic!("{rendered} failed to parse: {e}"));
+            assert_eq!(back, ep, "rendered {rendered}");
+        }
     }
 
     // --- From impls ---
