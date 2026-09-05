@@ -816,9 +816,8 @@ mod tests {
     fn variables_standard_chars() {
         let mut vars = Variables::new(VariablesType::Default);
         vars.insert("test_key", "this_value");
-        let result = vars.to_string();
-        assert!(result.contains("test_key"));
-        assert!(result.contains("this_value"));
+        vars.insert("second", "2");
+        assert_eq!(vars.to_string(), "{test_key=this_value,second=2}");
     }
 
     #[test]

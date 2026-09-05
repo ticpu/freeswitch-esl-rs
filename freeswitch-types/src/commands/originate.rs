@@ -1455,6 +1455,53 @@ mod tests {
         }
     }
 
+    /// The mutators are the config-driven path: deserialize a template, then
+    /// override per call. Clearing a field is half of that and had no coverage.
+    #[test]
+    fn originate_mutators_set_and_clear_every_optional_field() {
+        let ep = Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("default"));
+        let mut cmd = Originate::extension(ep, "1000");
+
+        cmd.set_dialplan(Some(DialplanType::Xml));
+        cmd.set_context(Some("public"));
+        cmd.set_cid_name(Some("Alice"));
+        cmd.set_cid_num(Some("5551234"));
+        cmd.set_timeout(Some(Duration::from_secs(30)));
+        assert_eq!(
+            cmd.to_string(),
+            "originate loopback/9199/default 1000 XML public Alice 5551234 30"
+        );
+        assert_eq!(cmd.timeout_duration(), Some(Duration::from_secs(30)));
+
+        // The turbofish is not decoration: `Option<impl Into<String>>` leaves a
+        // bare `None` with no type to infer, so clearing a field needs one.
+        cmd.set_dialplan(None);
+        cmd.set_context(None::<String>);
+        cmd.set_cid_name(None::<String>);
+        cmd.set_cid_num(None::<String>);
+        cmd.set_timeout(None);
+        assert_eq!(cmd.to_string(), "originate loopback/9199/default 1000");
+    }
+
+    #[test]
+    fn originate_mut_accessors_reach_the_endpoint_and_the_target() {
+        let ep = Endpoint::Sofia(SofiaEndpoint::new("internal", "1000@example.com"));
+        let mut cmd = Originate::application(ep, Application::new("socket", Some("old")));
+
+        *cmd.endpoint_mut() = Endpoint::Loopback(LoopbackEndpoint::new("9199"));
+        if let OriginateTarget::Application(app) = cmd.target_mut() {
+            *app.name_mut() = "playback".into();
+            *app.args_mut() = Some("/tmp/test.wav".into());
+        } else {
+            panic!("expected Application target");
+        }
+
+        assert_eq!(
+            cmd.to_string(),
+            "originate loopback/9199 &playback(/tmp/test.wav)"
+        );
+    }
+
     #[test]
     fn originate_accessors() {
         let ep = Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("default"));
