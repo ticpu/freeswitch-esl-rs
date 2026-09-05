@@ -26,6 +26,14 @@ pub use response::{
 #[derive(Clone)]
 pub struct Secret(pub(crate) String);
 
+impl Secret {
+    /// Wrap a password so [`EslCommand::Auth`] and [`EslCommand::UserAuth`] can
+    /// be built for [`send_command`](crate::EslClient::send_command).
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
+
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("[REDACTED]")
