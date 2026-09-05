@@ -57,80 +57,13 @@ wire_enum! {
 mod tests {
     use super::*;
 
-    const ALL_REG_STATES: &[GatewayRegState] = &[
-        GatewayRegState::Unreged,
-        GatewayRegState::Trying,
-        GatewayRegState::Register,
-        GatewayRegState::Reged,
-        GatewayRegState::Unregister,
-        GatewayRegState::Failed,
-        GatewayRegState::FailWait,
-        GatewayRegState::Expired,
-        GatewayRegState::Noreg,
-        GatewayRegState::Down,
-        GatewayRegState::Timeout,
-    ];
-
-    #[test]
-    fn reg_state_round_trip() {
-        for &state in ALL_REG_STATES {
-            let wire = state.to_string();
-            let parsed: GatewayRegState = wire
-                .parse()
-                .unwrap();
-            assert_eq!(parsed, state, "round-trip failed for {wire}");
-        }
-    }
-
-    #[test]
-    fn reg_state_count() {
-        assert_eq!(ALL_REG_STATES.len(), 11);
-    }
-
-    #[test]
-    fn reg_state_rejects_unknown() {
-        assert!("BOGUS"
-            .parse::<GatewayRegState>()
-            .is_err());
-        assert!("reged"
-            .parse::<GatewayRegState>()
-            .is_err());
-    }
-
-    const ALL_PING_STATUSES: &[GatewayPingStatus] = &[
-        GatewayPingStatus::Down,
-        GatewayPingStatus::Up,
-        GatewayPingStatus::Invalid,
-    ];
-
-    #[test]
-    fn ping_status_round_trip() {
-        for &status in ALL_PING_STATUSES {
-            let wire = status.to_string();
-            let parsed: GatewayPingStatus = wire
-                .parse()
-                .unwrap();
-            assert_eq!(parsed, status, "round-trip failed for {wire}");
-        }
-    }
-
-    #[test]
-    fn ping_status_rejects_unknown() {
-        assert!("BOGUS"
-            .parse::<GatewayPingStatus>()
-            .is_err());
-        assert!("up"
-            .parse::<GatewayPingStatus>()
-            .is_err());
-    }
-
     #[cfg(feature = "serde")]
     mod serde_tests {
         use super::*;
 
         #[test]
         fn reg_state_serde_uses_wire_format() {
-            for &state in ALL_REG_STATES {
+            for &state in GatewayRegState::ALL {
                 let json = serde_json::to_string(&state).unwrap();
                 let expected = format!("\"{}\"", state.as_str());
                 assert_eq!(json, expected, "serde must serialize as wire format");
@@ -139,7 +72,7 @@ mod tests {
 
         #[test]
         fn reg_state_serde_round_trip() {
-            for &state in ALL_REG_STATES {
+            for &state in GatewayRegState::ALL {
                 let json = serde_json::to_string(&state).unwrap();
                 let parsed: GatewayRegState = serde_json::from_str(&json).unwrap();
                 assert_eq!(parsed, state);
@@ -162,7 +95,7 @@ mod tests {
 
         #[test]
         fn ping_status_serde_uses_wire_format() {
-            for &status in ALL_PING_STATUSES {
+            for &status in GatewayPingStatus::ALL {
                 let json = serde_json::to_string(&status).unwrap();
                 let expected = format!("\"{}\"", status.as_str());
                 assert_eq!(json, expected, "serde must serialize as wire format");
@@ -171,7 +104,7 @@ mod tests {
 
         #[test]
         fn ping_status_serde_round_trip() {
-            for &status in ALL_PING_STATUSES {
+            for &status in GatewayPingStatus::ALL {
                 let json = serde_json::to_string(&status).unwrap();
                 let parsed: GatewayPingStatus = serde_json::from_str(&json).unwrap();
                 assert_eq!(parsed, status);

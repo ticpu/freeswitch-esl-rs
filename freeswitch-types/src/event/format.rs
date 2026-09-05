@@ -1,17 +1,16 @@
-use std::fmt;
-use std::str::FromStr;
-
-/// Event format types supported by FreeSWITCH ESL
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
-pub enum EventFormat {
-    /// Plain text format (default)
-    Plain,
-    /// JSON format
-    Json,
-    /// XML format
-    Xml,
+wire_enum! {
+    /// Event format types supported by FreeSWITCH ESL.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum EventFormat {
+        /// Plain text format (default)
+        Plain => "plain",
+        /// JSON format
+        Json => "json",
+        /// XML format
+        Xml => "xml",
+    }
+    error ParseEventFormatError("event format");
+    from_str: ignore_case;
 }
 
 impl EventFormat {
@@ -28,34 +27,6 @@ impl EventFormat {
         }
     }
 }
-
-impl fmt::Display for EventFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EventFormat::Plain => write!(f, "plain"),
-            EventFormat::Json => write!(f, "json"),
-            EventFormat::Xml => write!(f, "xml"),
-        }
-    }
-}
-
-impl FromStr for EventFormat {
-    type Err = ParseEventFormatError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.eq_ignore_ascii_case("plain") {
-            Ok(Self::Plain)
-        } else if s.eq_ignore_ascii_case("json") {
-            Ok(Self::Json)
-        } else if s.eq_ignore_ascii_case("xml") {
-            Ok(Self::Xml)
-        } else {
-            Err(ParseEventFormatError(s.to_string()))
-        }
-    }
-}
-
-parse_error! { ParseEventFormatError("event format"); }
 
 #[cfg(test)]
 mod tests {

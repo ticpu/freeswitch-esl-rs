@@ -24,36 +24,11 @@ wire_enum! {
         CsNone = 13 => "CS_NONE",
     }
     error ParseChannelStateError("channel state");
+    numeric: from_number(u8);
     tests: channel_state_wire_tests;
 }
 
 impl ChannelState {
-    /// Parse from the `Channel-State-Number` integer header value.
-    pub fn from_number(n: u8) -> Option<Self> {
-        match n {
-            0 => Some(Self::CsNew),
-            1 => Some(Self::CsInit),
-            2 => Some(Self::CsRouting),
-            3 => Some(Self::CsSoftExecute),
-            4 => Some(Self::CsExecute),
-            5 => Some(Self::CsExchangeMedia),
-            6 => Some(Self::CsPark),
-            7 => Some(Self::CsConsumeMedia),
-            8 => Some(Self::CsHibernate),
-            9 => Some(Self::CsReset),
-            10 => Some(Self::CsHangup),
-            11 => Some(Self::CsReporting),
-            12 => Some(Self::CsDestroy),
-            13 => Some(Self::CsNone),
-            _ => None,
-        }
-    }
-
-    /// Integer discriminant matching `switch_channel_state_t`.
-    pub fn as_number(&self) -> u8 {
-        *self as u8
-    }
-
     /// Whether the channel is gone: `CS_DESTROY`, and nothing else.
     ///
     /// The session's run loop exits on `CS_DESTROY`; `CS_NONE` is a
@@ -613,21 +588,10 @@ mod tests {
     #[test]
     fn only_destroy_is_terminal() {
         assert!(ChannelState::CsDestroy.is_terminal());
-        for state in [
-            ChannelState::CsNew,
-            ChannelState::CsInit,
-            ChannelState::CsRouting,
-            ChannelState::CsSoftExecute,
-            ChannelState::CsExecute,
-            ChannelState::CsExchangeMedia,
-            ChannelState::CsPark,
-            ChannelState::CsConsumeMedia,
-            ChannelState::CsHibernate,
-            ChannelState::CsReset,
-            ChannelState::CsHangup,
-            ChannelState::CsReporting,
-            ChannelState::CsNone,
-        ] {
+        for state in ChannelState::ALL {
+            if *state == ChannelState::CsDestroy {
+                continue;
+            }
             assert!(!state.is_terminal(), "{state} is not an end of life");
         }
     }

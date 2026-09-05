@@ -38,7 +38,7 @@ macro_rules! parse_error {
 /// Generate an enum with canonical wire-string mappings and a matching
 /// `Parse<Name>Error` error type.
 ///
-/// Expands to the enum itself, `as_str()`, `Display`, a `ParseFooError`
+/// Expands to the enum itself, `ALL`, `as_str()`, `Display`, a `ParseFooError`
 /// newtype (`Debug + Clone + PartialEq + Eq + std::error::Error`), and
 /// `FromStr` that accepts the canonical case only.
 ///
@@ -71,6 +71,10 @@ macro_rules! parse_error {
 /// -> Option<Self>` and `as_number(&self) -> <repr>` based on the per-variant
 /// discriminants. Every variant must declare a discriminant (`= NUM`) when
 /// this clause is used.
+///
+/// An optional `from_str: ignore_case;` clause makes `FromStr` match with
+/// `eq_ignore_ascii_case`, for the config-facing types the crate's casing rule
+/// exempts. It is incompatible with `tests:`, which asserts wrong-case rejection.
 macro_rules! wire_enum {
     // With tests + numeric: emit base + numeric + test module.
     (
@@ -226,8 +230,80 @@ macro_rules! wire_enum {
         wire_enum! { @tests $Enum, $Error, $label, $tests_mod, $($Variant => $wire),+ }
     };
 
+    // Case-insensitive FromStr, no tests.
+    (
+        $(#[$enum_meta:meta])*
+        $vis:vis enum $Enum:ident {
+            $(
+                $(#[$var_meta:meta])*
+                $Variant:ident $(= $disc:literal)? => $wire:literal
+            ),+ $(,)?
+        }
+        error $Error:ident($label:literal);
+        from_str: ignore_case;
+    ) => {
+        wire_enum! {
+            @decl
+            $(#[$enum_meta])*
+            $vis enum $Enum {
+                $(
+                    $(#[$var_meta])*
+                    $Variant $(= $disc)? => $wire
+                ),+
+            }
+            error $Error($label);
+        }
+
+        impl ::std::str::FromStr for $Enum {
+            type Err = $Error;
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                $(
+                    if s.eq_ignore_ascii_case($wire) {
+                        return Ok(Self::$Variant);
+                    }
+                )+
+                Err($Error(s.to_string()))
+            }
+        }
+    };
+
     // Base expansion, no tests.
     (
+        $(#[$enum_meta:meta])*
+        $vis:vis enum $Enum:ident {
+            $(
+                $(#[$var_meta:meta])*
+                $Variant:ident $(= $disc:literal)? => $wire:literal
+            ),+ $(,)?
+        }
+        error $Error:ident($label:literal);
+    ) => {
+        wire_enum! {
+            @decl
+            $(#[$enum_meta])*
+            $vis enum $Enum {
+                $(
+                    $(#[$var_meta])*
+                    $Variant $(= $disc)? => $wire
+                ),+
+            }
+            error $Error($label);
+        }
+
+        impl ::std::str::FromStr for $Enum {
+            type Err = $Error;
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    $( $wire => Ok(Self::$Variant), )+
+                    _ => Err($Error(s.to_string())),
+                }
+            }
+        }
+    };
+
+    // Internal: everything but FromStr, which each public arm supplies.
+    (
+        @decl
         $(#[$enum_meta:meta])*
         $vis:vis enum $Enum:ident {
             $(
@@ -249,6 +325,9 @@ macro_rules! wire_enum {
         }
 
         impl $Enum {
+            /// Every variant, in declaration order.
+            pub const ALL: &[Self] = &[ $( Self::$Variant, )+ ];
+
             /// Canonical wire-format string.
             pub const fn as_str(&self) -> &'static str {
                 match self {
@@ -260,16 +339,6 @@ macro_rules! wire_enum {
         impl ::std::fmt::Display for $Enum {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                 f.write_str(self.as_str())
-            }
-        }
-
-        impl ::std::str::FromStr for $Enum {
-            type Err = $Error;
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                match s {
-                    $( $wire => Ok(Self::$Variant), )+
-                    _ => Err($Error(s.to_string())),
-                }
             }
         }
 

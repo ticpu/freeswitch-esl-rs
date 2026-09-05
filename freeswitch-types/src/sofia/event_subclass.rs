@@ -40,35 +40,6 @@ wire_enum! {
 }
 
 impl SofiaEventSubclass {
-    /// All Sofia event subclass variants.
-    pub const ALL: &[SofiaEventSubclass] = &[
-        Self::Register,
-        Self::PreRegister,
-        Self::RegisterAttempt,
-        Self::RegisterFailure,
-        Self::Unregister,
-        Self::Expire,
-        Self::GatewayState,
-        Self::SipUserState,
-        Self::NotifyRefer,
-        Self::Reinvite,
-        Self::GatewayAdd,
-        Self::GatewayDelete,
-        Self::GatewayInvalidDigestReq,
-        Self::RecoveryRecv,
-        Self::RecoverySend,
-        Self::RecoveryRecovered,
-        Self::Error,
-        Self::ProfileStart,
-        Self::NotifyWatchedHeader,
-        Self::WrongCallState,
-        Self::Transferor,
-        Self::Transferee,
-        Self::Replaced,
-        Self::Intercepted,
-        Self::ByeResponse,
-    ];
-
     /// Registration-related subclasses.
     pub const REGISTRATION_EVENTS: &[SofiaEventSubclass] = &[
         Self::Register,
