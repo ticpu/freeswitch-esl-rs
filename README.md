@@ -31,7 +31,7 @@ Async Rust client for FreeSWITCH
 Typed endpoints, typed events, serde support, split reader/writer, liveness
 detection.
 
-```rust
+```rust,no_run
 use std::time::Duration;
 use freeswitch_esl_tokio::*;
 use freeswitch_esl_tokio::commands::*;
@@ -133,7 +133,7 @@ tokio = { version = "1.0", features = ["full"] }
 
 ## Architecture
 
-```
+```text
 connect() -> (EslClient, EslEventStream)
 
 EslClient (Clone + Send)         EslEventStream
@@ -155,7 +155,10 @@ See [docs/design-rationale.md](docs/design-rationale.md) for the full story.
 
 ### Inbound connection
 
-```rust
+```rust,no_run
+# use freeswitch_esl_tokio::{EslClient, EslError};
+# #[tokio::main]
+# async fn main() -> Result<(), EslError> {
 let (client, mut events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
 
 let response = client.api("status").await?;
@@ -164,13 +167,22 @@ let response = client.api("status").await?;
 // back as Err here. It also strips the +OK prefix action commands carry, and
 // returns a query's body as-is.
 println!("{}", response.api_result()?);
+# let _ = &mut events;
+# Ok(())
+# }
 ```
 
 Multi-tenant with per-user ACL:
 
-```rust
+```rust,no_run
+# use freeswitch_esl_tokio::{EslClient, EslError};
+# #[tokio::main]
+# async fn main() -> Result<(), EslError> {
 let (client, mut events) =
     EslClient::connect_with_user("localhost", 8021, "admin@default", "ClueCon").await?;
+# let _ = (&client, &mut events);
+# Ok(())
+# }
 ```
 
 ### Event loop with liveness detection
@@ -204,8 +216,12 @@ immediately with a Job-UUID; the result arrives as a `BACKGROUND_JOB` event.
 `BgJobTracker` handles the Job-UUID correlation so you don't have to
 maintain a pending-jobs HashMap yourself:
 
-```rust
+```rust,no_run
+# use freeswitch_esl_tokio::{EslClient, EslError, EventFormat, EslEventType};
 use freeswitch_esl_tokio::{BgJobTracker, EventSubscription};
+# #[tokio::main]
+# async fn main() -> Result<(), EslError> {
+# let (client, mut events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
 
 client.apply_subscription(
     &EventSubscription::new(EventFormat::Plain)
@@ -224,12 +240,19 @@ while let Some(Ok(event)) = events.recv().await {
         break;
     }
 }
+# Ok(())
+# }
 ```
 
 Attach caller context to each job for dispatch without a separate map.
 The context is returned alongside the result:
 
-```rust
+```rust,no_run
+# use freeswitch_esl_tokio::{EslClient, EslError, BgJobTracker};
+# #[tokio::main]
+# async fn main() -> Result<(), EslError> {
+# let (client, mut events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
+# let channel_uuids: Vec<String> = Vec::new();
 let mut bg: BgJobTracker<String> = BgJobTracker::new();
 
 for uuid in &channel_uuids {
@@ -247,6 +270,8 @@ while let Some(Ok(event)) = events.recv().await {
     }
     // ... handle other events
 }
+# Ok(())
+# }
 ```
 
 ### Outbound mode
@@ -254,17 +279,19 @@ while let Some(Ok(event)) = events.recv().await {
 FreeSWITCH connects to your application via the `socket` dialplan app.
 After accepting, send `connect` to establish the session:
 
-```rust
-use freeswitch_esl_tokio::{EslClient, AppCommand, EventFormat, EventHeader, HeaderLookup};
+```rust,no_run
+use freeswitch_esl_tokio::{EslClient, AppCommand, EventFormat, HeaderLookup};
 use tokio::net::TcpListener;
-
+# use freeswitch_esl_tokio::EslError;
+# #[tokio::main]
+# async fn main() -> Result<(), EslError> {
 let listener = TcpListener::bind("[::]:8040").await?;
 let (client, mut events) = EslClient::accept_outbound(&listener).await?;
 
 // Must be the first command after accept, returns channel info as an EslResponse
 let channel_data = client.connect_session().await?;
 // Channel-Name is always present in connect response
-println!("Channel: {}", channel_data.header(EventHeader::ChannelName).unwrap());
+println!("Channel: {}", channel_data.channel_name().unwrap());
 
 // Subscribe, enable linger, resume dialplan
 client.myevents(EventFormat::Plain).await?;
@@ -278,6 +305,8 @@ client.send_command(AppCommand::playback("ivr/ivr-welcome.wav")).await?;
 while let Some(Ok(event)) = events.recv().await {
     // handle events...
 }
+# Ok(())
+# }
 ```
 
 See [docs/outbound-esl-quirks.md](docs/outbound-esl-quirks.md) for outbound
@@ -323,8 +352,12 @@ let ep: Endpoint = "sofia/gateway/my_provider/18005551234".parse().unwrap();
 
 ### Originate
 
-```rust
+```rust,no_run
+# use freeswitch_esl_tokio::{EslClient, EslError};
 use freeswitch_esl_tokio::commands::*;
+# #[tokio::main]
+# async fn main() -> Result<(), EslError> {
+# let (client, _events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
 
 let gw = || Endpoint::SofiaGateway(SofiaGateway::new("my_provider", "18005551234"));
 
@@ -344,6 +377,9 @@ client.bgapi(&cmd.to_string()).await?;
 // Round-trip: parse <-> display
 let parsed: Originate = cmd.to_string().parse().unwrap();
 assert_eq!(parsed.to_string(), cmd.to_string());
+# let _ = ext_cmd;
+# Ok(())
+# }
 ```
 
 ### Bridge dial strings
@@ -351,8 +387,12 @@ assert_eq!(parsed.to_string(), cmd.to_string());
 `BridgeDialString` builds multi-endpoint bridge arguments with simultaneous
 ring (`,`) and sequential failover (`|`):
 
-```rust
+```rust,no_run
+# use freeswitch_esl_tokio::{EslClient, EslError, AppCommand};
 use freeswitch_esl_tokio::commands::*;
+# #[tokio::main]
+# async fn main() -> Result<(), EslError> {
+# let (client, _events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
 
 // Try primary and secondary simultaneously, then failover to backup
 let bridge = BridgeDialString::new(vec![
@@ -366,6 +406,8 @@ let bridge = BridgeDialString::new(vec![
 
 // Use with the bridge dptools application
 client.send_command(AppCommand::bridge(bridge)).await?;
+# Ok(())
+# }
 ```
 
 See [docs/dial-string-format.md](docs/dial-string-format.md) for the complete
@@ -374,9 +416,14 @@ dial string reference (variable scoping, `^^:` custom delimiters, enterprise
 
 ### UUID and conference commands
 
-```rust
+```rust,no_run
+# use freeswitch_esl_tokio::{EslClient, EslError};
 use freeswitch_esl_tokio::commands::*;
 use freeswitch_esl_tokio::HangupCause;
+# #[tokio::main]
+# async fn main() -> Result<(), EslError> {
+# let (client, _events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
+# let uuid = "11111111-1111-1111-1111-111111111111";
 
 // UUID commands
 let kill = UuidKill::with_cause(uuid, HangupCause::NormalClearing);
@@ -387,6 +434,8 @@ client.api(&kill.to_string()).await?;
 let dtmf = ConferenceDtmf::new("room1", "all", "1");
 // -> "conference room1 dtmf all 1"
 client.api(&dtmf.to_string()).await?;
+# Ok(())
+# }
 ```
 
 > Output strings verified by unit tests in
@@ -413,9 +462,23 @@ application:
 timeout_secs: 30
 ```
 
-```rust
-let originate: Originate = serde_yml::from_str(yaml)?;
+```rust,no_run
+# use freeswitch_esl_tokio::{EslClient, Originate};
+# #[tokio::main]
+# async fn main() -> Result<(), Box<dyn std::error::Error>> {
+# let (client, _events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
+# let yaml = r#"
+# endpoint: !sofia_gateway
+#   gateway: my_provider
+#   destination: "18005551234"
+# application:
+#   name: park
+# timeout_secs: 30
+# "#;
+let originate: Originate = yaml_serde::from_str(yaml)?;
 client.bgapi(&originate.to_string()).await?;
+# Ok(())
+# }
 ```
 
 `EventSubscription` also serializes, so subscriptions can live in config files:
@@ -482,7 +545,7 @@ endpoint: !user
   domain: example.com
 ```
 
-This is the format produced by `serde_yml`. JSON libraries represent the
+This is the format produced by `yaml_serde`. JSON libraries represent the
 same data differently (`{"sofia_gateway": {"gateway": ...}}` instead of a
 YAML tag), but both deserialize into the same Rust types.
 
@@ -495,7 +558,9 @@ loopback legs, and how to make a loopback pair bow out.
 ```rust
 use freeswitch_esl_tokio::variables::{EslArray, MultipartBody, SipPassthroughHeader};
 use freeswitch_esl_tokio::HeaderLookup;
-use sip_header::SipHeader;
+use freeswitch_types::sip_header::SipHeader;
+# use freeswitch_esl_tokio::commands::Variables;
+# fn demo(event: &impl HeaderLookup, vars: &mut Variables, raw_multipart: &str) {
 
 // ARRAY:: delimited values (used by FreeSWITCH for repeating SIP headers)
 let arr = EslArray::parse("ARRAY::item1|:item2|:item3").unwrap();
@@ -517,7 +582,16 @@ vars.insert(SipPassthroughHeader::request(SipHeader::CallInfo), "<sip:example.co
 
 // SIP multipart body extraction
 let body = MultipartBody::parse(raw_multipart).unwrap().unwrap();
+
+// by_mime_type matches the stored Content-Type verbatim, parameters included.
 let pidf = body.by_mime_type("application/pidf+xml");
+
+// by_media_type/MultipartItem::media_type ignore parameters and case --
+// reach for this pair unless the switch is known to emit one exact spelling.
+let pidf = body.by_media_type("application/pidf+xml");
+# let _ = pidf;
+# }
+# fn main() {}
 ```
 
 > Verified in [`variables/esl_array.rs`](freeswitch-types/src/variables/esl_array.rs),
@@ -534,11 +608,17 @@ leaves the policy to you: there is no merge, because intersecting an offer while
 *generating* one is not something FreeSWITCH does, and it silently narrows a list
 that some interfaces require to stay complete.
 
-```rust
+```rust,no_run
+# use freeswitch_esl_tokio::EslClient;
 use freeswitch_esl_tokio::sdp::{
     CodecImplementation, CodecString, CodecStringOptions, SdpCodecs,
 };
 use freeswitch_esl_tokio::ChannelVariable;
+# #[tokio::main]
+# async fn main() -> Result<(), Box<dyn std::error::Error>> {
+# let (client, _events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
+# let uuid = "11111111-1111-1111-1111-111111111111";
+# let remote_sdp = "v=0";
 
 // The peer's offer, e.g. from the switch_r_sdp channel variable.
 let offer = SdpCodecs::parse(remote_sdp)?;
@@ -562,6 +642,8 @@ for dropped in codecs.retain_available(&loaded) {
 // Single-quote the value: uuid_setvar splits on spaces, and AMR format
 // parameters routinely contain "; ".
 client.api(&format!("uuid_setvar {uuid} {} '{codecs}'", ChannelVariable::AbsoluteCodecString)).await?;
+# Ok(())
+# }
 ```
 
 Ordering is whatever you concatenate, since `dedup()` keeps the first occurrence:
@@ -578,7 +660,8 @@ and the two places FreeSWITCH drops a codec-string entry without logging it.
 instead of returning raw strings:
 
 ```rust
-use freeswitch_esl_tokio::{ChannelState, CallDirection, HeaderLookup};
+use freeswitch_esl_tokio::{ChannelState, HeaderLookup};
+# fn demo(event: &impl HeaderLookup) {
 
 // Typed enums parsed from headers, no string matching needed
 if let Ok(Some(state)) = event.channel_state() {
@@ -591,9 +674,12 @@ if let Ok(Some(state)) = event.channel_state() {
 
 // String accessors return Option<&str>: None if the header is absent
 let cid = event.caller_id_number();     // Option<&str>
-// Typed accessors return Result<Option<T>, ParseErr>
+// Typed accessors return Result<Option<T>, _> -- each accessor has its own parse-error type
 let direction = event.call_direction(); // Result<Option<CallDirection>, _>
 let cause = event.hangup_cause();       // Result<Option<HangupCause>, _>
+# let _ = (cid, direction, cause);
+# }
+# fn main() {}
 ```
 
 A header value that isn't valid UTF-8 after percent-decoding (e.g. a Latin-1
@@ -610,7 +696,8 @@ into the old hard `InvalidUtf8InHeader` error with
 Call lifecycle timestamps via `ChannelTimetable`:
 
 ```rust
-use freeswitch_esl_tokio::{HeaderLookup, ChannelTimetable, TimetablePrefix};
+use freeswitch_esl_tokio::{HeaderLookup, ChannelTimetable};
+# fn demo(event: &impl HeaderLookup) -> Result<(), Box<dyn std::error::Error>> {
 
 // Extracts all Caller-*-Time headers from the event
 let timetable = event.caller_timetable()?;
@@ -630,6 +717,19 @@ if let Some(tt) = timetable {
 
 // Other-Leg timetable (bridged party):
 let other = event.other_leg_timetable()?;
+# let _ = other;
+# Ok(())
+# }
+# fn main() {}
+```
+
+`ChannelTimetable::from_lookup` works the same way against any key-value
+store, not just `EslEvent` -- illustrative only below, since `headers` and
+`subscription_headers` stand for an arbitrary lookup and an arbitrary
+subscription-building collection:
+
+```rust,ignore
+use freeswitch_esl_tokio::{ChannelTimetable, TimetablePrefix};
 
 // Works with any key-value store, not coupled to EslEvent:
 let timetable = ChannelTimetable::from_lookup(
@@ -653,24 +753,36 @@ Compile-time header and variable name enums via `HeaderLookup`:
 
 ```rust
 use freeswitch_esl_tokio::{HeaderLookup, EventHeader, ChannelVariable};
+# fn demo(event: &impl HeaderLookup) {
 
 // HeaderLookup trait provides typed enum lookups on EslEvent
 let uid = event.header(EventHeader::UniqueId);             // Option<&str>
 let codec = event.variable(ChannelVariable::ReadCodec);    // Option<&str>
+# let _ = (uid, codec);
+# }
+# fn main() {}
 ```
 
 ### Custom channel tracker with `HeaderLookup`
 
 The `HeaderLookup` trait lets any `HashMap<String, String>` wrapper share
-the same typed accessors as `EslEvent`. Implement two methods, get all typed
+the same typed accessors as `EslEvent`. `HeaderLookup` requires the
+`SipHeaderLookup` supertrait, so implement three methods, get all typed
 accessors for free:
 
 ```rust
 use std::collections::HashMap;
 use freeswitch_esl_tokio::HeaderLookup;
+use freeswitch_types::SipHeaderLookup;
 
 struct TrackedChannel {
     data: HashMap<String, String>,
+}
+
+impl SipHeaderLookup for TrackedChannel {
+    fn sip_header_str(&self, name: &str) -> Option<&str> {
+        self.data.get(name).map(|s| s.as_str())
+    }
 }
 
 impl HeaderLookup for TrackedChannel {
@@ -809,7 +921,7 @@ Breaking changes in 2.0:
 | `Endpoint::Sofia { profile, uri, .. }` | `Endpoint::Sofia(SofiaEndpoint::new(profile, uri))` |
 | `Endpoint::Loopback { extension, .. }` | `Endpoint::Loopback(LoopbackEndpoint::new(extension))` |
 | `Endpoint::User { user, .. }` | `Endpoint::User(UserEndpoint::new(user))` |
-| `HeaderLookup` typed accessors return `Option<T>` | Now return `Result<Option<T>, ParseError>` (parse errors no longer silently become `None`) |
+| `HeaderLookup` typed accessors return `Option<T>` | Now return `Result<Option<T>, _>` (a parse error type per field; parse errors no longer silently become `None`) |
 | `HeaderLookup` trait alone | Requires `SipHeaderLookup` supertrait |
 | `Variables::vars_type` public field | Private; use `scope()` accessor |
 | `ChannelVariable` | Renamed to `VariableName` |

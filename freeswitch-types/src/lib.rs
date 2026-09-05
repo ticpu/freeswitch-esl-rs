@@ -94,3 +94,8 @@ pub use variables::{
     MultipartItem, ParseChannelVariableError, ParseCoreMediaVariableError, RtpStatUnit,
     SipHeaderPrefix, SipPassthroughHeader, VariableName, MAX_ARRAY_ITEMS,
 };
+
+#[cfg(all(doctest, feature = "esl"))]
+mod readme {
+    #![doc = include_str!("../README.md")]
+}

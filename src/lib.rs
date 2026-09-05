@@ -169,6 +169,11 @@ pub use freeswitch_types::{
     VariablesType, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT, MAX_ARRAY_ITEMS, VARIABLE_PREFIX,
 };
 
+#[cfg(doctest)]
+mod readme {
+    #![doc = include_str!("../README.md")]
+}
+
 pub use app::dptools::AppCommand;
 pub use bgjob::{BgJobResult, BgJobTracker};
 pub use command::{

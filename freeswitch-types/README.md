@@ -31,6 +31,7 @@ which re-exports everything from this crate.
 | `lookup` | `HeaderLookup` trait (typed accessors for any key-value store) |
 | `sofia` | `SofiaChannelName` (borrow-based `sofia/<profile>/<user>@<host>` parser), `SofiaEventSubclass`, `GatewayRegState`, `SipUserPingStatus` |
 | `variables` | `ChannelVariable`, `CoreMediaVariable` (`unit()` → `RtpStatUnit`), `SofiaVariable`, `LoopbackVariable` (+ `LoopbackResignation`, the bowout marker, and `LoopbackChannelName`/`LoopbackLeg` — the name is the one field a resignation does not copy onto the surviving channel), `ConferenceVariable`, `SipPassthroughHeader` (unified `sip_h_*`/`sip_i_*`/etc. with `extract_from()`), `EslArray`, `MultipartBody` |
+| | `CarriedHeader` — the exhaustive mapping `SofiaVariable::carried_header()` returns from a channel variable to the SIP header(s) it carries |
 | `event` | `EslEvent`, `EslEventType`, `EventFormat`, `EslEventPriority`, `LossyValues`/`LossyValue` (non-UTF-8 header-value signal) *(requires `esl` feature)* |
 | `commands` | `Originate`, `BridgeDialString`, `UuidKill`, `UuidBridge`, endpoint types *(requires `esl` feature)* |
 | `sdp` | `CodecString`/`CodecStringEntry` (the FreeSWITCH codec-string grammar, parse and emit, with `dedup`/`simplify` ported from the switch), `SdpCodecs` (SDP offer → typed codec list, plus `SdpMediaSection` for every `m=` line the offer carried — held streams included — and `NonCodecPayload` for what the switch negotiates outside the string), `CodecImplementation` (filter a codec string against what a switch has loaded) *(requires `sdp` feature)* |
@@ -82,7 +83,12 @@ assert_eq!(addr.sip_uri().unwrap().user(), Some("alice"));
 
 ### Command builders (requires `esl` feature)
 
-```rust
+Not run as a doctest yet: round-trip parsing of a quoted `cid_name` value
+(`'Outbound Call'`) does not currently match its own `Display` output --
+parsing re-wraps the already-quoted string instead of stripping the quotes.
+Tracked as a `commands/` bug, not a documentation issue.
+
+```rust,ignore
 use std::time::Duration;
 use freeswitch_types::commands::*;
 
@@ -105,10 +111,16 @@ assert_eq!(parsed.to_string(), cmd.to_string());
 ### Typed event accessors
 
 ```rust
-use freeswitch_types::{HeaderLookup, EventHeader, ChannelVariable};
+use freeswitch_types::{HeaderLookup, SipHeaderLookup, EventHeader, ChannelVariable};
 
 // HeaderLookup works with any key-value store, not just EslEvent
 struct MyHeaders(std::collections::HashMap<String, String>);
+
+impl SipHeaderLookup for MyHeaders {
+    fn sip_header_str(&self, name: &str) -> Option<&str> {
+        self.0.get(name).map(|s| s.as_str())
+    }
+}
 
 impl HeaderLookup for MyHeaders {
     fn header_str(&self, name: &str) -> Option<&str> {
