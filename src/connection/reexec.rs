@@ -105,9 +105,17 @@ impl EslClient {
             .liveness_timeout_ms
             .store(0, Ordering::Relaxed);
 
-        let _ = reexec
+        // A dropped receiver means the reader is already gone; reporting it here
+        // keeps it out of the drain timeout below, which would name the wrong cause.
+        if reexec
             .stop_tx
-            .send(());
+            .send(())
+            .is_err()
+        {
+            return Err(EslError::ReexecFailed {
+                reason: "reader task is gone, stop signal not delivered".into(),
+            });
+        }
 
         // Wait for reader to drain and return residual bytes.
         // Extra 1s margin so the reader's own drain timeout fires first
@@ -132,10 +140,9 @@ impl EslClient {
             .as_raw_fd();
 
         // Mark connection as dead so other clones see it
-        let _ = self
-            .shared
+        self.shared
             .status_tx
-            .send(ConnectionStatus::Disconnected(
+            .send_replace(ConnectionStatus::Disconnected(
                 DisconnectReason::ReexecTeardown,
             ));
 

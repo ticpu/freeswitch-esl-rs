@@ -17,11 +17,10 @@ use crate::{
 use super::reexec::ReexecReader;
 use super::{ConnectionStatus, DisconnectReason, SharedState};
 
-/// Try to send an event (or error) to the application via try_send.
-///
-/// If the channel is full, drop the item, set the overflow flag, and
-/// increment the dropped counter. Before each dispatch, check the overflow
-/// flag and attempt to deliver a QueueFull error notification first.
+/// Hands one event (or error) to the application, returning `false` once the
+/// receiver is gone. A full channel drops the item and arms a `QueueFull`
+/// notice for the next dispatch to deliver.
+#[must_use]
 fn dispatch_event(
     event_tx: &mpsc::Sender<Result<EslEvent, EslError>>,
     shared: &SharedState,
@@ -237,26 +236,29 @@ async fn dispatch_message(
                 .body
                 .unwrap_or_else(|| "rude-rejection without body".to_string());
             warn!("Rude rejection from server: {}", reason);
-            dispatch_event(
+            if !dispatch_event(
                 event_tx,
                 shared,
                 Err(EslError::AccessDenied {
                     reason: reason.clone(),
                 }),
-            );
+            ) {
+                debug!("Event channel closed before the rude rejection was delivered");
+            }
             return ControlFlow::Break(Some(DisconnectReason::AccessDenied(reason)));
         }
         MessageType::AuthRequest => {
-            // After authentication, an unsolicited auth/request
-            // means FreeSWITCH and the client are out of sync —
-            // treat as a protocol error and tear down.
+            // Post-authentication it means FreeSWITCH and the client are out of
+            // sync, so the session cannot be trusted to continue.
             let reason = "unsolicited auth/request received after authentication".to_string();
             warn!("{reason}");
-            dispatch_event(
+            if !dispatch_event(
                 event_tx,
                 shared,
                 Err(EslError::protocol_error(reason.clone())),
-            );
+            ) {
+                debug!("Event channel closed before the desync error was delivered");
+            }
             return ControlFlow::Break(Some(DisconnectReason::ProtocolError(reason)));
         }
     }

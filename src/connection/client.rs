@@ -860,10 +860,9 @@ impl EslClient {
     /// disconnects from server-initiated ones.
     pub async fn disconnect(&self) -> EslResult<()> {
         info!("Client requested disconnect");
-        let _ = self
-            .shared
+        self.shared
             .status_tx
-            .send(ConnectionStatus::Disconnected(
+            .send_replace(ConnectionStatus::Disconnected(
                 super::DisconnectReason::ClientRequested,
             ));
         let mut writer = self
