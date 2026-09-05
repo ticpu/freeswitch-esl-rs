@@ -8,10 +8,8 @@ use crate::sdp::SdpDirection;
 
 /// Cursor over an `a=rtpmap`/`a=fmtp` attribute value.
 ///
-/// Whitespace is decided once, here, mirroring `parse_ul` and `token` in
-/// sofia-sip's `sdp_parse.c` — not re-trimmed at
-/// each field after a naive split, which is how a field with no trim call
-/// (the encoding name) used to slip through with leading whitespace attached.
+/// Whitespace is decided once, while consuming a field, mirroring `parse_ul` and
+/// `token` in sofia-sip's `sdp_parse.c` — never per-field after a split.
 struct AttrCursor<'a> {
     rest: &'a str,
 }

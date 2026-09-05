@@ -173,9 +173,8 @@ impl SdpCodecs {
                     .entries
                     .push(SdpCodecEntry::T38);
             } else if proto_has_rtp(&media.proto) {
-                // A single structurally broken section (bad rtpmap/fmtp/payload type)
-                // must not discard every other section already parsed. Stage this
-                // section's output locally and only merge it in on success.
+                // Staged locally: one structurally broken section must not discard
+                // what every other section already parsed.
                 let defaults = SessionDefaults {
                     ptime: session_ptime,
                     maxptime: session_maxptime,
@@ -326,10 +325,8 @@ impl SdpCodecs {
         let mut out = CodecString::new();
         for entry in self.entries() {
             match entry {
-                // The literal "t38" contains no codec-string grammar delimiter, so this
-                // can't actually fail; propagating via `?` still means a mistaken future
-                // rename of the literal surfaces as a returned Err, never a silently
-                // dropped entry in release builds.
+                // Infallible for this literal; propagated so a future rename of it
+                // surfaces instead of dropping the entry.
                 SdpCodecEntry::T38 => out.push(CodecStringEntry::new("t38")?)?,
                 SdpCodecEntry::Rtp(codec) if codec.media() == &SdpMediaType::Audio => {
                     if let Some(entry) =
@@ -346,9 +343,11 @@ impl SdpCodecs {
 
     /// Build a FreeSWITCH codec string from this offer's video codecs.
     ///
-    /// No T.38 entry is appended — that belongs only to
-    /// [`audio_codec_string`](Self::audio_codec_string). Does not deduplicate; see there
-    /// for why. `warnings` follows the same strict/lenient convention.
+    /// Selects straight from the video codecs, where the audio builder walks every entry
+    /// instead: only the audio string interleaves T.38, which has to keep its m-line
+    /// position. Does not deduplicate; see
+    /// [`audio_codec_string`](Self::audio_codec_string) for why. `warnings` follows the
+    /// same strict/lenient convention.
     pub fn video_codec_string(
         &self,
         options: &CodecStringOptions,

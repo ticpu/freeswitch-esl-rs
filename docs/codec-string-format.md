@@ -155,6 +155,59 @@ Consequence for anyone building a list by concatenation: append a fallback list
 after the peer's codecs and the duplicates collapse on their own, with the peer's
 ordering and qualifiers surviving because they came first.
 
+#### The loop compares against dropped entries too
+
+The inner loop walks entry `x` against every earlier entry `0..x` of the
+*original* list, including ones already dropped as duplicates, and skips `x` via
+`goto next_x` on the first match. That coincides with comparing against survivors
+only, because the key is a pure function of the entry: if `x` duplicates `j` and
+`j` was dropped as a duplicate of `i`, then `x` matches `i` directly. The shape is
+worth keeping rather than replacing with a set, because it is the shape a future
+edge case will follow.
+
+One thing the key cannot see is a deployment's own default. `switch.conf`'s
+`<default-ptimes>` overrides the per-codec default ptime
+(`switch_core.c:2061-2085`), and nothing exposes it over ESL. A bare `G729` and an
+explicit `G729@20i` therefore normalize to the same key here, while on a switch
+configured for 40 ms they mean different things. What collapses is always a
+qualified variant of a name, never the last entry bearing that name — which is
+why a bare name always survives to take whatever the switch's default turns out
+to be.
+
+### Stripping qualifiers that equal a default
+
+Removing a qualifier whose value already equals the default is safe **only on an
+entry that already matched a loaded implementation**, because the default table
+is keyed by name and an implementation registers its own rate.
+`AMR-WB@8000h` matches neither pass — both compare the explicit 8000 against
+AMR-WB's actual 16000 — and the switch drops it unlogged. But
+`switch_default_rate` answers 8000 for that name, so stripping the rate leaves a
+bare `AMR-WB`, whose unconstrained rate falls through to whichever implementation
+comes first. The entry starts matching, having been dropped a moment earlier.
+Every codec whose real rate differs from what the default table returns for its
+name has this shape.
+
+Channels `1` is always strippable: it is the C's own initial value.
+Bitrate has no default function and nothing to compare against.
+
+### Zero and unset are the same value, under three different rules
+
+`0` is the C's "not set", so `@0h` and an absent `@Nh` mostly mean the same
+thing — but the three places that read a qualifier resolve it differently, and
+conflating them changes which codec the switch picks.
+
+| Rule | Where | Unset and `0` become |
+|---|---|---|
+| dedup key | `switch_loadable_module.c:2816-2826` | the per-name default (rate, ptime) or `1` (channels) |
+| match constraint | `:2851-2909` | unconstrained — every comparison is guarded by `if (rate && …)` |
+| default-stripping | this crate, on an already-matched entry | absent, so the switch resolves them at match time |
+
+Channels is the exception in the middle row: the preference-parsing variable is
+seeded at `channels = 1`, not `0` like rate, interval and bitrate
+(`switch_loadable_module.c:2806`), so an *absent* `@Nc` still constrains to mono
+and only an explicit `@0c` disables the check. A dedup key that folds absent and
+`0` together is right for dedup and wrong here.
+
 ## G.722 has two sampling rates
 
 G.722 is advertised in SDP at 8000 Hz (an RFC 3551 quirk) but runs at 16 kHz.
@@ -178,6 +231,14 @@ G722@16000h@20i    also matches, via the first pass
 ```
 
 **Always emit a ptime alongside a rate for G.722.**
+
+Two consequences follow for anything reasoning about G.722 entries. Modelling a
+loaded implementation with a single rate field cannot express which pass would
+fire, so a rate comparison against a G.722 implementation answers nothing and is
+better skipped. And default-stripping is unsafe here even on a matched entry:
+strip `@8000h@20i` and the second pass, which applies no default-ptime
+preference, takes whichever implementation is first in registration order rather
+than the 20 ms one.
 
 ## Format parameters and delimiter collisions
 

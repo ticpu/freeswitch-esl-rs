@@ -211,11 +211,10 @@ impl fmt::Display for CodecString {
     }
 }
 
-/// Normalize ptime for dedup: `None` or `0` → `default_ptime(name)`, else as-is.
+/// Normalize ptime for the dedup key: `None` or `0` → `default_ptime(name)`.
 ///
-/// Mirrors `if (ointerval == 0) { ointerval = switch_default_ptime(name, 0); }` in
-/// `switch_loadable_module.c:2816-2818`. The C initializes `interval = 0`; absence of
-/// an `@xi` qualifier leaves it at 0, which then triggers the default lookup.
+/// `switch_loadable_module.c:2816-2818`; this is the dedup rule only, one of the
+/// three in `docs/codec-string-format.md`.
 fn norm_ptime(e: &CodecStringEntry) -> u32 {
     match e.ptime() {
         None | Some(0) => default_ptime(e.name()),
@@ -223,9 +222,8 @@ fn norm_ptime(e: &CodecStringEntry) -> u32 {
     }
 }
 
-/// Normalize rate for dedup: `None` or `0` → `default_rate(name)`, else as-is.
+/// Normalize rate for the dedup key: `None` or `0` → `default_rate(name)`.
 ///
-/// Mirrors `if (orate == 0) { orate = switch_default_rate(name, 0); }` in
 /// `switch_loadable_module.c:2820-2822`.
 fn norm_rate(e: &CodecStringEntry) -> u32 {
     match e.rate() {
@@ -234,15 +232,10 @@ fn norm_rate(e: &CodecStringEntry) -> u32 {
     }
 }
 
-/// Normalize channels for dedup: `None` or `0` → `1`, else as-is.
+/// Normalize channels for the dedup key: `None` or `0` → `1`.
 ///
-/// The C initializes `jchannels = 1` and `channels = 1`; absence of `@xc` leaves both
-/// at 1. An explicit `@0c` sets the field to 0, then `if (ochannels == 0) { ochannels = 1; }`
-/// normalizes it. `switch_loadable_module.c:2824-2826`.
-///
-/// This is the dedup key's rule only: `None` and `Some(0)` are the same duplicate key.
-/// `CodecString::retain_available`'s implementation-matching channel check needs a
-/// different rule (`Some(0)` alone is unconstrained) and does not call this.
+/// `switch_loadable_module.c:2824-2826`. Implementation matching needs the other
+/// rule — absent constrains, explicit `0` does not — and does not call this.
 fn norm_channels(e: &CodecStringEntry) -> u32 {
     match e.channels() {
         None | Some(0) => 1,
@@ -274,33 +267,14 @@ impl CodecString {
     /// Remove duplicate entries, porting `switch_loadable_module_get_codecs_sorted`'s
     /// dedup pass (`switch_loadable_module.c:2811-2847`).
     ///
-    /// Two entries are duplicates when their name (case-insensitive), normalized ptime,
-    /// normalized rate, normalized channels, and fmtp (case-insensitive, unset ≡ `""`)
-    /// all match. Normalization: unset or `0` ptime → `default_ptime(name)`; unset or `0`
-    /// rate → `default_rate(name)`; unset or `0` channels → `1`. Bitrate and module name
-    /// are **not** compared — the C parser reads them but the dedup comparison ignores them.
+    /// The key is the name, the normalized ptime, rate and channels, and the fmtp, all
+    /// case-insensitive; bitrate and module name are read by the C parser and then not
+    /// compared. The first occurrence keeps its position. The loop shape, the
+    /// normalization rules and what a deployment's `<default-ptimes>` does to them are
+    /// in `docs/codec-string-format.md`.
     ///
-    /// The first occurrence is kept at its original position; later duplicates are dropped.
-    ///
-    /// The inner loop compares entry `x` against all earlier *original* entries `0..x`,
-    /// including ones already dropped. This coincides with comparing against survivors only
-    /// because the dedup key is a pure function of each entry — if `x` duplicates `j` and
-    /// `j` was dropped as a dup of `i`, then `x` also matches `i` directly. The C's loop
-    /// shape is preserved verbatim to avoid divergence on any future edge case.
-    ///
-    /// **Invariant:** `dedup()` never removes the last entry bearing a given name. A codec
-    /// specified only by name (no qualifiers) always survives, which makes the unknowable
-    /// `switch.conf` `<default-ptimes>` extension safe: the bare-name entry gets the
-    /// deployment-specific ptime at match time.
-    ///
-    /// **Limitation:** a deployment can override the per-codec default ptime via
-    /// `switch.conf`'s `<default-ptimes>` (`switch_core.c:2061-2085`), and this crate has
-    /// no way to know that override. A bare `G729` and an explicit `G729@20i` normalize to
-    /// the same key here — they are only actually distinct on a switch configured for a
-    /// different default (e.g. 40 ms), where the bare entry means 40 ms and the qualified
-    /// one still means 20. `dedup()` collapses them regardless. The invariant above still
-    /// holds: what disappears is always a qualified variant of a name, never the name
-    /// itself.
+    /// **Invariant:** the last entry bearing a name is never removed, so a bare name
+    /// survives to take the deployment's own default at match time.
     pub fn dedup(&mut self) {
         let input: Vec<CodecStringEntry> = std::mem::take(&mut self.0);
         let n = input.len();
@@ -315,9 +289,7 @@ impl CodecString {
                 .fmtp()
                 .unwrap_or("");
 
-            // Compare against ALL earlier original entries (including ones already
-            // dropped as duplicates). See the doc comment for why this coincides with
-            // comparing against survivors only.
+            // Earlier *originals*, dropped ones included, as the C loop does.
             for earlier in &input[..x] {
                 if entry
                     .name()

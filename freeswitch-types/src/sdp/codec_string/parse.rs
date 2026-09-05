@@ -99,9 +99,8 @@ pub(super) fn split_codec_string(s: &str) -> Vec<String> {
         .peekable();
     while let Some(ch) = chars.next() {
         if ch == '\\' {
-            // Escaped char: copy backslash + next char verbatim into the raw token
-            // so cleanup_token can process the escape. Only skip the next char for
-            // split-prevention purposes (we don't split inside \X).
+            // Backslash and the char it escapes ride into the raw token verbatim;
+            // cleanup_token expands them. Skipping ahead only prevents a split.
             if let Some(&next) = chars.peek() {
                 chars.next();
                 current.push('\\');
@@ -168,8 +167,8 @@ fn cleanup_token(raw: &str) -> String {
                     out.push(e);
                     end_len = out.len();
                 }
-                // Unrecognized escape (and a trailing lone backslash): upstream leaves the
-                // next char unconsumed and reprocesses it, so a following space still trims.
+                // Unrecognized escape: upstream reprocesses the next char, so a
+                // following space still trims.
                 None => {
                     out.push('\\');
                     end_len = out.len();
@@ -210,10 +209,8 @@ pub(super) fn parse_entry(
     token: &str,
     mut warnings: Option<&mut Vec<SdpWarning>>,
 ) -> Result<CodecStringEntry, CodecStringError> {
-    // Step 1: split on `@` — name segment is everything before the first `@`.
-    // `has_at` distinguishes "no @ at all" (zero qualifiers) from a trailing `@`,
-    // which yields the same empty qualifier_str but must still classify as one
-    // empty qualifier part below, same as the "@@" double-delimiter case.
+    // `has_at` separates no `@` at all from a trailing one, which yields the same
+    // empty remainder but is an empty qualifier part, like `@@`.
     let (name_seg, qualifier_str, has_at) = match token.split_once('@') {
         Some((n, q)) => (n, q, true),
         None => (token, "", false),

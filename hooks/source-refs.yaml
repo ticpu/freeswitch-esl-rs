@@ -91,6 +91,7 @@ refs:
 - src/switch_loadable_module.c:2805 7f2b527f1147
 - src/switch_loadable_module.c:2806 63885716f737
 - src/switch_loadable_module.c:2811-2847 0ef0c930d9c1
+- src/switch_loadable_module.c:2816-2826 00c1e4150587
 - src/switch_loadable_module.c:2816-2818 65d13e19f563
 - src/switch_loadable_module.c:2820-2822 d1b3d19fe5a9
 - src/switch_loadable_module.c:2824-2826 29b35d8ebed8

@@ -152,22 +152,14 @@ fn matches_implementation(entry: &CodecStringEntry, imp: &CodecImplementation) -
         return true;
     }
 
-    // G.722 registers samples_per_second = 8000 and actual_samples_per_second = 16000
-    // (`mod_spandsp_codecs.c`, opposite of the usual convention). The first pass compares
-    // an explicit rate against actual_samples_per_second, the second against
-    // samples_per_second, so both @8000h and @16000h resolve, via different passes. A
-    // single `rate` field on `CodecImplementation` can't express which pass would fire,
-    // so G.722 never constrains on rate here (mirrors `CodecStringEntry::simplify`'s
-    // G.722 carve-out, `codec_string.rs`).
+    // G.722 resolves at either advertised rate, through different passes, and one
+    // `rate` field cannot say which — see `docs/codec-string-format.md`.
     let is_g722 = entry
         .name()
         .eq_ignore_ascii_case("g722");
 
-    // An explicit `0` qualifier means "unconstrained" — switch_loadable_module.c guards
-    // every comparison with `if (rate && …)` / `if (bit && …)` / `if (channels && …)`, so
-    // a preference of `@0h`/`@0b`/`@0c` disables that check rather than requiring a zero
-    // implementation value. `nonzero` collapses `Some(0)` to `None` so the existing
-    // `Option` match below already treats it as unconstrained.
+    // Every comparison below is `if (qualifier && …)` in the C, so an explicit `0`
+    // is unconstrained rather than a required zero.
     if !is_g722 {
         if let (Some(er), Some(ir)) = (nonzero(entry.rate()), imp.rate()) {
             if er != ir {
@@ -188,13 +180,8 @@ fn matches_implementation(entry: &CodecStringEntry, imp: &CodecImplementation) -
         }
     }
 
-    // Channels is the odd one out: switch_loadable_module_get_codecs_sorted seeds its
-    // preference-parsing variable at `channels = 1`, not 0 like rate/interval/bit
-    // (`switch_loadable_module.c:2806`), so an *absent* `@Nc` still constrains to mono
-    // — only an *explicit* `@0c` is the falsy value that disables the check. Do not
-    // reuse `norm_channels` (the dedup-key normalization): that helper collapses
-    // `None` and `Some(0)` to the same value 1, which is right for dedup but conflates
-    // "absent" with "explicitly unconstrained" here.
+    // Channels is seeded at 1, not 0 (`switch_loadable_module.c:2806`), so an absent
+    // `@Nc` constrains to mono and only an explicit `@0c` does not.
     if let Some(ic) = imp.channels() {
         let required = entry
             .channels()
@@ -207,8 +194,8 @@ fn matches_implementation(entry: &CodecStringEntry, imp: &CodecImplementation) -
     true
 }
 
-/// Collapse an explicit `0` qualifier to `None` ("unconstrained"); see
-/// [`matches_implementation`].
+/// Collapse an explicit `0` qualifier to `None` — the matching rule of the three
+/// in `docs/codec-string-format.md`.
 fn nonzero(v: Option<u32>) -> Option<u32> {
     v.filter(|&n| n != 0)
 }

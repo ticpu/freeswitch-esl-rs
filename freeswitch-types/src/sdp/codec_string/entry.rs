@@ -180,9 +180,8 @@ impl CodecStringEntry {
 
     // --- fallible setters ---
     //
-    // `CodecStringEntry` is not serde-deserializable, so fallible setters are
-    // the right shape for validated fields — the `_mut()` convention applies
-    // only to unvalidated numeric qualifiers where no invariant can be violated.
+    // The `_mut()` convention applies only to the numeric qualifiers, which carry
+    // no invariant to violate.
 
     /// Set or replace the codec encoding name.
     ///
@@ -287,33 +286,16 @@ impl CodecStringEntry {
         self.channels = None;
     }
 
-    /// Drop qualifiers whose value already equals the FreeSWITCH default for this codec.
+    /// Drop qualifiers whose value already equals the FreeSWITCH default for this codec
+    /// (`default_rate`/`default_ptime`, ported from `switch_core.c:2033-2055`), leaving
+    /// bitrate alone. G.722 is exempt entirely.
     ///
-    /// Applies `default_rate`/`default_ptime` (ported from `switch_core.c:2033-2055`).
-    /// Channels `1` is the C init value and is always the default. Bitrate has no default
-    /// function and is left unchanged.
-    ///
-    /// **Precondition: only safe on a qualifier that already matched a loaded
-    /// implementation** — e.g. an entry that survived
-    /// [`CodecString::retain_available`](super::CodecString::retain_available). `simplify()` compares against this crate's
-    /// per-name `default_rate`/`default_ptime` table, not against what a real
-    /// implementation registered, so an unmatched qualifier can *start* matching after
-    /// stripping. `AMR-WB@8000h` matches no implementation (both of
-    /// `switch_loadable_module_get_codecs_sorted`'s passes compare the explicit `8000`
-    /// against `AMR-WB`'s actual rate of 16000) and the switch silently drops it — but
-    /// `default_rate("AMR-WB")` is 8000, so `simplify()` strips the rate, and bare
-    /// `AMR-WB` then matches (an unconstrained rate falls through to whichever
-    /// implementation is first). Any codec whose real rate differs from what
-    /// `default_rate` returns for its name has this shape.
-    ///
-    /// **G.722 is exempt.** FreeSWITCH registers G.722 with `samples_per_second = 8000`
-    /// and `actual_samples_per_second = 16000` (`mod_spandsp_codecs.c`); an explicit
-    /// `@8000h` therefore only ever matches via the second pass
-    /// (`switch_loadable_module.c:2885-2909`), which applies no default-ptime
-    /// preference. Stripping `@8000h@20i` from `G722@8000h@20i` leaves no rate and no
-    /// ptime, so the second pass takes whichever implementation is first in
-    /// registration order rather than the 20 ms one — silently changing which
-    /// implementation is selected.
+    /// **Precondition: only safe on an entry that already matched a loaded
+    /// implementation**, e.g. one that survived
+    /// [`CodecString::retain_available`](super::CodecString::retain_available) —
+    /// stripping compares against a per-name table, not against what an implementation
+    /// registered, so it can make an unmatched qualifier start matching. Both that and
+    /// the G.722 carve-out are in `docs/codec-string-format.md`.
     pub fn simplify(&mut self) {
         if self
             .name

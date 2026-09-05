@@ -20,15 +20,13 @@ use crate::sdp::{codec::SdpCodec, codec_string::CodecStringEntry, error::CodecSt
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecStringOptions {
     emit_rate: bool,
-    /// Turning ptime off for G.722 is a foot-gun: a rate without a ptime selects
-    /// whichever implementation is first in FreeSWITCH's list rather than the 20 ms
-    /// default, which may produce non-standard 10 ms packetization. Leave this on.
+    /// Off with a rate on, G.722 selects whichever implementation is first rather
+    /// than the 20 ms one.
     emit_ptime: bool,
     emit_bitrate: bool,
     emit_channels: bool,
-    /// Audio fmtp does not reach a generated offer unless the leg has a bridged
-    /// partner at INVITE time, so emitting it by default would look correct in tests
-    /// but be a no-op on a live originate. Disabled by default for audio.
+    /// Off for audio: without a bridged partner at INVITE time it never reaches the
+    /// generated offer.
     emit_fmtp: bool,
 }
 
@@ -137,9 +135,7 @@ impl CodecStringOptions {
 
         if self.emit_fmtp {
             if let Some(fmtp) = codec.fmtp() {
-                // Dotted fmtp without a module prefix is rejected by with_fmtp.
-                // Callers that need dotted fmtp must set a module on the entry
-                // before calling sdp_codec_to_entry, or use the builder directly.
+                // A dotted fmtp needs a module prefix, so it needs the builder.
                 entry = entry.with_fmtp(fmtp)?;
             }
         }
@@ -176,8 +172,6 @@ impl CodecStringOptions {
 
         if self.emit_channels {
             if let Some(c) = codec.channels() {
-                // codec.channels() is Option<u8> from a=rtpmap; widen to u32 for the
-                // codec-string field which uses the same width as C atoi into uint32_t.
                 entry = entry.with_channels(u32::from(c));
             }
         }
