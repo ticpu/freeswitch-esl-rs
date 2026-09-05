@@ -429,6 +429,50 @@ mod tests {
         assert_eq!(pcmu.ptime(), Some(20));
     }
 
+    // --- direction attributes ---
+
+    #[test]
+    fn canonical_direction_attribute_is_read() {
+        let sdp = format!("{}m=audio 5004 RTP/AVP 0\r\na=recvonly\r\n", sdp_header());
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert!(codecs
+            .warnings()
+            .is_empty());
+        assert_eq!(
+            codecs.sections()[0].direction(),
+            crate::sdp::SdpDirection::RecvOnly
+        );
+    }
+
+    #[test]
+    fn non_canonical_direction_attribute_warns_instead_of_inheriting_silently() {
+        // RFC 8866 attribute names are case-sensitive, so `a=SENDONLY` is not a
+        // direction. Inheriting the session's without a word makes a one-way call
+        // read as bidirectional in the parse output.
+        let sdp = format!(
+            "{}a=sendrecv\r\nm=audio 5004 RTP/AVP 0\r\na=SENDONLY\r\n",
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert_eq!(
+            codecs.sections()[0].direction(),
+            crate::sdp::SdpDirection::SendRecv
+        );
+        assert!(matches!(
+            codecs.warnings()[0],
+            SdpWarning::NonCanonicalDirectionAttribute { .. }
+        ));
+    }
+
+    #[test]
+    fn an_unrelated_value_less_attribute_is_not_a_direction() {
+        let sdp = format!("{}m=audio 5004 RTP/AVP 0\r\na=rtcp-mux\r\n", sdp_header());
+        let codecs = SdpCodecs::parse(&sdp).unwrap();
+        assert!(codecs
+            .warnings()
+            .is_empty());
+    }
+
     // --- malformed fmtp skips only its own section ---
 
     #[test]
