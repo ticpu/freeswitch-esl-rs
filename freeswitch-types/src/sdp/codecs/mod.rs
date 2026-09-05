@@ -314,7 +314,10 @@ impl SdpCodecs {
     /// `warnings = None` is strict: any unrepresentable codec name or fmtp is `Err`.
     /// `warnings = Some(acc)` is lenient: an unrepresentable fmtp is cleared (the codec
     /// is still emitted) and an unrepresentable codec name is skipped (the codec is
-    /// dropped); both push a warning to `acc` rather than failing the whole call.
+    /// dropped); both push a warning to `acc` rather than failing the whole call. An
+    /// offer past [`CodecString::MAX_SWITCH_ENTRIES`] is
+    /// [`CodecStringError::TooManyEntries`] in either mode — the limit is structural,
+    /// not a per-codec oddity.
     pub fn audio_codec_string(
         &self,
         options: &CodecStringOptions,
@@ -327,12 +330,12 @@ impl SdpCodecs {
                 // can't actually fail; propagating via `?` still means a mistaken future
                 // rename of the literal surfaces as a returned Err, never a silently
                 // dropped entry in release builds.
-                SdpCodecEntry::T38 => out.push(CodecStringEntry::new("t38")?),
+                SdpCodecEntry::T38 => out.push(CodecStringEntry::new("t38")?)?,
                 SdpCodecEntry::Rtp(codec) if codec.media() == &SdpMediaType::Audio => {
                     if let Some(entry) =
                         codec_to_entry_lenient(codec, options, warnings.as_deref_mut())?
                     {
-                        out.push(entry);
+                        out.push(entry)?;
                     }
                 }
                 SdpCodecEntry::Rtp(_) => {}
@@ -354,7 +357,7 @@ impl SdpCodecs {
         let mut out = CodecString::new();
         for codec in self.video() {
             if let Some(entry) = codec_to_entry_lenient(codec, options, warnings.as_deref_mut())? {
-                out.push(entry);
+                out.push(entry)?;
             }
         }
         Ok(out)

@@ -137,6 +137,18 @@ pub enum CodecStringError {
     /// requires exactly one entry. A top-level (unescaped, unquoted) comma signals
     /// multiple entries — a silent take-first would hide the caller's mistake.
     MultipleEntries(String),
+    /// More entries than FreeSWITCH parses from one codec string.
+    ///
+    /// `switch_separate_string` stops at `SWITCH_MAX_CODECS`
+    /// (`switch_types.h:595`) and the entries past it are lost with no log and no
+    /// return-value signal, so a string built past the cap negotiates something
+    /// other than what it says.
+    TooManyEntries {
+        /// How many entries the operation would have produced.
+        entries: usize,
+        /// The cap, [`CodecString::MAX_SWITCH_ENTRIES`](super::codec_string::CodecString::MAX_SWITCH_ENTRIES).
+        limit: usize,
+    },
 }
 
 impl CodecStringError {
@@ -188,6 +200,11 @@ impl CodecStringError {
     pub fn multiple_entries(value: impl Into<String>) -> Self {
         Self::MultipleEntries(value.into())
     }
+
+    /// Construct a [`TooManyEntries`](CodecStringError::TooManyEntries) error.
+    pub fn too_many_entries(entries: usize, limit: usize) -> Self {
+        Self::TooManyEntries { entries, limit }
+    }
 }
 
 impl fmt::Display for CodecStringError {
@@ -223,6 +240,11 @@ impl fmt::Display for CodecStringError {
                 f,
                 "input {v:?} contains multiple comma-separated entries where a single \
                  CodecStringEntry was expected"
+            ),
+            Self::TooManyEntries { entries, limit } => write!(
+                f,
+                "{entries} codec-string entries exceeds the {limit} FreeSWITCH parses; \
+                 the rest would be dropped with no log"
             ),
         }
     }
@@ -332,6 +354,17 @@ pub enum SdpWarning {
         /// Human-readable reason the section could not be parsed.
         reason: String,
     },
+    /// A lenient parse read more comma-separated slots than FreeSWITCH would.
+    ///
+    /// Every entry parsed is returned; the switch itself keeps only the first
+    /// `limit` slots (`switch_types.h:595`), empty ones included, and loses the
+    /// rest with no log.
+    CodecStringTruncated {
+        /// How many comma-separated slots the input carried.
+        entries: usize,
+        /// The cap, [`CodecString::MAX_SWITCH_ENTRIES`](super::codec_string::CodecString::MAX_SWITCH_ENTRIES).
+        limit: usize,
+    },
 }
 
 impl SdpWarning {
@@ -378,6 +411,11 @@ impl SdpWarning {
         }
     }
 
+    /// Construct a [`CodecStringTruncated`](SdpWarning::CodecStringTruncated) warning.
+    pub fn codec_string_truncated(entries: usize, limit: usize) -> Self {
+        Self::CodecStringTruncated { entries, limit }
+    }
+
     /// Construct a [`MalformedMediaSection`](SdpWarning::MalformedMediaSection) warning.
     pub fn malformed_media_section(
         media_type: impl Into<String>,
@@ -422,6 +460,11 @@ impl fmt::Display for SdpWarning {
             Self::MalformedMediaSection { media_type, reason } => write!(
                 f,
                 "{media_type} section could not be parsed and was skipped entirely: {reason}"
+            ),
+            Self::CodecStringTruncated { entries, limit } => write!(
+                f,
+                "codec string carries {entries} comma-separated slots; FreeSWITCH keeps \
+                 the first {limit} and drops the rest with no log"
             ),
         }
     }

@@ -11,8 +11,24 @@ pub(super) fn parse_codec_string_inner(
     s: &str,
     mut warnings: Option<&mut Vec<SdpWarning>>,
 ) -> Result<CodecString, CodecStringError> {
+    let tokens = split_codec_string(s);
+    if tokens.len() > CodecString::MAX_SWITCH_ENTRIES {
+        match warnings.as_deref_mut() {
+            None => {
+                return Err(CodecStringError::too_many_entries(
+                    tokens.len(),
+                    CodecString::MAX_SWITCH_ENTRIES,
+                ))
+            }
+            Some(acc) => acc.push(SdpWarning::codec_string_truncated(
+                tokens.len(),
+                CodecString::MAX_SWITCH_ENTRIES,
+            )),
+        }
+    }
+
     let mut entries = Vec::new();
-    for token in split_codec_string(s) {
+    for token in tokens {
         if token.is_empty() {
             continue;
         }

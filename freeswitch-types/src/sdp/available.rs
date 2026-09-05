@@ -233,16 +233,20 @@ impl CodecString {
             .collect();
 
         let mut removed = Vec::new();
+        let mut kept = Vec::new();
         for entry in std::mem::take(self) {
             if impls
                 .iter()
                 .any(|imp| matches_implementation(&entry, imp))
             {
-                self.push(entry);
+                kept.push(entry);
             } else {
                 removed.push(entry);
             }
         }
+        *self = kept
+            .into_iter()
+            .collect();
         removed
     }
 }
@@ -309,7 +313,8 @@ mod tests {
                 .unwrap()
                 .with_module("mod_evs")
                 .unwrap(),
-        );
+        )
+        .unwrap();
         let impls = vec![CodecImplementation::new("EVS").with_modname("mod_other")];
         let removed = cs.retain_available(&impls);
         assert_eq!(removed.len(), 1);
@@ -324,7 +329,8 @@ mod tests {
                 .unwrap()
                 .with_module("mod_evs")
                 .unwrap(),
-        );
+        )
+        .unwrap();
         let impls = vec![CodecImplementation::new("EVS")];
         let removed = cs.retain_available(&impls);
         assert!(removed.is_empty());

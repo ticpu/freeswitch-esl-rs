@@ -38,9 +38,27 @@ impl CodecString {
     }
 
     /// Append an entry to the list.
-    pub fn push(&mut self, entry: CodecStringEntry) {
+    ///
+    /// Returns [`CodecStringError::TooManyEntries`] when the list already holds
+    /// [`MAX_SWITCH_ENTRIES`](Self::MAX_SWITCH_ENTRIES); the entry is not appended.
+    /// The bulk operations ([`Extend`], [`FromIterator`], [`extend_from`](Self::extend_from),
+    /// [`append`](Self::append), [`insert`](Self::insert)) do not check the cap.
+    pub fn push(&mut self, entry: CodecStringEntry) -> Result<(), CodecStringError> {
+        if self
+            .0
+            .len()
+            >= Self::MAX_SWITCH_ENTRIES
+        {
+            return Err(CodecStringError::too_many_entries(
+                self.0
+                    .len()
+                    + 1,
+                Self::MAX_SWITCH_ENTRIES,
+            ));
+        }
         self.0
             .push(entry);
+        Ok(())
     }
 
     /// All entries in order.
@@ -171,7 +189,9 @@ impl CodecString {
     /// `switch_types.h:595`).
     ///
     /// The cap applies to raw token slots — including the empty ones consecutive commas
-    /// produce — not to the number of parsed entries.
+    /// produce — not to the number of parsed entries. Enforced by
+    /// [`push`](Self::push) and by both parse modes; see `docs/codec-string-format.md`
+    /// for what the switch does with the 50th slot and everything after it.
     pub const MAX_SWITCH_ENTRIES: usize = 50;
 }
 
@@ -236,7 +256,9 @@ impl CodecString {
     /// Behaves like the [`FromStr`] impl except that qualifier values that overflow
     /// `u32` or carry no recognised letter are recorded as
     /// [`SdpWarning::CodecStringQualifier`] in `warnings` rather than returning
-    /// an error. The affected qualifier is omitted from the parsed entry.
+    /// an error. The affected qualifier is omitted from the parsed entry. A slot
+    /// count over [`MAX_SWITCH_ENTRIES`](Self::MAX_SWITCH_ENTRIES) records
+    /// [`SdpWarning::CodecStringTruncated`] and every entry is still returned.
     ///
     /// Use this when the input comes from a FreeSWITCH channel variable or any
     /// trusted internal source — FreeSWITCH itself logs these anomalies and
@@ -669,13 +691,15 @@ mod tests {
                 .unwrap()
                 .with_fmtp("octet-align=1")
                 .unwrap(),
-        );
+        )
+        .unwrap();
         cs.push(
             CodecStringEntry::new("AMR")
                 .unwrap()
                 .with_fmtp("octet-align=1 ")
                 .unwrap(),
-        );
+        )
+        .unwrap();
         cs.dedup();
         assert_eq!(cs.len(), 1);
     }
