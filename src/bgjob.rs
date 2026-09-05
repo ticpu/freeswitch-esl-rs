@@ -299,6 +299,8 @@ impl freeswitch_types::sip_header::SipHeaderLookup for BgJobResult<'_> {
         self.0
             .header_str(name)
     }
+
+    freeswitch_types::esl_sip_header_overrides!();
 }
 
 impl HeaderLookup for BgJobResult<'_> {
