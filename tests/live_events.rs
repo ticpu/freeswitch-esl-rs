@@ -16,7 +16,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_subscribe_and_recv_heartbeat() {
     let (client, mut events, _permit) = connect().await;
 
@@ -38,7 +38,7 @@ async fn live_subscribe_and_recv_heartbeat() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_sendevent_with_priority() {
     let (client, _events, _permit) = connect().await;
 
@@ -59,7 +59,7 @@ async fn live_sendevent_with_priority() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_sendevent_with_array_header() {
     let (client, _events, _permit) = connect().await;
 
@@ -93,7 +93,7 @@ async fn live_sendevent_with_array_header() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_recv_custom_sendevent() {
     let (client, mut events, _permit) = connect().await;
 
@@ -116,7 +116,7 @@ async fn live_recv_custom_sendevent() {
 /// (genuinely non-UTF-8 bytes) can't be exercised here because a Rust `&str`
 /// is always valid UTF-8 -- it stays unit-tested.
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_recv_custom_sendevent_percent_decoded() {
     let (client, mut events, _permit) = connect().await;
 
@@ -136,7 +136,7 @@ async fn live_recv_custom_sendevent_percent_decoded() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_api_multiple_commands() {
     let (client, _events, _permit) = connect().await;
 
@@ -175,7 +175,7 @@ async fn live_api_multiple_commands() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_reply_status_ok() {
     let (client, _events, _permit) = connect().await;
 
@@ -187,7 +187,7 @@ async fn live_reply_status_ok() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_reply_status_err() {
     let (client, _events, _permit) = connect().await;
 
@@ -225,7 +225,7 @@ async fn live_reply_status_err() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_noevents_stops_delivery() {
     let (client, mut events, _permit) = connect().await;
     let subclass = format!("esl_test::noev_{}", std::process::id());
@@ -292,7 +292,7 @@ async fn live_noevents_stops_delivery() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_nixevent_selective_unsubscribe() {
     let (client, mut events, _permit) = connect().await;
     let subclass = format!("esl_test::nix_{}", std::process::id());
@@ -345,7 +345,7 @@ async fn live_nixevent_selective_unsubscribe() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_api_err_body() {
     let (client, _events, _permit) = connect().await;
 
@@ -367,7 +367,7 @@ async fn live_api_err_body() {
 // --- L11: Repeating SIP header round-trip tests ---
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_sendevent_comma_separated_sip_header() {
     let (client, mut events, _permit) = connect().await;
 
@@ -390,7 +390,7 @@ async fn live_sendevent_comma_separated_sip_header() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_sendevent_array_sip_header() {
     use freeswitch_types::EslArray;
 
@@ -420,7 +420,7 @@ async fn live_sendevent_array_sip_header() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_sendevent_repeated_diversion_header() {
     use freeswitch_types::EslArray;
 
@@ -461,7 +461,7 @@ async fn live_sendevent_repeated_diversion_header() {
 // --- L4: Event filter live tests ---
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_filter_event_name() {
     let (client, mut events, _permit) = connect().await;
 
@@ -546,7 +546,7 @@ async fn live_filter_event_name() {
 // --- L8: sendevent UUID in response ---
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_sendevent_returns_event_uuid() {
     let (client, _events, _permit) = connect().await;
 
@@ -578,7 +578,7 @@ async fn live_sendevent_returns_event_uuid() {
 // --- L9: bgapi correlation ---
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_bgapi_correlation() {
     let (client, mut events, _permit) = connect().await;
 
@@ -660,7 +660,7 @@ async fn live_bgapi_correlation() {
 // --- L10: bgapi single round-trip ---
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_bgapi_single_round_trip() {
     let (client, mut events, _permit) = connect().await;
 
@@ -715,7 +715,7 @@ async fn live_bgapi_single_round_trip() {
 /// and nothing to reap. Both halves are asserted: the reorder must not cost the
 /// `CUSTOM` subscription it is protecting.
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_custom_first_does_not_swallow_later_event_types() {
     let (client, mut events, _permit) = connect().await;
     let subclass = format!("esl_test::ordering_{}", std::process::id());
@@ -771,7 +771,7 @@ async fn live_custom_first_does_not_swallow_later_event_types() {
 /// listener's subclass hash, and only `ALL` (via `set_all_custom`) populates
 /// that hash wholesale. Subscribing `CUSTOM` with no subclass leaves it empty.
 #[tokio::test]
-#[ignore]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_bare_custom_delivers_no_subclassed_events() {
     let (client, mut events, _permit) = connect().await;
     let subclass = format!("esl_test::bare_{}", std::process::id());
