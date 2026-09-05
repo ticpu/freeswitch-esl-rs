@@ -4,7 +4,7 @@ use crate::{
     constants::*,
     error::{EslError, EslResult},
 };
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BytesMut};
 
 /// Buffer wrapper for efficient ESL protocol parsing
 pub struct EslBuffer {
@@ -30,13 +30,21 @@ impl EslBuffer {
             .len()
     }
 
+    /// Room left before the next write reallocates.
+    ///
+    /// `BufMut::remaining_mut` answers `usize::MAX - len` for a `BytesMut`,
+    /// which is its willingness to grow rather than the space it holds.
+    fn write_capacity(&self) -> usize {
+        self.buffer
+            .capacity()
+            - self
+                .buffer
+                .len()
+    }
+
     /// Extend buffer with more data
     pub fn extend_from_slice(&mut self, data: &[u8]) {
-        if self
-            .buffer
-            .remaining_mut()
-            < data.len()
-        {
+        if self.write_capacity() < data.len() {
             let old_cap = self
                 .buffer
                 .capacity();
@@ -151,11 +159,7 @@ impl EslBuffer {
 
     /// Ensure minimum write capacity; BytesMut handles internal compaction.
     pub fn compact(&mut self) {
-        if self
-            .buffer
-            .remaining_mut()
-            < BUF_CHUNK
-        {
+        if self.write_capacity() < BUF_CHUNK {
             self.buffer
                 .reserve(BUF_CHUNK);
         }
@@ -259,17 +263,28 @@ mod tests {
         assert_eq!(buffer.data(), b" World");
     }
 
+    /// `compact` is a write-capacity guarantee, not a move: the unconsumed
+    /// bytes must read back identically across it.
     #[test]
     fn test_compact() {
         let mut buffer = EslBuffer::new();
-        buffer.extend_from_slice(b"Hello World");
+        // Fill to the exact capacity so no write room is left; going through
+        // extend_from_slice would reserve more first and leave nothing to fix.
+        let filled = buffer
+            .buffer
+            .capacity();
         buffer
-            .advance(6)
+            .buffer
+            .extend_from_slice(&vec![b'x'; filled]);
+        buffer
+            .advance(filled - 5)
             .unwrap();
+        assert!(buffer.write_capacity() < BUF_CHUNK);
 
-        assert_eq!(buffer.data(), b"World");
         buffer.compact();
-        assert_eq!(buffer.data(), b"World");
+
+        assert!(buffer.write_capacity() >= BUF_CHUNK);
+        assert_eq!(buffer.data(), b"xxxxx");
     }
 
     #[test]
