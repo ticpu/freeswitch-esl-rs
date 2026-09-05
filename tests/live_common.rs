@@ -197,6 +197,28 @@ pub async fn kill_channel(client: &EslClient, uuid: &str) {
     }
 }
 
+/// Poll a channel variable until it is set, or until the deadline passes.
+///
+/// The switch announces no event for "this variable exists now", so a test
+/// that has to wait for one waits for the value itself rather than for an
+/// interval it guessed.
+pub async fn wait_for_var(
+    client: &EslClient,
+    uuid: &str,
+    name: &str,
+    deadline: Instant,
+) -> Option<String> {
+    loop {
+        if let Some(value) = getvar(client, uuid, name).await {
+            return Some(value);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// The channels a test created, so it can kill them before it asserts.
 ///
 /// Cleanup has to run *before* the assertions. A panic between creating a

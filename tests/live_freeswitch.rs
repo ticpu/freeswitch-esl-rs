@@ -21,6 +21,20 @@ use live_common::{
 use std::time::Duration;
 use tokio::time::Instant;
 
+/// The reader loop notices a shutdown on its own task, so the status arrives
+/// after `disconnect()` returns rather than with it.
+async fn wait_disconnected(client: &EslClient) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while client.is_connected() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !client.is_connected(),
+        "still connected after disconnect(): {:?}",
+        client.status()
+    );
+}
+
 #[tokio::test]
 #[ignore]
 async fn live_connect_and_status() {
@@ -130,13 +144,8 @@ async fn live_disconnect_status() {
         .await
         .unwrap();
 
-    // Allow the reader loop to notice the shutdown
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    wait_disconnected(&client).await;
 
-    assert!(
-        !client.is_connected(),
-        "should be disconnected after disconnect()"
-    );
     // The final status may be ClientRequested or ServerNotice depending on
     // timing: we set ClientRequested before shutdown, but the reader loop
     // may process the server's goodbye message and overwrite with ServerNotice.
@@ -173,8 +182,7 @@ async fn live_reconnect_clean_state() {
         .disconnect()
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(!client1.is_connected());
+    wait_disconnected(&client1).await;
 
     // Reconnect
     let (client2, _events2, _permit2) = connect().await;

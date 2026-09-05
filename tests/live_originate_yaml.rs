@@ -14,7 +14,7 @@ use freeswitch_esl_tokio::{
     Application, ChannelState, DialplanType, Endpoint, EslEventType, EventFormat, EventHeader,
     HeaderLookup, Originate,
 };
-use live_common::{channel_exists, connect, getvar, ChannelReaper};
+use live_common::{channel_exists, connect, getvar, wait_for_var, ChannelReaper};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -278,14 +278,8 @@ async fn live_originate_loopback_nested_bridge_scopes_vars() {
 
     // The A leg runs &bridge(...), so the far channel shows up as its bridge
     // partner once the bridge is established.
-    let mut far = None;
     let deadline = Instant::now() + Duration::from_secs(10);
-    while far.is_none() && Instant::now() < deadline {
-        far = getvar(&client, &a_leg, "bridge_uuid").await;
-        if far.is_none() {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
+    let far = wait_for_var(&client, &a_leg, "bridge_uuid", deadline).await;
     if let Some(far) = &far {
         reaper.track(far);
     }

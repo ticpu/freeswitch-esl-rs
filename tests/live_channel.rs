@@ -19,7 +19,7 @@ use freeswitch_esl_tokio::{
 };
 use live_common::{
     bgapi_originate_ok, channel_exists, connect, getvar, kill_channel, wait_for_own_event,
-    ChannelReaper,
+    wait_for_var, ChannelReaper,
 };
 use std::collections::HashSet;
 use std::time::Duration;
@@ -404,8 +404,12 @@ async fn live_escaping_survives_the_dialplan_carrier() {
             .check()
             .unwrap_or_else(|e| panic!("{label}: execute bridge rejected: {e}"));
 
-        // The bridge is async, so the far leg appears a moment later.
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // The bridge is async: the far leg carries the block once the A leg
+        // names it as its bridge partner.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        wait_for_var(&client, &a_uuid, "bridge_uuid", deadline)
+            .await
+            .unwrap_or_else(|| panic!("{label}: the anchor never bridged"));
         let mut results = Vec::new();
         for (key, want) in *pairs {
             results.push((*key, *want, getvar(&client, &b_uuid, key).await));
@@ -554,7 +558,10 @@ async fn live_separated_escaping_survives_the_dialplan_carrier() {
             .check()
             .unwrap_or_else(|e| panic!("{label}: execute bridge rejected: {e}"));
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        wait_for_var(&client, &a_uuid, "bridge_uuid", deadline)
+            .await
+            .unwrap_or_else(|| panic!("{label}: the anchor never bridged"));
         let mut results = Vec::new();
         for (key, want) in *pairs {
             results.push((*key, *want, getvar(&client, &b_uuid, key).await));

@@ -53,7 +53,8 @@ async fn teardown_with_buffered_event_delivers_then_stops() {
     mock.send_event_plain("HEARTBEAT", &headers)
         .await;
 
-    // Give the reader a moment to buffer the event
+    // Nothing reports that the reader has taken the bytes off the socket, and
+    // a teardown that beats them there would drain an empty parser.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let (fd, _residual) = client
@@ -107,8 +108,11 @@ async fn teardown_with_pending_command_fails() {
             .await
     });
 
-    // Wait for the command to be in-flight
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // The waiter goes into the slot before the bytes are written, so reading
+    // the command is what proves teardown will find one in flight.
+    let _cmd = mock
+        .read_command()
+        .await;
 
     let result = client
         .teardown_for_reexec()
@@ -126,9 +130,6 @@ async fn teardown_with_pending_command_fails() {
     }
 
     // Clean up: reply to the pending command so the task completes
-    let _cmd = mock
-        .read_command()
-        .await;
     mock.reply_api("OK")
         .await;
     let _ = cmd_handle.await;

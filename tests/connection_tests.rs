@@ -281,8 +281,12 @@ async fn test_event_overflow_queue_full() {
             .await;
     }
 
-    // Let the reader loop process all events (queue fills, rest overflow).
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The overflow itself is the observable end of "the reader processed all
+    // five": three of them could not fit.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while client.dropped_event_count() < 3 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 
     // Drain the 2 buffered events to make room in the channel.
     for _ in 0..2 {
@@ -292,7 +296,6 @@ async fn test_event_overflow_queue_full() {
 
     // QueueFull is delivered piggy-backed on the next dispatch_event call.
     // Send one more event to trigger it.
-    tokio::time::sleep(Duration::from_millis(50)).await;
     let mut headers = HashMap::new();
     headers.insert("Unique-ID".to_string(), "uuid-trigger".to_string());
     mock.send_event_plain("CHANNEL_CREATE", &headers)

@@ -21,6 +21,7 @@ use freeswitch_esl_tokio::{
 };
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::time::Instant;
 
 /// Long enough for FreeSWITCH to route the loopback call into our listener.
 const ACCEPT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -136,10 +137,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // linger is what keeps the socket up past the hangup; without it the
-    // events above would be the last thing this connection ever saw.
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    if !client.is_connected() {
-        return Err("socket closed at hangup despite linger".into());
+    // events above would be the last thing this connection ever saw. Watched
+    // for a second rather than sampled once, so a close that arrives late
+    // still fails here.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if !client.is_connected() {
+            return Err("socket closed at hangup despite linger".into());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     println!("still connected after hangup, as linger promises");
 
