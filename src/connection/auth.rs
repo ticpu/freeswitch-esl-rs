@@ -11,10 +11,37 @@ use crate::{
     protocol::{EslMessage, EslParser, MessageType},
 };
 
-/// Authentication method for inbound connections.
-pub(super) enum AuthMethod<'a> {
-    Password(&'a str),
-    User { user: &'a str, password: &'a str },
+/// How an inbound connection authenticates.
+///
+/// The only carrier of a credential: every `connect` constructor builds one and
+/// hands it to [`EslClient::connect_with_auth`](super::EslClient::connect_with_auth).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum AuthMethod {
+    /// `auth <password>` — the shared password from `event_socket.conf.xml`.
+    Password(Secret),
+    /// `userauth <user>:<password>` — a directory user with its own ACL.
+    User {
+        /// Directory user, which FreeSWITCH requires in `user@domain` form.
+        user: String,
+        /// That user's password.
+        password: Secret,
+    },
+}
+
+impl AuthMethod {
+    /// Authenticate with the shared password.
+    pub fn password(password: impl Into<String>) -> Self {
+        Self::Password(Secret::new(password))
+    }
+
+    /// Authenticate as a directory user, spelled `user@domain`.
+    pub fn user(user: impl Into<String>, password: impl Into<String>) -> Self {
+        Self::User {
+            user: user.into(),
+            password: Secret::new(password),
+        }
+    }
 }
 
 /// Read a single ESL message from the socket into the parser.
@@ -64,7 +91,7 @@ pub(super) async fn authenticate(
     stream: &mut TcpStream,
     parser: &mut EslParser,
     read_buffer: &mut [u8],
-    method: AuthMethod<'_>,
+    method: &AuthMethod,
     connect_timeout: Duration,
 ) -> EslResult<EslResponse> {
     debug!("[AUTH] Waiting for auth request from FreeSWITCH");
@@ -83,11 +110,11 @@ pub(super) async fn authenticate(
 
     let auth_cmd = match method {
         AuthMethod::Password(password) => EslCommand::Auth {
-            password: Secret(password.to_string()),
+            password: password.clone(),
         },
         AuthMethod::User { user, password } => EslCommand::UserAuth {
-            user: user.to_string(),
-            password: Secret(password.to_string()),
+            user: user.clone(),
+            password: password.clone(),
         },
     };
 
@@ -354,7 +381,7 @@ mod tests {
             &mut stream,
             &mut parser,
             &mut read_buffer,
-            AuthMethod::Password("ClueCon"),
+            &AuthMethod::password("ClueCon"),
             Duration::from_millis(200),
         )
         .await

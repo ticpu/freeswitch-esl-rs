@@ -9,6 +9,7 @@ mod live_common;
 
 use freeswitch_esl_tokio::commands::originate::{Variables, VariablesType};
 use freeswitch_esl_tokio::commands::LoopbackEndpoint;
+use freeswitch_esl_tokio::connection::AuthMethod;
 use freeswitch_esl_tokio::{
     parse_api_body, Application, ConnectionStatus, DisconnectReason, Endpoint, EslClient,
     EslConnectOptions, EslError, EslEventType, EventFormat, EventHeader, HeaderLookup, Originate,
@@ -208,11 +209,10 @@ async fn live_connect_userauth_truncated_response() {
         .await
         .expect("semaphore closed");
     let opts = EslConnectOptions::new().with_connect_timeout(Duration::from_secs(5));
-    let (client, _events) = EslClient::connect_with_user_and_options(
+    let (client, _events) = EslClient::connect_with_auth(
         ESL_HOST,
         ESL_PORT,
-        "many-events@default",
-        ESL_PASSWORD,
+        AuthMethod::user("many-events@default", ESL_PASSWORD),
         opts,
     )
     .await

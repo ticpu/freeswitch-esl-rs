@@ -175,11 +175,16 @@ println!("{}", response.api_result()?);
 Multi-tenant with per-user ACL:
 
 ```rust,no_run
-# use freeswitch_esl_tokio::{EslClient, EslError};
+# use freeswitch_esl_tokio::{AuthMethod, EslClient, EslConnectOptions, EslError};
 # #[tokio::main]
 # async fn main() -> Result<(), EslError> {
-let (client, mut events) =
-    EslClient::connect_with_user("localhost", 8021, "admin@default", "ClueCon").await?;
+let (client, mut events) = EslClient::connect_with_auth(
+    "localhost",
+    8021,
+    AuthMethod::user("admin@default", "ClueCon"),
+    EslConnectOptions::default(),
+)
+.await?;
 # let _ = (&client, &mut events);
 # Ok(())
 # }

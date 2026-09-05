@@ -234,14 +234,14 @@ Allowed-LOG: true
 ## Connecting with freeswitch-esl-tokio
 
 ```rust
-use freeswitch_esl_tokio::EslClient;
+use freeswitch_esl_tokio::{AuthMethod, EslClient, EslConnectOptions};
 
 // Connect with userauth — returns (EslClient, EslEventStream)
-let (client, mut events) = EslClient::connect_with_user(
+let (client, mut events) = EslClient::connect_with_auth(
     "localhost",
     8021,
-    "admin@default",      // user@domain format required
-    "SuperSecretPassword"
+    AuthMethod::user("admin@default", "SuperSecretPassword"), // user@domain required
+    EslConnectOptions::default(),
 ).await?;
 ```
 

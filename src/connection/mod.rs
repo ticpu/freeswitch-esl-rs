@@ -22,7 +22,9 @@ mod client;
 mod reader;
 mod reexec;
 
-use auth::{authenticate, AuthMethod};
+pub use auth::AuthMethod;
+
+use auth::authenticate;
 use reader::reader_loop;
 #[cfg(unix)]
 use reexec::ReexecCaller;
@@ -293,44 +295,51 @@ impl std::fmt::Debug for EslEventStream {
 }
 
 impl EslClient {
-    /// Connect to FreeSWITCH (inbound mode) with password authentication
+    /// Connect to FreeSWITCH (inbound mode) with the shared `auth` password.
+    ///
+    /// Shorthand for [`connect_with_auth`](Self::connect_with_auth) with
+    /// [`AuthMethod::password`] and default options.
     pub async fn connect(
         host: &str,
         port: u16,
         password: &str,
     ) -> EslResult<(Self, EslEventStream)> {
-        Self::connect_inner(
+        Self::connect_with_auth(
             host,
             port,
-            AuthMethod::Password(password),
+            AuthMethod::password(password),
             EslConnectOptions::default(),
         )
         .await
     }
 
-    /// Connect to FreeSWITCH (inbound mode) with password authentication and custom options
+    /// Connect with the shared `auth` password and custom options.
+    ///
+    /// Shorthand for [`connect_with_auth`](Self::connect_with_auth) with
+    /// [`AuthMethod::password`].
     pub async fn connect_with_options(
         host: &str,
         port: u16,
         password: &str,
         options: EslConnectOptions,
     ) -> EslResult<(Self, EslEventStream)> {
-        Self::connect_inner(host, port, AuthMethod::Password(password), options).await
+        Self::connect_with_auth(host, port, AuthMethod::password(password), options).await
     }
 
     /// Connect with user authentication
     ///
     /// The user must be in the format `user@domain` (e.g., `admin@default`).
+    #[deprecated(since = "2.5.0", note = "use connect_with_auth with AuthMethod::user")]
     pub async fn connect_with_user(
         host: &str,
         port: u16,
         user: &str,
         password: &str,
     ) -> EslResult<(Self, EslEventStream)> {
-        Self::connect_inner(
+        Self::connect_with_auth(
             host,
             port,
-            AuthMethod::User { user, password },
+            AuthMethod::user(user, password),
             EslConnectOptions::default(),
         )
         .await
@@ -339,6 +348,7 @@ impl EslClient {
     /// Connect with user authentication and custom options
     ///
     /// The user must be in the format `user@domain` (e.g., `admin@default`).
+    #[deprecated(since = "2.5.0", note = "use connect_with_auth with AuthMethod::user")]
     pub async fn connect_with_user_and_options(
         host: &str,
         port: u16,
@@ -346,13 +356,18 @@ impl EslClient {
         password: &str,
         options: EslConnectOptions,
     ) -> EslResult<(Self, EslEventStream)> {
-        Self::connect_inner(host, port, AuthMethod::User { user, password }, options).await
+        Self::connect_with_auth(host, port, AuthMethod::user(user, password), options).await
     }
 
-    async fn connect_inner(
+    /// Connect to FreeSWITCH (inbound mode), authenticating with `method`.
+    ///
+    /// The credential lives only in the [`AuthMethod`]; every other connect
+    /// constructor is a shorthand for this one. A directory user must be
+    /// spelled `user@domain`.
+    pub async fn connect_with_auth(
         host: &str,
         port: u16,
-        method: AuthMethod<'_>,
+        method: AuthMethod,
         options: EslConnectOptions,
     ) -> EslResult<(Self, EslEventStream)> {
         if let AuthMethod::User { user, .. } = &method {
@@ -375,7 +390,7 @@ impl EslClient {
             &mut stream,
             &mut parser,
             &mut read_buffer,
-            method,
+            &method,
             connect_timeout,
         )
         .await?;

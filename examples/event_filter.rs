@@ -18,6 +18,7 @@
 //!   # With userauth (user@domain format required)
 //!   cargo run --example event_filter -- -u admin@default -p secret -e ALL
 
+use freeswitch_esl_tokio::connection::{AuthMethod, EslConnectOptions};
 use freeswitch_esl_tokio::{
     EslClient, EslError, EslEventType, EventFormat, EventSubscription, HeaderLookup,
     DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
@@ -317,11 +318,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Connecting to FreeSWITCH at {}:{}...", args.host, args.port);
     }
 
-    let connect_result = if let Some(ref user) = args.user {
-        EslClient::connect_with_user(&args.host, args.port, user, &args.password).await
-    } else {
-        EslClient::connect(&args.host, args.port, &args.password).await
+    let auth = match args.user {
+        Some(ref user) => AuthMethod::user(user, &args.password),
+        None => AuthMethod::password(&args.password),
     };
+    let connect_result =
+        EslClient::connect_with_auth(&args.host, args.port, auth, EslConnectOptions::new()).await;
 
     let (client, mut events) = match connect_result {
         Ok(pair) => pair,
