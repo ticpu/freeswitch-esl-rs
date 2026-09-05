@@ -19,6 +19,7 @@
 use indexmap::IndexMap;
 use sip_header::{HistoryInfo, HistoryInfoError, SipHeaderLookup, UriInfo, UriInfoError};
 
+use crate::headers::{case_alias_key, normalize_header_key};
 use crate::lookup::HeaderLookup;
 use crate::variables::{EslArray, EslArrayError};
 
@@ -48,53 +49,102 @@ use crate::variables::{EslArray, EslArrayError};
 /// hand pre-split entries to `sip-header`. Non-parsing lookups
 /// (`sip_header_str`, `sip_header`) return the raw stored value untouched —
 /// the caller sees exactly what FreeSWITCH put on the wire.
+///
+/// Every write normalizes its key with
+/// [`normalize_header_key`](crate::normalize_header_key), so a payload
+/// spelling one header two ways collapses to one entry, and every read falls
+/// back to a lowercase alias, so a query in any casing resolves. Keys
+/// containing `_` are exempt from both: their suffix carries SIP wire casing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EslHeaders(IndexMap<String, String>);
+#[cfg_attr(feature = "serde", derive(serde::Serialize), serde(transparent))]
+pub struct EslHeaders {
+    map: IndexMap<String, String>,
+    /// Lowercase alias to canonical key, for the case-insensitive read path.
+    /// Derived from `map`, so it is rebuilt rather than serialized.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    aliases: IndexMap<String, String>,
+}
 
 impl EslHeaders {
     /// Create an empty store.
     pub fn new() -> Self {
-        Self(IndexMap::new())
+        Self::default()
     }
 
-    /// Wrap an existing map.
+    /// Wrap an existing map, normalizing every key.
     pub fn from_map(map: IndexMap<String, String>) -> Self {
-        Self(map)
+        map.into_iter()
+            .collect()
     }
 
-    /// Access the underlying map.
+    /// Access the underlying map, keyed canonically.
     pub fn as_map(&self) -> &IndexMap<String, String> {
-        &self.0
+        &self.map
     }
 
-    /// Consume and return the underlying map.
+    /// Consume and return the underlying map, keyed canonically.
     pub fn into_map(self) -> IndexMap<String, String> {
-        self.0
+        self.map
     }
 
-    /// Insert a header, replacing any existing entry at the same key.
+    /// Insert a header under its canonical key, replacing any entry there.
     pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {
-        self.0
-            .insert(key.into(), value.into());
+        let key = normalize_header_key(&key.into());
+        if let Some(alias) = case_alias_key(&key) {
+            self.aliases
+                .insert(alias, key.clone());
+        }
+        self.map
+            .insert(key, value.into());
     }
 
-    /// Remove a header by key.
+    /// Remove a header, by canonical key or by any other casing of it.
     pub fn remove(&mut self, key: &str) -> Option<String> {
-        self.0
-            .shift_remove(key)
+        let canonical = if self
+            .map
+            .contains_key(key)
+        {
+            key.to_string()
+        } else {
+            let alias = case_alias_key(key)?;
+            self.aliases
+                .get(&alias)?
+                .clone()
+        };
+        if let Some(alias) = case_alias_key(&canonical) {
+            self.aliases
+                .shift_remove(&alias);
+        }
+        self.map
+            .shift_remove(&canonical)
     }
 
     /// Number of entries.
     pub fn len(&self) -> usize {
-        self.0
+        self.map
             .len()
     }
 
     /// `true` if there are no entries.
     pub fn is_empty(&self) -> bool {
-        self.0
+        self.map
             .is_empty()
+    }
+
+    fn get(&self, name: &str) -> Option<&str> {
+        if let Some(value) = self
+            .map
+            .get(name)
+        {
+            return Some(value.as_str());
+        }
+        self.aliases
+            .get(&case_alias_key(name)?)
+            .and_then(|canonical| {
+                self.map
+                    .get(canonical)
+            })
+            .map(|s| s.as_str())
     }
 }
 
@@ -116,7 +166,17 @@ impl<K: Into<String>, V: Into<String>> Extend<(K, V)> for EslHeaders {
 
 impl From<IndexMap<String, String>> for EslHeaders {
     fn from(map: IndexMap<String, String>) -> Self {
-        Self(map)
+        Self::from_map(map)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for EslHeaders {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self::from_map(IndexMap::deserialize(deserializer)?))
     }
 }
 
@@ -276,9 +336,7 @@ macro_rules! esl_sip_header_overrides {
 
 impl SipHeaderLookup for EslHeaders {
     fn sip_header_str(&self, name: &str) -> Option<&str> {
-        self.0
-            .get(name)
-            .map(|s| s.as_str())
+        self.get(name)
     }
 
     crate::esl_sip_header_overrides!();
@@ -286,15 +344,11 @@ impl SipHeaderLookup for EslHeaders {
 
 impl HeaderLookup for EslHeaders {
     fn header_str(&self, name: &str) -> Option<&str> {
-        self.0
-            .get(name)
-            .map(|s| s.as_str())
+        self.get(name)
     }
 
     fn variable_str(&self, name: &str) -> Option<&str> {
-        self.0
-            .get(&format!("{}{name}", crate::VARIABLE_PREFIX))
-            .map(|s| s.as_str())
+        self.get(&format!("{}{name}", crate::VARIABLE_PREFIX))
     }
 }
 
