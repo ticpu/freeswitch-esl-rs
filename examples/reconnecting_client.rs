@@ -18,9 +18,12 @@
 
 use std::time::{Duration, Instant};
 
+#[path = "common/env.rs"]
+mod env;
+
 use freeswitch_esl_tokio::{
     ConnectionStatus, DisconnectReason, EslClient, EslError, EslEvent, EslEventType, EventFormat,
-    EventHeader, EventSubscription, HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    EventHeader, EventSubscription, HeaderLookup,
 };
 use tracing::{error, info, warn};
 
@@ -43,23 +46,12 @@ const EX_CONFIG: i32 = 78;
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    // A bare IPv6 literal works here without brackets: EslClient::connect takes
-    // host and port separately.
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port = match std::env::var("ESL_PORT") {
-        Ok(value) => match value.parse() {
-            Ok(port) => port,
-            // A typo'd port is a config error, and this binary's whole point is
-            // that config errors exit rather than retry.
-            Err(e) => {
-                error!("ESL_PORT is not a port number: {e}");
-                std::process::exit(EX_CONFIG);
-            }
-        },
-        Err(_) => DEFAULT_ESL_PORT,
-    };
-    let password =
-        std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
+    // A malformed port is a config error, and this binary's whole point is
+    // that config errors exit rather than retry.
+    let env = env::EslEnv::from_env().unwrap_or_else(|e| {
+        error!("{e}");
+        std::process::exit(EX_CONFIG);
+    });
 
     // Build the subscription once, reuse on every reconnection.
     // EventSubscription is pure data -- no connection state, safe to Clone.
@@ -72,10 +64,10 @@ async fn main() {
     let mut backoff = BACKOFF_INITIAL;
 
     loop {
-        info!("connecting to {host}:{port}");
+        info!("connecting to {}:{}", env.host, env.port);
         let started = Instant::now();
 
-        match run_session(&host, port, &password, &subscription).await {
+        match run_session(&env.host, env.port, &env.password, &subscription).await {
             // The only ending this process asked for. Everything else means the
             // session went away under us and has to be rebuilt.
             Ok(reason @ DisconnectReason::ClientRequested) => {

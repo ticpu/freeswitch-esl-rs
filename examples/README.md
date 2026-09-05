@@ -4,9 +4,11 @@ Start with `inbound_client`, then `event_listener`. Between them they cover the
 whole shape of an ESL client: authenticate, run a command and read its reply,
 and process the stream FreeSWITCH pushes back.
 
-All of them read `ESL_HOST`, `ESL_PORT` and `ESL_PASSWORD`, defaulting to
-`localhost:8021` with the stock password. `ESL_HOST` takes a bare IPv6 literal
-without brackets.
+All of them read ESL_HOST, ESL_PORT and ESL_PASSWORD, defaulting to
+localhost:8021 with the stock password; ESL_HOST takes a bare IPv6 literal
+without brackets. That reading lives in `common/env.rs`, and the connect
+alongside it — including the message when nothing is listening — in
+`common/mod.rs`, which each example includes with `mod common;`.
 
 | Example | What it teaches | Needs |
 |---|---|---|

@@ -13,10 +13,9 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use freeswitch_esl_tokio::{
-    parse_api_body, EslClient, EslEvent, EslEventType, EventFormat, HeaderLookup,
-    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
-};
+mod common;
+
+use freeswitch_esl_tokio::{parse_api_body, EslEvent, EslEventType, EventFormat, HeaderLookup};
 use tokio::sync::oneshot;
 
 /// How long to keep collecting after the last command was sent. Results still
@@ -25,13 +24,6 @@ const DRAIN_WINDOW: Duration = Duration::from_secs(10);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = match std::env::var("ESL_PORT") {
-        Ok(value) => value.parse()?,
-        Err(_) => DEFAULT_ESL_PORT,
-    };
-    let password =
-        std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
     // A benchmark that silently ran a different N than you asked for reports
     // numbers you cannot compare against anything.
     let n: usize = match std::env::var("BENCH_COUNT") {
@@ -39,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => 1000,
     };
 
-    let (client, mut events) = EslClient::connect(&host, port, &password).await?;
+    let (client, mut events) = common::connect_from_env().await?;
 
     // Scale timeout with N so large runs don't time out
     let timeout_ms = 5000 + (n as u64 * 50);

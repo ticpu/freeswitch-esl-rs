@@ -11,14 +11,15 @@
 //! Usage: cargo run --example reexec_demo
 
 #[cfg(unix)]
+mod common;
+
+#[cfg(unix)]
 mod demo {
-    use freeswitch_esl_tokio::{
-        EslClient, EslError, EslEventStream, EslEventType, EventFormat, EventHeader,
-        DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
-    };
+    use crate::common;
+    use freeswitch_esl_tokio::{EslClient, EslEventStream, EslEventType, EventFormat, EventHeader};
     use std::os::unix::io::BorrowedFd;
     use std::time::Duration;
-    use tracing::{error, info};
+    use tracing::info;
 
     /// FreeSWITCH fires HEARTBEAT about every 20s, so one that has not arrived
     /// by now is not late.
@@ -52,24 +53,8 @@ mod demo {
     pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tracing_subscriber::fmt::init();
 
-        let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let port: u16 = match std::env::var("ESL_PORT") {
-            Ok(value) => value.parse()?,
-            Err(_) => DEFAULT_ESL_PORT,
-        };
-        let password =
-            std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
-
         // Phase 1: connect and subscribe
-        let (client, mut events) = match EslClient::connect(&host, port, &password).await {
-            Ok(pair) => pair,
-            Err(EslError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-                error!("nothing listening on {host}:{port} (set ESL_HOST / ESL_PORT)");
-                return Err(e.into());
-            }
-            Err(e) => return Err(e.into()),
-        };
-        info!("connected to {host}:{port}");
+        let (client, mut events) = common::connect_from_env().await?;
 
         client
             .subscribe_events(EventFormat::Plain, &[EslEventType::Heartbeat])
@@ -89,22 +74,9 @@ mod demo {
             residual.len()
         );
 
-        // In a real re-exec scenario, you would:
-        //   1. Serialize app state + residual to disk/env
-        //   2. Clear CLOEXEC: nix::fcntl::fcntl(fd, F_SETFD(FdFlag::empty()))
-        //   3. std::mem::forget(client)
-        //   4. exec() the new binary
-        //
-        // Here we simulate the new process side without exec().
-        //
-        // Demo caveat: in a real exec(), mem::forget(client) is sufficient
-        // because the old tokio reactor (epoll fd) has CLOEXEC and is gone
-        // after exec. In this same-process demo, the reactor still has the
-        // original fd registered. We dup() to get a clean fd not known to
-        // the reactor, then forget the client (leaks the old registration,
-        // but keeps the TCP connection alive by not sending FIN).
-        // Safety: fd is a valid open descriptor from teardown_for_reexec().
-        // We borrow it for dup() without taking ownership (client still holds it).
+        // A real re-exec clears CLOEXEC and execs here; this one stays in the
+        // process, so it dup()s past the reactor registration the old client
+        // still holds. Both steps are in docs/reexec.md.
         let dup_fd = nix::unistd::dup(unsafe { BorrowedFd::borrow_raw(fd) })?;
         std::mem::forget(client);
 

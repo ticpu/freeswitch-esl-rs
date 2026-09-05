@@ -14,11 +14,11 @@
 //!
 //! Usage: ESL_PORT=8022 cargo run --example outbound_test
 
+mod common;
+
 use freeswitch_esl_tokio::commands::endpoint::LoopbackEndpoint;
 use freeswitch_esl_tokio::commands::originate::{Application, Endpoint, Originate};
-use freeswitch_esl_tokio::{
-    EslClient, EslEventType, EventFormat, HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
-};
+use freeswitch_esl_tokio::{EslClient, EslEventType, EventFormat, HeaderLookup};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::Instant;
@@ -33,14 +33,6 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = match std::env::var("ESL_PORT") {
-        Ok(value) => value.parse()?,
-        Err(_) => DEFAULT_ESL_PORT,
-    };
-    let password =
-        std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
-
     // Port 0 lets the kernel pick, so concurrent runs do not collide.
     let listener = TcpListener::bind("[::]:0").await?;
     let outbound_port = listener
@@ -48,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .port();
     println!("outbound listener on port {outbound_port}");
 
-    let (inbound, _inbound_events) = EslClient::connect(&host, port, &password).await?;
+    let (inbound, _inbound_events) = common::connect_from_env().await?;
     // api originate blocks until the call answers.
     inbound.set_command_timeout(Duration::from_secs(30));
 

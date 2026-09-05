@@ -7,36 +7,16 @@
 //! Usage: cargo run --example inbound_client
 //!        ESL_HOST=pbx.example.com ESL_PASSWORD=secret cargo run --example inbound_client
 
-use freeswitch_esl_tokio::{
-    BgJobTracker, EslClient, EslError, EslEventType, EventFormat, DEFAULT_ESL_PASSWORD,
-    DEFAULT_ESL_PORT,
-};
+mod common;
+
+use freeswitch_esl_tokio::{BgJobTracker, EslEventType, EventFormat};
 use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    // A bare IPv6 literal needs no brackets: connect() takes host and port
-    // separately. Parsing is loud on purpose -- a typo'd port that silently
-    // became the default would look like FreeSWITCH refusing the connection.
-    let port: u16 = match std::env::var("ESL_PORT") {
-        Ok(value) => value.parse()?,
-        Err(_) => DEFAULT_ESL_PORT,
-    };
-    let password =
-        std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
-
-    let (client, mut events) = match EslClient::connect(&host, port, &password).await {
-        Ok(pair) => pair,
-        Err(EslError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-            error!("nothing listening on {host}:{port} (set ESL_HOST / ESL_PORT)");
-            return Err(e.into());
-        }
-        Err(e) => return Err(e.into()),
-    };
-    info!("connected to {host}:{port}");
+    let (client, mut events) = common::connect_from_env().await?;
 
     // api_result() is the whole check. A command the switch refuses (an
     // esl-allowed-api gate) is answered as a reply with no body; one that runs

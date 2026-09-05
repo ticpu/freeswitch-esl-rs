@@ -6,9 +6,10 @@
 //! Usage: cargo run --example event_listener
 //!        cargo run --example event_listener -- -d    # dump raw wire data to stdout
 
+mod common;
+
 use freeswitch_esl_tokio::{
-    EslClient, EslError, EslEvent, EslEventType, EventFormat, EventHeader, EventSubscription,
-    HeaderLookup, DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    EslEvent, EslEventType, EventFormat, EventHeader, EventSubscription, HeaderLookup,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -23,23 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_writer(std::io::stderr)
         .init();
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = match std::env::var("ESL_PORT") {
-        Ok(value) => value.parse()?,
-        Err(_) => DEFAULT_ESL_PORT,
-    };
-    let password =
-        std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
-
-    let (client, mut events) = match EslClient::connect(&host, port, &password).await {
-        Ok(pair) => pair,
-        Err(EslError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-            error!("nothing listening on {host}:{port} (set ESL_HOST / ESL_PORT)");
-            return Err(e.into());
-        }
-        Err(e) => return Err(e.into()),
-    };
-    info!("connected to {host}:{port}");
+    let (client, mut events) = common::connect_from_env().await?;
 
     // Build an EventSubscription describing everything we want to receive.
     // apply_subscription() sends filters and the event command in one call.

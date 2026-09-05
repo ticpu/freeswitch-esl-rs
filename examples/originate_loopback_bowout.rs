@@ -13,14 +13,13 @@
 //! Usage: cargo run --example originate_loopback_bowout
 //!   Configure via ESL_HOST, ESL_PORT, ESL_PASSWORD env vars.
 
+mod common;
+
 use freeswitch_esl_tokio::commands::UuidKill;
 // Loopback types live in the variables module, beside LoopbackVariable, rather
 // than at the crate root.
 use freeswitch_esl_tokio::variables::LoopbackChannelName;
-use freeswitch_esl_tokio::{
-    EslClient, EslEventType, EventFormat, EventHeader, HeaderLookup, Originate,
-    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
-};
+use freeswitch_esl_tokio::{EslEventType, EventFormat, EventHeader, HeaderLookup, Originate};
 use std::time::Duration;
 
 const BOWOUT_YAML: &str = include_str!("originate_loopback_bowout.yaml");
@@ -36,15 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== YAML -> Originate ===");
     println!("{}\n", originate);
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = match std::env::var("ESL_PORT") {
-        Ok(value) => value.parse()?,
-        Err(_) => DEFAULT_ESL_PORT,
-    };
-    let password =
-        std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
-
-    let (client, mut events) = EslClient::connect(&host, port, &password).await?;
+    let (client, mut events) = common::connect_from_env().await?;
 
     // Subscribe before originating: the pair can bow out within milliseconds
     // of the A leg's bridge starting, and those hangups are the evidence.

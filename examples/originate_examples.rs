@@ -18,10 +18,11 @@ use freeswitch_esl_tokio::commands::{
 };
 use std::time::Duration;
 
+mod common;
+
 use freeswitch_esl_tokio::{
-    Application, BgJobTracker, DialplanType, Endpoint, EslClient, EslError, EslEventType,
-    EventFormat, HeaderLookup, Originate, SipPassthroughHeader, Variables, VariablesType,
-    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
+    Application, BgJobTracker, DialplanType, Endpoint, EslEventType, EventFormat, HeaderLookup,
+    Originate, SipPassthroughHeader, Variables, VariablesType,
 };
 use tracing::{error, info};
 
@@ -312,28 +313,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Part 2: live call via bgapi
     // -----------------------------------------------------------------------
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = match std::env::var("ESL_PORT") {
-        Ok(value) => value.parse()?,
-        Err(_) => DEFAULT_ESL_PORT,
-    };
-    let password =
-        std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
-
-    let (client, mut events) = match EslClient::connect(&host, port, &password).await {
-        Ok(pair) => {
-            info!("connected to {}:{}", host, port);
-            pair
-        }
-        Err(EslError::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-            error!(
-                "connection refused -- is FreeSWITCH running on {}:{}?",
-                host, port
-            );
-            return Err(e.into());
-        }
-        Err(e) => return Err(e.into()),
-    };
+    let (client, mut events) = common::connect_from_env().await?;
 
     client
         .subscribe_events(

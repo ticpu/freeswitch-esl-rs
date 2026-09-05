@@ -18,10 +18,12 @@
 //!   # With userauth (user@domain format required)
 //!   cargo run --example event_filter -- -u admin@default -p secret -e ALL
 
+#[path = "common/env.rs"]
+mod env;
+
 use freeswitch_esl_tokio::connection::{AuthMethod, EslConnectOptions};
 use freeswitch_esl_tokio::{
     EslClient, EslError, EslEventType, EventFormat, EventSubscription, HeaderLookup,
-    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT,
 };
 
 fn print_usage() {
@@ -94,19 +96,13 @@ struct Args {
 
 impl Args {
     /// Defaults from the environment, before the flags below override them.
-    /// `-P` rejects a malformed port, so `ESL_PORT` does too.
     fn from_env() -> Result<Self, String> {
+        let env = env::EslEnv::from_env()?;
         Ok(Self {
-            host: std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string()),
-            port: match std::env::var("ESL_PORT") {
-                Ok(value) => value
-                    .parse()
-                    .map_err(|_| format!("ESL_PORT is not a port number: {value}"))?,
-                Err(_) => DEFAULT_ESL_PORT,
-            },
+            host: env.host,
+            port: env.port,
             user: None,
-            password: std::env::var("ESL_PASSWORD")
-                .unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string()),
+            password: env.password,
             events: vec!["CHANNEL_CREATE".to_string()],
             filter_header: None,
             filter_value: None,

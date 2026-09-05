@@ -16,9 +16,11 @@
 
 use freeswitch_esl_tokio::commands::{UuidGetVar, UuidKill};
 use freeswitch_esl_tokio::variables::LoopbackVariable;
+mod common;
+
 use freeswitch_esl_tokio::{
     ChannelVariable, EslClient, EslEventType, EslResult, EventFormat, HeaderLookup, Originate,
-    DEFAULT_ESL_PASSWORD, DEFAULT_ESL_PORT, UNDEF_VALUE,
+    UNDEF_VALUE,
 };
 use std::time::Duration;
 
@@ -60,15 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== YAML -> Originate ===");
     println!("{}\n", originate);
 
-    let host = std::env::var("ESL_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let port: u16 = match std::env::var("ESL_PORT") {
-        Ok(value) => value.parse()?,
-        Err(_) => DEFAULT_ESL_PORT,
-    };
-    let password =
-        std::env::var("ESL_PASSWORD").unwrap_or_else(|_| DEFAULT_ESL_PASSWORD.to_string());
-
-    let (client, mut events) = EslClient::connect(&host, port, &password).await?;
+    let (client, mut events) = common::connect_from_env().await?;
 
     client
         .subscribe_events(
