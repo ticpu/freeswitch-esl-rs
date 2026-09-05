@@ -24,7 +24,7 @@ mod reexec;
 
 pub use auth::AuthMethod;
 
-use auth::authenticate;
+use auth::{authenticate, Handshake};
 use reader::reader_loop;
 #[cfg(unix)]
 use reexec::ReexecCaller;
@@ -119,6 +119,41 @@ async fn tcp_connect_with_timeout(
             Err(EslError::Timeout { timeout_ms })
         }
     }
+}
+
+/// What one [`read_into_parser`] call observed on the socket.
+enum ReadStep {
+    /// Bytes arrived and were handed to the parser.
+    Fed,
+    /// The peer closed the connection cleanly.
+    Eof,
+    /// Nothing arrived before `read_timeout` elapsed.
+    Idle,
+}
+
+/// Read once into `parser`, the step both the auth handshake and the reader
+/// loop take between `parse_message` calls.
+///
+/// The caller owns what an idle tick means: a handshake deadline for one, a
+/// liveness check for the other.
+async fn read_into_parser<S: tokio::io::AsyncRead + Unpin>(
+    stream: &mut S,
+    parser: &mut EslParser,
+    read_buffer: &mut [u8],
+    read_timeout: Duration,
+) -> EslResult<ReadStep> {
+    use tokio::io::AsyncReadExt;
+
+    let bytes_read = match timeout(read_timeout, stream.read(read_buffer)).await {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => return Err(EslError::Io(e)),
+        Err(_) => return Ok(ReadStep::Idle),
+    };
+    if bytes_read == 0 {
+        return Ok(ReadStep::Eof);
+    }
+    parser.add_data(&read_buffer[..bytes_read])?;
+    Ok(ReadStep::Fed)
 }
 
 /// Connection mode for ESL
@@ -387,9 +422,11 @@ impl EslClient {
         let mut read_buffer = [0u8; SOCKET_BUF_SIZE];
 
         let auth_response = authenticate(
-            &mut stream,
-            &mut parser,
-            &mut read_buffer,
+            &mut Handshake {
+                stream: &mut stream,
+                parser: &mut parser,
+                read_buffer: &mut read_buffer,
+            },
             &method,
             connect_timeout,
         )

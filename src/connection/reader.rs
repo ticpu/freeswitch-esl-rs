@@ -1,21 +1,20 @@
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
 use tokio::net::tcp::OwnedReadHalf;
 use tokio::sync::mpsc;
-use tokio::time::{timeout, Instant};
+use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::{
-    constants::{CONTENT_TYPE_LOG_DATA, HEADER_CONTENT_TYPE, SOCKET_BUF_SIZE},
+    constants::{CONTENT_TYPE_LOG_DATA, HEADER_CONTENT_TYPE, READER_TICK_MS, SOCKET_BUF_SIZE},
     error::EslError,
     event::{EslEvent, EventFormat},
     protocol::{EslMessage, EslParser, MessageType},
 };
 
 use super::reexec::ReexecReader;
-use super::{ConnectionStatus, DisconnectReason, SharedState};
+use super::{read_into_parser, ConnectionStatus, DisconnectReason, ReadStep, SharedState};
 
 /// Hands one event (or error) to the application, returning `false` once the
 /// receiver is gone. A full channel drops the item and arms a `QueueFull`
@@ -327,8 +326,9 @@ async fn drain_for_reexec(
 
     // WaitingForBody: more socket data is needed to finish the current message.
     let drain_timeout = Duration::from_millis(REEXEC_DRAIN_TIMEOUT_MS);
-    match timeout(drain_timeout, reader.read(read_buffer)).await {
-        Ok(Ok(0)) => {
+    match read_into_parser(reader, parser, read_buffer, drain_timeout).await {
+        Ok(ReadStep::Fed) => ControlFlow::Continue(()),
+        Ok(ReadStep::Eof) => {
             warn!("Connection closed during re-exec drain");
             fail_reexec(
                 reexec,
@@ -338,20 +338,7 @@ async fn drain_for_reexec(
             );
             ControlFlow::Break(None)
         }
-        Ok(Ok(n)) => {
-            if let Err(e) = parser.add_data(&read_buffer[..n]) {
-                warn!("Buffer error during re-exec drain: {}", e);
-                fail_reexec(reexec, e);
-                return ControlFlow::Break(None);
-            }
-            ControlFlow::Continue(())
-        }
-        Ok(Err(e)) => {
-            warn!("Read error during re-exec drain: {}", e);
-            fail_reexec(reexec, EslError::Io(e));
-            ControlFlow::Break(None)
-        }
-        Err(_) => {
+        Ok(ReadStep::Idle) => {
             warn!("Re-exec drain timeout waiting for message body");
             fail_reexec(
                 reexec,
@@ -359,6 +346,11 @@ async fn drain_for_reexec(
                     reason: "drain timeout waiting for message body".into(),
                 },
             );
+            ControlFlow::Break(None)
+        }
+        Err(e) => {
+            warn!("Re-exec drain failed while reading the message body: {}", e);
+            fail_reexec(reexec, e);
             ControlFlow::Break(None)
         }
     }
@@ -430,6 +422,7 @@ async fn reader_loop_inner(
         }
 
         // Normal read path with optional reexec stop signal
+        let tick = Duration::from_millis(READER_TICK_MS);
         #[cfg(unix)]
         let read_result = tokio::select! {
             biased;
@@ -438,32 +431,30 @@ async fn reader_loop_inner(
                 draining = true;
                 continue;
             }
-            result = timeout(Duration::from_secs(2), reader.read(&mut read_buffer)) => result,
+            result = read_into_parser(&mut reader, &mut parser, &mut read_buffer, tick) => result,
         };
 
         #[cfg(not(unix))]
-        let read_result = timeout(Duration::from_secs(2), reader.read(&mut read_buffer)).await;
+        let read_result = read_into_parser(&mut reader, &mut parser, &mut read_buffer, tick).await;
 
         match read_result {
-            Ok(Ok(0)) => {
+            Ok(ReadStep::Fed) => last_recv = Instant::now(),
+            Ok(ReadStep::Eof) => {
                 info!("Connection closed (EOF)");
                 return Some(DisconnectReason::ConnectionClosed);
             }
-            Ok(Ok(n)) => {
-                last_recv = Instant::now();
-                if let Err(e) = parser.add_data(&read_buffer[..n]) {
-                    warn!("Buffer error: {}", e);
-                    return Some(DisconnectReason::ProtocolError(e.to_string()));
-                }
-            }
-            Ok(Err(e)) => {
-                warn!("Read error: {}", e);
-                return Some(DisconnectReason::IoError(e.to_string()));
-            }
-            Err(_) => {
+            Ok(ReadStep::Idle) => {
                 if liveness_expired(&shared, last_recv) {
                     return Some(DisconnectReason::HeartbeatExpired);
                 }
+            }
+            Err(EslError::Io(e)) => {
+                warn!("Read error: {}", e);
+                return Some(DisconnectReason::IoError(e.to_string()));
+            }
+            Err(e) => {
+                warn!("Buffer error: {}", e);
+                return Some(DisconnectReason::ProtocolError(e.to_string()));
             }
         }
     }

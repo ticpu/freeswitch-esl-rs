@@ -1,9 +1,9 @@
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tokio::time::timeout;
 use tracing::{debug, trace, warn};
 
+use super::{read_into_parser, ReadStep};
 use crate::{
     command::{EslCommand, EslResponse, Secret},
     constants::{CONTENT_TYPE_COMMAND_REPLY, HEADER_CONTENT_TYPE},
@@ -44,42 +44,38 @@ impl AuthMethod {
     }
 }
 
-/// Read a single ESL message from the socket into the parser.
-///
-/// Used during auth handshake (on unsplit TcpStream) and would be the
-/// basis for the reader loop, but the reader loop inlines this logic
-/// to handle liveness tracking.
-pub(super) async fn recv_message(
-    stream: &mut TcpStream,
-    parser: &mut EslParser,
-    read_buffer: &mut [u8],
-    read_timeout: Duration,
-) -> EslResult<EslMessage> {
-    let timeout_ms = read_timeout.as_millis() as u64;
-    loop {
-        if let Some(message) = parser.parse_message()? {
-            trace!(
-                "[RECV] Parsed message from buffer: {:?}",
-                message.message_type
-            );
-            return Ok(message);
+/// The handshake's I/O: the still-unsplit stream, the parser being seeded from
+/// it, and the scratch buffer between the two.
+pub(super) struct Handshake<'a> {
+    pub(super) stream: &'a mut TcpStream,
+    pub(super) parser: &'a mut EslParser,
+    pub(super) read_buffer: &'a mut [u8],
+}
+
+impl Handshake<'_> {
+    /// Read one ESL message, failing the whole handshake on an idle socket.
+    async fn recv_message(&mut self, read_timeout: Duration) -> EslResult<EslMessage> {
+        let timeout_ms = read_timeout.as_millis() as u64;
+        loop {
+            if let Some(message) = self
+                .parser
+                .parse_message()?
+            {
+                trace!(
+                    "[RECV] Parsed message from buffer: {:?}",
+                    message.message_type
+                );
+                return Ok(message);
+            }
+
+            trace!("[RECV] Buffer needs more data, reading from socket");
+            match read_into_parser(self.stream, self.parser, self.read_buffer, read_timeout).await?
+            {
+                ReadStep::Fed => {}
+                ReadStep::Eof => return Err(EslError::ConnectionClosed),
+                ReadStep::Idle => return Err(EslError::Timeout { timeout_ms }),
+            }
         }
-
-        trace!("[RECV] Buffer needs more data, reading from socket");
-        let read_result = timeout(read_timeout, stream.read(read_buffer)).await;
-
-        let bytes_read = match read_result {
-            Ok(Ok(n)) => n,
-            Ok(Err(e)) => return Err(EslError::Io(e)),
-            Err(_) => return Err(EslError::Timeout { timeout_ms }),
-        };
-
-        trace!("[RECV] Read {} bytes from socket", bytes_read);
-        if bytes_read == 0 {
-            return Err(EslError::ConnectionClosed);
-        }
-
-        parser.add_data(&read_buffer[..bytes_read])?;
     }
 }
 
@@ -88,14 +84,14 @@ pub(super) async fn recv_message(
 /// For `userauth`, the response contains `Allowed-Events`, `Allowed-API`,
 /// and `Allowed-LOG` headers describing the user's access policy.
 pub(super) async fn authenticate(
-    stream: &mut TcpStream,
-    parser: &mut EslParser,
-    read_buffer: &mut [u8],
+    io: &mut Handshake<'_>,
     method: &AuthMethod,
     connect_timeout: Duration,
 ) -> EslResult<EslResponse> {
     debug!("[AUTH] Waiting for auth request from FreeSWITCH");
-    let message = recv_message(stream, parser, read_buffer, connect_timeout).await?;
+    let message = io
+        .recv_message(connect_timeout)
+        .await?;
 
     if message.message_type == MessageType::RudeRejection {
         let reason = message
@@ -120,18 +116,21 @@ pub(super) async fn authenticate(
 
     let command_str = auth_cmd.to_wire_format()?;
     debug!(">> {}", auth_cmd.redact_wire(&command_str));
-    stream
+    io.stream
         .write_all(command_str.as_bytes())
         .await
         .map_err(EslError::Io)?;
 
-    let response_msg = match recv_message(stream, parser, read_buffer, connect_timeout).await {
+    let response_msg = match io
+        .recv_message(connect_timeout)
+        .await
+    {
         Ok(msg) => msg,
         Err(EslError::Timeout { timeout_ms }) => {
             // FreeSWITCH mod_event_socket.c uses char reply[512] for the
             // userauth response. When Allowed-Events is long, switch_snprintf
             // truncates the output and the \n\n terminator is never sent.
-            match salvage_truncated_auth_response(parser) {
+            match salvage_truncated_auth_response(io.parser) {
                 Ok(Some(msg)) => {
                     warn!(
                         "FreeSWITCH sent a truncated auth response \
@@ -230,6 +229,7 @@ fn salvage_truncated_auth_response(parser: &mut EslParser) -> EslResult<Option<E
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
 
     #[test]
     fn salvage_truncated_auth_response_realistic() {
@@ -378,9 +378,11 @@ mod tests {
         let mut parser = EslParser::new();
         let mut read_buffer = [0u8; 1024];
         let err = authenticate(
-            &mut stream,
-            &mut parser,
-            &mut read_buffer,
+            &mut Handshake {
+                stream: &mut stream,
+                parser: &mut parser,
+                read_buffer: &mut read_buffer,
+            },
             &AuthMethod::password("ClueCon"),
             Duration::from_millis(200),
         )

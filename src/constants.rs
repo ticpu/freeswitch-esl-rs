@@ -64,6 +64,10 @@ pub const DEFAULT_TIMEOUT_MS: u64 = 2000;
 /// Maximum number of queued events before dropping
 pub const MAX_EVENT_QUEUE_SIZE: usize = 1000;
 
+/// How long the reader waits on a silent socket before waking to re-check the
+/// liveness threshold and the re-exec stop signal.
+pub const READER_TICK_MS: u64 = 2000;
+
 /// Maximum time (ms) to drain an in-progress message body during re-exec teardown
 #[cfg(unix)]
 pub const REEXEC_DRAIN_TIMEOUT_MS: u64 = 5000;
