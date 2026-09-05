@@ -8,7 +8,7 @@ mod mock_server;
 use freeswitch_esl_tokio::{
     EslClient, EslEvent, EslEventType, EventFormat, HeaderLookup, DEFAULT_ESL_PASSWORD,
 };
-use mock_server::{recv_event, setup_connected_pair, MockClient};
+use mock_server::{recv_event, setup_connected_pair, setup_raw_pair, MockClient};
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -349,15 +349,9 @@ async fn test_getvar_command() {
 
 #[tokio::test]
 async fn test_outbound_connect_session() {
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::TcpStream;
 
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
-    let port = listener
-        .local_addr()
-        .unwrap()
-        .port();
+    let (listener, port) = setup_raw_pair().await;
 
     // Mock FreeSWITCH connects to our listener, then we send connect
     let (accept_result, mock_stream) = tokio::join!(

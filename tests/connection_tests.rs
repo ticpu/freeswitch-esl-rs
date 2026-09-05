@@ -9,7 +9,8 @@ use freeswitch_esl_tokio::{
     HeaderLookup, DEFAULT_ESL_PASSWORD,
 };
 use mock_server::{
-    recv_event, setup_connected_pair, setup_connected_pair_with_options, MockEslServer,
+    recv_event, setup_connected_pair, setup_connected_pair_with_options, setup_raw_pair,
+    MockEslServer,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -343,13 +344,7 @@ async fn test_event_queue_size_zero_clamped() {
 
 #[tokio::test]
 async fn connect_refused_returns_connection_error() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
-    let port = listener
-        .local_addr()
-        .unwrap()
-        .port();
+    let (listener, port) = setup_raw_pair().await;
     drop(listener);
 
     let err = EslClient::connect("127.0.0.1", port, "pw")
@@ -369,15 +364,9 @@ async fn test_connection_mode_inbound() {
 
 #[tokio::test]
 async fn test_connection_mode_outbound() {
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::TcpStream;
 
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
-    let port = listener
-        .local_addr()
-        .unwrap()
-        .port();
+    let (listener, port) = setup_raw_pair().await;
 
     let (accept_result, _mock_stream) = tokio::join!(
         EslClient::accept_outbound(&listener),

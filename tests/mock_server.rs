@@ -271,6 +271,22 @@ impl MockClient {
     }
 }
 
+/// Bind an ephemeral dual-stack listener and hand back the port to dial it on.
+///
+/// For the tests that drive the socket themselves -- outbound accept, re-exec
+/// adoption, connection-refused -- rather than going through
+/// [`MockEslServer`].
+pub async fn setup_raw_pair() -> (TcpListener, u16) {
+    let listener = TcpListener::bind("[::]:0")
+        .await
+        .expect("bind an ephemeral listener");
+    let port = listener
+        .local_addr()
+        .expect("a bound listener has a local address")
+        .port();
+    (listener, port)
+}
+
 /// Create a connected mock pair (MockClient, EslClient, EslEventStream)
 pub async fn setup_connected_pair(
     password: &str,

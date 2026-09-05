@@ -7,7 +7,7 @@ use freeswitch_esl_tokio::{
     ConnectionStatus, DisconnectReason, EslClient, EslConnectOptions, EslError, EslEventType,
     DEFAULT_ESL_PASSWORD,
 };
-use mock_server::{recv_event, setup_connected_pair, MockClient};
+use mock_server::{recv_event, setup_connected_pair, setup_raw_pair, MockClient};
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -137,13 +137,7 @@ async fn teardown_with_pending_command_fails() {
 #[tokio::test]
 async fn adopt_stream_with_empty_residual() {
     // Set up a mock that acts as an already-authenticated server
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
-    let port = listener
-        .local_addr()
-        .unwrap()
-        .port();
+    let (listener, port) = setup_raw_pair().await;
 
     let server_handle = tokio::spawn(async move {
         let (stream, _) = listener
@@ -177,13 +171,7 @@ async fn adopt_stream_with_empty_residual() {
 
 #[tokio::test]
 async fn adopt_stream_with_residual_bytes() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
-    let port = listener
-        .local_addr()
-        .unwrap()
-        .port();
+    let (listener, port) = setup_raw_pair().await;
 
     let server_handle = tokio::spawn(async move {
         let (stream, _) = listener
@@ -218,13 +206,7 @@ async fn adopt_stream_with_residual_bytes() {
 
 #[tokio::test]
 async fn adopt_stream_with_options() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
-    let port = listener
-        .local_addr()
-        .unwrap()
-        .port();
+    let (listener, port) = setup_raw_pair().await;
 
     let server_handle = tokio::spawn(async move {
         let (stream, _) = listener

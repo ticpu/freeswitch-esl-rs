@@ -18,7 +18,8 @@ use freeswitch_esl_tokio::{
     TimetablePrefix,
 };
 use live_common::{
-    bgapi_originate_ok, channel_exists, connect, getvar, kill_channel, ChannelReaper,
+    bgapi_originate_ok, channel_exists, connect, getvar, kill_channel, wait_for_own_event,
+    ChannelReaper,
 };
 use std::collections::HashSet;
 use std::time::Duration;
@@ -142,24 +143,9 @@ async fn live_channel_timetable_on_create() {
     let mut reaper = ChannelReaper::new(&client);
     reaper.track(&uuid);
 
-    // Wait for CHANNEL_CREATE with our UUID
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut created_event = None;
-    while Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                if evt.event_type() == Some(EslEventType::ChannelCreate)
-                    && evt.unique_id() == Some(&uuid)
-                {
-                    created_event = Some(evt);
-                    break;
-                }
-            }
-            Ok(Some(Err(e))) => panic!("event error: {}", e),
-            Ok(None) => panic!("event stream closed"),
-            Err(_) => break,
-        }
-    }
+    let created_event =
+        wait_for_own_event(&mut events, &uuid, EslEventType::ChannelCreate, deadline).await;
 
     reaper
         .reap()
@@ -269,32 +255,25 @@ async fn live_uuid_kill_with_cause() {
     resp.api_result()
         .expect("uuid_kill failed");
 
-    // Verify the hangup cause in the CHANNEL_HANGUP_COMPLETE event
     let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                if evt.event_type() == Some(EslEventType::ChannelHangupComplete)
-                    && evt.unique_id() == Some(&uuid)
-                {
-                    let cause = evt
-                        .hangup_cause()
-                        .expect("should parse hangup cause")
-                        .expect("should have hangup cause");
-                    assert_eq!(
-                        cause,
-                        freeswitch_esl_tokio::HangupCause::UserBusy,
-                        "hangup cause should be USER_BUSY"
-                    );
-                    return;
-                }
-            }
-            Ok(Some(Err(e))) => panic!("event error: {}", e),
-            Ok(None) => panic!("connection closed"),
-            Err(_) => break,
-        }
-    }
-    panic!("did not receive CHANNEL_HANGUP_COMPLETE for {}", uuid);
+    let evt = wait_for_own_event(
+        &mut events,
+        &uuid,
+        EslEventType::ChannelHangupComplete,
+        deadline,
+    )
+    .await
+    .unwrap_or_else(|| panic!("did not receive CHANNEL_HANGUP_COMPLETE for {uuid}"));
+
+    let cause = evt
+        .hangup_cause()
+        .expect("should parse hangup cause")
+        .expect("should have hangup cause");
+    assert_eq!(
+        cause,
+        freeswitch_esl_tokio::HangupCause::UserBusy,
+        "hangup cause should be USER_BUSY"
+    );
 }
 
 // --- Dial-string escaping, per carrier ---
@@ -930,22 +909,9 @@ async fn live_show_bootstrap_rebuilds_channel_create() {
         .to_string();
     reaper.track(&uuid);
 
-    let mut created = None;
     let deadline = Instant::now() + Duration::from_secs(10);
-    while created.is_none() && Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                if evt.event_type() == Some(EslEventType::ChannelCreate)
-                    && evt.unique_id() == Some(uuid.as_str())
-                {
-                    created = Some(evt);
-                }
-            }
-            Ok(Some(Err(e))) => panic!("event error: {}", e),
-            Ok(None) => panic!("event stream closed"),
-            Err(_) => break,
-        }
-    }
+    let created =
+        wait_for_own_event(&mut events, &uuid, EslEventType::ChannelCreate, deadline).await;
 
     // The core writes its channel row through an async queue, so the listing
     // trails the event by however long that queue takes to drain.

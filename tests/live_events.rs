@@ -11,7 +11,7 @@ use freeswitch_esl_tokio::{
     EslError, EslEvent, EslEventPriority, EslEventType, EventFormat, EventHeader,
     EventSubscription, HeaderLookup, ReplyStatus,
 };
-use live_common::connect;
+use live_common::{connect, custom_roundtrip};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -97,46 +97,15 @@ async fn live_sendevent_with_array_header() {
 async fn live_recv_custom_sendevent() {
     let (client, mut events, _permit) = connect().await;
 
-    let subclass = format!("esl_test::live_{}", std::process::id());
+    let evt = custom_roundtrip(
+        &client,
+        &mut events,
+        &[("X-Test-Data", "hello"), ("X-Test-Data", "world")],
+    )
+    .await;
 
-    client
-        .subscribe_events_raw(EventFormat::Plain, &format!("CUSTOM {}", subclass))
-        .await
-        .unwrap();
-    let mut event = EslEvent::with_type(EslEventType::Custom);
-    event.set_header("Event-Name", "CUSTOM");
-    event.set_header("Event-Subclass", subclass.clone());
-    event.set_priority(EslEventPriority::Normal);
-    event
-        .push_header("X-Test-Data", "hello")
-        .unwrap();
-    event
-        .push_header("X-Test-Data", "world")
-        .unwrap();
-
-    client
-        .sendevent(event)
-        .await
-        .unwrap()
-        .check()
-        .expect("sendevent rejected");
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                if evt.header(EventHeader::EventSubclass) == Some(subclass.as_str()) {
-                    assert_eq!(evt.header(EventHeader::Priority), Some("NORMAL"));
-                    assert_eq!(evt.header_str("X-Test-Data"), Some("ARRAY::hello|:world"),);
-                    return;
-                }
-            }
-            Ok(Some(Err(e))) => panic!("event error: {}", e),
-            Ok(None) => panic!("event stream closed"),
-            Err(_) => break,
-        }
-    }
-    panic!("did not receive custom event with subclass {}", subclass);
+    assert_eq!(evt.header(EventHeader::Priority), Some("NORMAL"));
+    assert_eq!(evt.header_str("X-Test-Data"), Some("ARRAY::hello|:world"));
 }
 
 /// End-to-end percent-decode against real FreeSWITCH: a header value with
@@ -151,50 +120,19 @@ async fn live_recv_custom_sendevent() {
 async fn live_recv_custom_sendevent_percent_decoded() {
     let (client, mut events, _permit) = connect().await;
 
-    let subclass = format!("esl_test::decode_{}", std::process::id());
     let value = "Jean Dupont@héllo";
+    let evt = custom_roundtrip(&client, &mut events, &[("X-Decode-Test", value)]).await;
 
-    client
-        .subscribe_events_raw(EventFormat::Plain, &format!("CUSTOM {}", subclass))
-        .await
-        .unwrap();
-    let mut event = EslEvent::with_type(EslEventType::Custom);
-    event.set_header("Event-Name", "CUSTOM");
-    event.set_header("Event-Subclass", subclass.clone());
-    event.set_priority(EslEventPriority::Normal);
-    event.set_header("X-Decode-Test", value);
-
-    client
-        .sendevent(event)
-        .await
-        .unwrap()
-        .check()
-        .expect("sendevent rejected");
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                if evt.header(EventHeader::EventSubclass) == Some(subclass.as_str()) {
-                    assert_eq!(
-                        evt.header_str("X-Decode-Test"),
-                        Some(value),
-                        "FS percent-encodes the value on the wire; the parser must decode it"
-                    );
-                    assert!(
-                        evt.lossy_values()
-                            .is_empty(),
-                        "valid UTF-8 is not lossy"
-                    );
-                    return;
-                }
-            }
-            Ok(Some(Err(e))) => panic!("event error: {}", e),
-            Ok(None) => panic!("event stream closed"),
-            Err(_) => break,
-        }
-    }
-    panic!("did not receive custom event with subclass {}", subclass);
+    assert_eq!(
+        evt.header_str("X-Decode-Test"),
+        Some(value),
+        "FS percent-encodes the value on the wire; the parser must decode it"
+    );
+    assert!(
+        evt.lossy_values()
+            .is_empty(),
+        "valid UTF-8 is not lossy"
+    );
 }
 
 #[tokio::test]
@@ -433,48 +371,22 @@ async fn live_api_err_body() {
 async fn live_sendevent_comma_separated_sip_header() {
     let (client, mut events, _permit) = connect().await;
 
-    let subclass = format!("esl_test::pai_csv_{}", std::process::id());
+    // RFC 3325 comma-separated format: two identities in one header value.
+    let evt = custom_roundtrip(
+        &client,
+        &mut events,
+        &[(
+            "variable_sip_P-Asserted-Identity",
+            "<sip:alice@atlanta.example.com>, <tel:+15551234567>",
+        )],
+    )
+    .await;
 
-    client
-        .subscribe_events_raw(EventFormat::Plain, &format!("CUSTOM {}", subclass))
-        .await
-        .unwrap();
-
-    let mut event = EslEvent::with_type(EslEventType::Custom);
-    event.set_header("Event-Name", "CUSTOM");
-    event.set_header("Event-Subclass", subclass.clone());
-    // RFC 3325 comma-separated format: two identities in one header value
-    event.set_header(
-        "variable_sip_P-Asserted-Identity",
-        "<sip:alice@atlanta.example.com>, <tel:+15551234567>",
+    assert_eq!(
+        evt.variable_str("sip_P-Asserted-Identity"),
+        Some("<sip:alice@atlanta.example.com>, <tel:+15551234567>"),
+        "comma-separated P-Asserted-Identity should survive round-trip"
     );
-
-    client
-        .sendevent(event)
-        .await
-        .unwrap()
-        .check()
-        .expect("sendevent rejected");
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                if evt.header(EventHeader::EventSubclass) == Some(subclass.as_str()) {
-                    assert_eq!(
-                        evt.variable_str("sip_P-Asserted-Identity"),
-                        Some("<sip:alice@atlanta.example.com>, <tel:+15551234567>"),
-                        "comma-separated P-Asserted-Identity should survive round-trip"
-                    );
-                    return;
-                }
-            }
-            Ok(Some(Err(e))) => panic!("event error: {}", e),
-            Ok(None) => panic!("event stream closed"),
-            Err(_) => break,
-        }
-    }
-    panic!("did not receive custom event with subclass {}", subclass);
 }
 
 #[tokio::test]
@@ -484,55 +396,27 @@ async fn live_sendevent_array_sip_header() {
 
     let (client, mut events, _permit) = connect().await;
 
-    let subclass = format!("esl_test::pai_arr_{}", std::process::id());
+    // ARRAY format: repeating SIP header stored as separate values.
+    let evt = custom_roundtrip(
+        &client,
+        &mut events,
+        &[
+            (
+                "variable_sip_P-Asserted-Identity",
+                "<sip:alice@atlanta.example.com>",
+            ),
+            ("variable_sip_P-Asserted-Identity", "<tel:+15551234567>"),
+        ],
+    )
+    .await;
 
-    client
-        .subscribe_events_raw(EventFormat::Plain, &format!("CUSTOM {}", subclass))
-        .await
-        .unwrap();
-
-    let mut event = EslEvent::with_type(EslEventType::Custom);
-    event.set_header("Event-Name", "CUSTOM");
-    event.set_header("Event-Subclass", subclass.clone());
-    // ARRAY format: repeating SIP header stored as separate values
-    event
-        .push_header(
-            "variable_sip_P-Asserted-Identity",
-            "<sip:alice@atlanta.example.com>",
-        )
-        .unwrap();
-    event
-        .push_header("variable_sip_P-Asserted-Identity", "<tel:+15551234567>")
-        .unwrap();
-
-    client
-        .sendevent(event)
-        .await
-        .unwrap()
-        .check()
-        .expect("sendevent rejected");
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                if evt.header(EventHeader::EventSubclass) == Some(subclass.as_str()) {
-                    let raw = evt
-                        .variable_str("sip_P-Asserted-Identity")
-                        .expect("P-Asserted-Identity should be present");
-                    let arr = EslArray::parse(raw).expect("should parse as ARRAY");
-                    assert_eq!(arr.len(), 2, "expected 2 identities in ARRAY");
-                    assert_eq!(arr.items()[0], "<sip:alice@atlanta.example.com>");
-                    assert_eq!(arr.items()[1], "<tel:+15551234567>");
-                    return;
-                }
-            }
-            Ok(Some(Err(e))) => panic!("event error: {}", e),
-            Ok(None) => panic!("event stream closed"),
-            Err(_) => break,
-        }
-    }
-    panic!("did not receive custom event with subclass {}", subclass);
+    let raw = evt
+        .variable_str("sip_P-Asserted-Identity")
+        .expect("P-Asserted-Identity should be present");
+    let arr = EslArray::parse(raw).expect("should parse as ARRAY");
+    assert_eq!(arr.len(), 2, "expected 2 identities in ARRAY");
+    assert_eq!(arr.items()[0], "<sip:alice@atlanta.example.com>");
+    assert_eq!(arr.items()[1], "<tel:+15551234567>");
 }
 
 #[tokio::test]
@@ -542,64 +426,36 @@ async fn live_sendevent_repeated_diversion_header() {
 
     let (client, mut events, _permit) = connect().await;
 
-    let subclass = format!("esl_test::diversion_{}", std::process::id());
+    // SIP Diversion header (RFC 5806) with history info containing URI params.
+    let evt = custom_roundtrip(
+        &client,
+        &mut events,
+        &[
+            (
+                "variable_sip_h_Diversion",
+                "<sip:+15551234567@gw.example.com;reason=unconditional>",
+            ),
+            (
+                "variable_sip_h_Diversion",
+                "<sip:+15559876543@proxy.example.com;reason=no-answer;counter=3>",
+            ),
+        ],
+    )
+    .await;
 
-    client
-        .subscribe_events_raw(EventFormat::Plain, &format!("CUSTOM {}", subclass))
-        .await
-        .unwrap();
-
-    let mut event = EslEvent::with_type(EslEventType::Custom);
-    event.set_header("Event-Name", "CUSTOM");
-    event.set_header("Event-Subclass", subclass.clone());
-    // SIP Diversion header (RFC 5806) with history info containing SIP URI params
-    event
-        .push_header(
-            "variable_sip_h_Diversion",
-            "<sip:+15551234567@gw.example.com;reason=unconditional>",
-        )
-        .unwrap();
-    event
-        .push_header(
-            "variable_sip_h_Diversion",
-            "<sip:+15559876543@proxy.example.com;reason=no-answer;counter=3>",
-        )
-        .unwrap();
-
-    client
-        .sendevent(event)
-        .await
-        .unwrap()
-        .check()
-        .expect("sendevent rejected");
-
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                if evt.header(EventHeader::EventSubclass) == Some(subclass.as_str()) {
-                    let raw = evt
-                        .variable_str("sip_h_Diversion")
-                        .expect("Diversion variable should be present");
-                    let arr = EslArray::parse(raw).expect("should parse as ARRAY");
-                    assert_eq!(arr.len(), 2, "expected 2 Diversion entries");
-                    assert_eq!(
-                        arr.items()[0],
-                        "<sip:+15551234567@gw.example.com;reason=unconditional>"
-                    );
-                    assert_eq!(
-                        arr.items()[1],
-                        "<sip:+15559876543@proxy.example.com;reason=no-answer;counter=3>"
-                    );
-                    return;
-                }
-            }
-            Ok(Some(Err(e))) => panic!("event error: {}", e),
-            Ok(None) => panic!("event stream closed"),
-            Err(_) => break,
-        }
-    }
-    panic!("did not receive custom event with subclass {}", subclass);
+    let raw = evt
+        .variable_str("sip_h_Diversion")
+        .expect("Diversion variable should be present");
+    let arr = EslArray::parse(raw).expect("should parse as ARRAY");
+    assert_eq!(arr.len(), 2, "expected 2 Diversion entries");
+    assert_eq!(
+        arr.items()[0],
+        "<sip:+15551234567@gw.example.com;reason=unconditional>"
+    );
+    assert_eq!(
+        arr.items()[1],
+        "<sip:+15559876543@proxy.example.com;reason=no-answer;counter=3>"
+    );
 }
 
 // --- L4: Event filter live tests ---

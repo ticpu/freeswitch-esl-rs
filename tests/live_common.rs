@@ -5,9 +5,11 @@
 
 use freeswitch_esl_tokio::commands::{UuidGetVar, UuidKill};
 use freeswitch_esl_tokio::{
-    parse_api_body, EslClient, EslConnectOptions, EslEventStream, EslEventType, HeaderLookup,
-    Originate, DEFAULT_ESL_PASSWORD,
+    parse_api_body, EslClient, EslConnectOptions, EslEvent, EslEventPriority, EslEventStream,
+    EslEventType, EventFormat, EventHeader, HeaderLookup, Originate, DEFAULT_ESL_PASSWORD,
+    UNDEF_VALUE,
 };
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::sync::{OnceCell, Semaphore};
 use tokio::time::Instant;
@@ -103,6 +105,87 @@ pub async fn bgapi_originate_ok(
     panic!("timeout waiting for BACKGROUND_JOB {}", job_uuid);
 }
 
+/// Wait for `event_type` on `uuid`'s channel, ignoring every other channel's.
+///
+/// `None` means the deadline passed, so a caller holding channels can still
+/// reap before it asserts. A stream error or a closed stream panics: the
+/// connection is gone and nothing can be reaped through it anyway.
+pub async fn wait_for_own_event(
+    events: &mut EslEventStream,
+    uuid: &str,
+    event_type: EslEventType,
+    deadline: Instant,
+) -> Option<EslEvent> {
+    while Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => {
+                if evt.event_type() == Some(event_type) && evt.unique_id() == Some(uuid) {
+                    return Some(evt);
+                }
+            }
+            Ok(Some(Err(e))) => panic!("event error waiting for {event_type} on {uuid}: {e}"),
+            Ok(None) => panic!("event stream closed waiting for {event_type} on {uuid}"),
+            Err(_) => break,
+        }
+    }
+    None
+}
+
+/// Send a CUSTOM event on a subclass no other test uses and return the copy the
+/// switch delivers back.
+///
+/// Repeating a name in `headers` stacks it into an `ARRAY::` value, the way
+/// FreeSWITCH carries a repeated SIP header.
+pub async fn custom_roundtrip(
+    client: &EslClient,
+    events: &mut EslEventStream,
+    headers: &[(&str, &str)],
+) -> EslEvent {
+    static NEXT_SUBCLASS: AtomicU32 = AtomicU32::new(0);
+    let subclass = format!(
+        "esl_test::rt_{}_{}",
+        std::process::id(),
+        NEXT_SUBCLASS.fetch_add(1, Ordering::Relaxed)
+    );
+
+    client
+        .subscribe_events_raw(EventFormat::Plain, &format!("CUSTOM {subclass}"))
+        .await
+        .expect("subscribe to the test subclass");
+
+    let mut event = EslEvent::with_type(EslEventType::Custom);
+    event.set_header("Event-Name", "CUSTOM");
+    event.set_header("Event-Subclass", subclass.clone());
+    event.set_priority(EslEventPriority::Normal);
+    for (name, value) in headers {
+        event
+            .push_header(name, value)
+            .unwrap_or_else(|e| panic!("{name} does not stack: {e}"));
+    }
+
+    client
+        .sendevent(event)
+        .await
+        .expect("sendevent transport error")
+        .check()
+        .expect("sendevent rejected");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Some(Ok(evt))) => {
+                if evt.header(EventHeader::EventSubclass) == Some(subclass.as_str()) {
+                    return evt;
+                }
+            }
+            Ok(Some(Err(e))) => panic!("event error: {e}"),
+            Ok(None) => panic!("event stream closed"),
+            Err(_) => break,
+        }
+    }
+    panic!("did not receive the CUSTOM event sent on {subclass}");
+}
+
 /// Kill a channel by UUID, ignoring errors (channel may already be gone).
 pub async fn kill_channel(client: &EslClient, uuid: &str) {
     let cmd = UuidKill::new(uuid);
@@ -188,7 +271,7 @@ pub async fn getvar(client: &EslClient, uuid: &str, name: &str) -> Option<String
         .await
         .unwrap_or_else(|e| panic!("uuid_getvar {} {}: transport error: {}", uuid, name, e));
     match resp.api_result() {
-        Ok("_undef_") => None,
+        Ok(UNDEF_VALUE) => None,
         Ok(value) => Some(value.to_string()),
         Err(e) => panic!("uuid_getvar {} {}: {}", uuid, name, e),
     }

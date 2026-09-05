@@ -15,7 +15,8 @@ use freeswitch_esl_tokio::{
     EslConnectOptions, EslError, EslEventType, EventFormat, EventHeader, HeaderLookup, Originate,
 };
 use live_common::{
-    connect, kill_channel, ChannelReaper, CONN_SEMAPHORE, ESL_HOST, ESL_PASSWORD, ESL_PORT,
+    connect, kill_channel, wait_for_own_event, ChannelReaper, CONN_SEMAPHORE, ESL_HOST,
+    ESL_PASSWORD, ESL_PORT,
 };
 use std::time::Duration;
 use tokio::time::Instant;
@@ -488,26 +489,8 @@ async fn live_header_normalization() {
     reaper.track(&uuid);
 
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut created_event = None;
-
-    loop {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                // Other tests originate against the same switch, so match our
-                // own channel rather than the first CHANNEL_CREATE to arrive.
-                if evt.event_type() != Some(EslEventType::ChannelCreate)
-                    || evt.unique_id() != Some(&uuid)
-                {
-                    continue;
-                }
-                created_event = Some(evt);
-                break;
-            }
-            Ok(Some(Err(e))) => panic!("event error: {e}"),
-            Ok(None) => panic!("connection closed before CHANNEL_CREATE"),
-            Err(_) => break,
-        }
-    }
+    let created_event =
+        wait_for_own_event(&mut events, &uuid, EslEventType::ChannelCreate, deadline).await;
 
     reaper
         .reap()
@@ -575,24 +558,7 @@ async fn live_codec_header_normalization() {
     reaper.track(&uuid);
 
     let deadline = Instant::now() + Duration::from_secs(10);
-    let mut codec_event = None;
-
-    loop {
-        match tokio::time::timeout_at(deadline, events.recv()).await {
-            Ok(Some(Ok(evt))) => {
-                // Other tests originate against the same switch, so match our
-                // own channel rather than the first CODEC event to arrive.
-                if evt.event_type() != Some(EslEventType::Codec) || evt.unique_id() != Some(&uuid) {
-                    continue;
-                }
-                codec_event = Some(evt);
-                break;
-            }
-            Ok(Some(Err(e))) => panic!("event error: {e}"),
-            Ok(None) => panic!("connection closed before CODEC event"),
-            Err(_) => break,
-        }
-    }
+    let codec_event = wait_for_own_event(&mut events, &uuid, EslEventType::Codec, deadline).await;
 
     reaper
         .reap()
