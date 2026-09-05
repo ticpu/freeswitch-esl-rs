@@ -390,6 +390,21 @@ impl SdpCodecs {
 /// `audio_codec_string`/`video_codec_string` must handle differently: a name that cannot
 /// be embedded at all (`Ok(None)` lenient / `Err` strict, the codec is skipped) versus an
 /// fmtp that cannot be embedded (the entry is still emitted with fmtp cleared).
+/// The fault, named without the value the error's own `Display` quotes back: these
+/// reasons describe a peer's bytes, not a codec string this caller wrote.
+fn unrepresentable_reason(e: &CodecStringError) -> &'static str {
+    match e {
+        CodecStringError::AtInFmtp(_) => "contains '@', which the qualifier split takes first",
+        CodecStringError::DotInFmtpWithoutModule(_) => {
+            "contains '.' with no module prefix, which the modname split takes first"
+        }
+        CodecStringError::WireInjection { .. } => "contains a newline or a carriage return",
+        CodecStringError::InvalidCharInName { .. } => "contains a codec-string grammar delimiter",
+        CodecStringError::InvalidCodecName(_) => "is empty",
+        _ => "has no representation in the codec-string grammar",
+    }
+}
+
 fn codec_to_entry_lenient(
     codec: &SdpCodec,
     options: &CodecStringOptions,
@@ -403,7 +418,7 @@ fn codec_to_entry_lenient(
                 Some(acc) => {
                     acc.push(SdpWarning::codec_name_unrepresentable(
                         codec.name(),
-                        e.to_string(),
+                        unrepresentable_reason(&e),
                     ));
                     Ok(None)
                 }
@@ -424,7 +439,7 @@ fn codec_to_entry_lenient(
                         acc.push(SdpWarning::fmtp_unrepresentable(
                             codec.name(),
                             fmtp,
-                            e.to_string(),
+                            unrepresentable_reason(&e),
                         ));
                         // entry keeps no fmtp; qualifiers below still apply.
                     }

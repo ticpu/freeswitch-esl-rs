@@ -451,8 +451,9 @@ impl fmt::Display for SdpWarning {
                 raw_value,
             } => write!(
                 f,
-                "a={attribute} value {raw_value:?} is not a valid positive integer; \
-                 treated as not set"
+                "a={attribute} value ({} bytes) is not a valid positive integer; \
+                 treated as not set",
+                raw_value.len()
             ),
             Self::CodecStringQualifier { raw, reason } => write!(
                 f,
@@ -464,13 +465,16 @@ impl fmt::Display for SdpWarning {
                 reason,
             } => write!(
                 f,
-                "fmtp {fmtp:?} for {codec_name} could not be embedded in the codec-string \
-                 entry and was cleared: {reason}"
+                "the a=fmtp ({} bytes) of an offered codec ({} bytes) could not be embedded \
+                 in the codec-string entry and was cleared: it {reason}",
+                fmtp.len(),
+                codec_name.len()
             ),
             Self::CodecNameUnrepresentable { codec_name, reason } => write!(
                 f,
-                "codec name {codec_name:?} cannot be represented as a codec-string entry \
-                 and was skipped: {reason}"
+                "an offered codec name ({} bytes) cannot be a codec-string entry and was \
+                 skipped: it {reason}",
+                codec_name.len()
             ),
             Self::MalformedMediaSection { media_type, reason } => write!(
                 f,
@@ -653,12 +657,34 @@ mod tests {
     }
 
     #[test]
-    fn sdp_warning_display() {
-        let w = SdpWarning::unparseable_numeric_attribute("maxptime", "0");
-        let msg = w.to_string();
-        assert!(msg.contains("maxptime"));
-        assert!(msg.contains("0"));
-        assert!(msg.contains("not set"));
+    fn sdp_warning_display_names_fields_and_lengths_not_peer_values() {
+        let cases: &[(SdpWarning, &str, &str)] = &[
+            (
+                SdpWarning::unparseable_numeric_attribute("maxptime", "abcdef"),
+                "maxptime",
+                "abcdef",
+            ),
+            (
+                SdpWarning::fmtp_unrepresentable("EVS", "br=13.2-24.4", "contains a dot"),
+                "12 bytes",
+                "br=13.2-24.4",
+            ),
+            (
+                SdpWarning::codec_name_unrepresentable("bad,name", "contains a delimiter"),
+                "8 bytes",
+                "bad,name",
+            ),
+            (
+                SdpWarning::non_canonical_direction_attribute("SENDONLY"),
+                "8 bytes",
+                "SENDONLY",
+            ),
+        ];
+        for (warning, expected, forbidden) in cases {
+            let msg = warning.to_string();
+            assert!(msg.contains(expected), "{msg}");
+            assert!(!msg.contains(forbidden), "warning quoted its input: {msg}");
+        }
     }
 
     #[test]
