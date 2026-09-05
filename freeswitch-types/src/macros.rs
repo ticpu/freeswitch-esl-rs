@@ -143,9 +143,13 @@ macro_rules! wire_enum {
 
             #[test]
             fn from_str_rejects_unknown() {
-                let err = "__wire_enum_bogus_sentinel__".parse::<$Enum>().unwrap_err();
-                assert_eq!(err.0, "__wire_enum_bogus_sentinel__");
-                assert!(err.to_string().contains($label));
+                const BOGUS: &str = "__wire_enum_bogus_sentinel__";
+                let err = BOGUS.parse::<$Enum>().unwrap_err();
+                assert_eq!(err.0, BOGUS);
+                assert_eq!(
+                    err.to_string(),
+                    format!("unknown {} ({} bytes)", $label, BOGUS.len()),
+                );
             }
         }
     };
