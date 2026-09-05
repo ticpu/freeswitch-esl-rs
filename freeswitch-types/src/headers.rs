@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(
             err.unwrap_err()
                 .to_string(),
-            "unknown event header: X-Custom-Not-In-Enum"
+            "unknown event header (20 bytes)"
         );
     }
 

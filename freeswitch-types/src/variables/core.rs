@@ -245,7 +245,7 @@ mod tests {
         assert_eq!(
             err.unwrap_err()
                 .to_string(),
-            "unknown channel variable: nonexistent_var"
+            "unknown channel variable (15 bytes)"
         );
     }
 
