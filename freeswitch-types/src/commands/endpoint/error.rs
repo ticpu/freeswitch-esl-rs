@@ -35,8 +35,9 @@ impl FromStr for ErrorEndpoint {
             .ok_or_else(|| OriginateError::ParseError("not an error endpoint".into()))?;
         let cause: HangupCause = cause_str
             .parse()
-            .map_err(|_| {
-                OriginateError::ParseError(format!("unknown hangup cause: {}", cause_str))
+            .map_err(|source| OriginateError::UnknownHangupCause {
+                value: cause_str.to_string(),
+                source,
             })?;
         Ok(Self { cause })
     }

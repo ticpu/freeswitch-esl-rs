@@ -101,7 +101,10 @@ impl FromStr for GroupCall {
         let (group_at_domain, order) = if let Some((gd, o)) = inner.split_once('+') {
             let order: GroupCallOrder = o
                 .parse()
-                .map_err(|_| OriginateError::ParseError(format!("unknown order: {}", o)))?;
+                .map_err(|source| OriginateError::UnknownGroupCallOrder {
+                    value: o.to_string(),
+                    source,
+                })?;
             (gd, Some(order))
         } else {
             (inner, None)

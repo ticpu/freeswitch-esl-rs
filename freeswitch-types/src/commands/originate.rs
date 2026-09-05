@@ -2,10 +2,13 @@
 //! and automatic quoting for socket application arguments.
 
 use std::fmt;
+use std::num::ParseIntError;
 use std::str::FromStr;
 use std::time::Duration;
 
+use super::endpoint::ParseGroupCallOrderError;
 use super::{originate_quote, originate_split, originate_unquote};
+use crate::channel::ParseHangupCauseError;
 
 pub use super::variables::{Variables, VariablesType};
 
@@ -553,12 +556,16 @@ impl FromStr for Originate {
 
         let target_str = originate_unquote(&args.remove(0));
 
-        let dialplan = args
+        // The slot is positional and optional, so a token that is neither
+        // spelling is the context rather than a malformed dialplan.
+        let dialplan = match args
             .first()
-            .and_then(|s| {
-                s.parse::<DialplanType>()
-                    .ok()
-            });
+            .map(String::as_str)
+        {
+            Some(token) if token.eq_ignore_ascii_case("inline") => Some(DialplanType::Inline),
+            Some(token) if token.eq_ignore_ascii_case("xml") => Some(DialplanType::Xml),
+            _ => None,
+        };
         if dialplan.is_some() {
             args.remove(0);
         }
@@ -570,34 +577,19 @@ impl FromStr for Originate {
         } else {
             None
         };
-        let cid_name = if !args.is_empty() {
-            let v = args.remove(0);
-            if v.eq_ignore_ascii_case(UNDEF) {
-                None
-            } else {
-                Some(v)
-            }
-        } else {
+        let cid_name = take_undef(&mut args);
+        let cid_num = take_undef(&mut args);
+        let timeout = if args.is_empty() {
             None
-        };
-        let cid_num = if !args.is_empty() {
-            let v = args.remove(0);
-            if v.eq_ignore_ascii_case(UNDEF) {
-                None
-            } else {
-                Some(v)
-            }
         } else {
-            None
-        };
-        let timeout = if !args.is_empty() {
-            Some(Duration::from_secs(
-                args.remove(0)
-                    .parse::<u64>()
-                    .map_err(|e| OriginateError::ParseError(format!("invalid timeout: {}", e)))?,
-            ))
-        } else {
-            None
+            let value = args.remove(0);
+            let secs = value
+                .parse::<u64>()
+                .map_err(|source| OriginateError::InvalidTimeout {
+                    value: value.clone(),
+                    source,
+                })?;
+            Some(Duration::from_secs(secs))
         };
 
         // Validate via constructors then set parsed fields directly (same module)
@@ -615,6 +607,16 @@ impl FromStr for Originate {
     }
 }
 
+/// Take the next positional argument, reading FreeSWITCH's `undef` placeholder
+/// as the absent value it stands for.
+fn take_undef(args: &mut Vec<String>) -> Option<String> {
+    if args.is_empty() {
+        return None;
+    }
+    let value = args.remove(0);
+    (!value.eq_ignore_ascii_case(UNDEF)).then_some(value)
+}
+
 /// Errors from originate command parsing or construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -630,12 +632,37 @@ pub enum OriginateError {
     /// A dial string carried a variable block for an endpoint type that has
     /// nowhere to keep it, such as `error/`.
     VariablesNotSupported,
+    /// The timeout argument is not a whole number of seconds.
+    InvalidTimeout {
+        /// The rejected token.
+        value: String,
+        /// Why it is not a number.
+        source: ParseIntError,
+    },
+    /// An `error/` endpoint named a cause this crate does not know.
+    UnknownHangupCause {
+        /// The rejected token.
+        value: String,
+        /// The hangup-cause parse failure.
+        source: ParseHangupCauseError,
+    },
+    /// A `group_call` expression carried an unknown order suffix.
+    UnknownGroupCallOrder {
+        /// The rejected token.
+        value: String,
+        /// The order parse failure.
+        source: ParseGroupCallOrderError,
+    },
+    /// A dial string whose leading path segment names no endpoint type.
+    UnknownEndpointType(String),
 }
 
 impl std::fmt::Display for OriginateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnclosedQuote(s) => write!(f, "unclosed quote at: {s}"),
+            Self::UnclosedQuote(s) => {
+                write!(f, "unclosed quote in the final token ({} bytes)", s.len())
+            }
             Self::ParseError(s) => write!(f, "parse error: {s}"),
             Self::EmptyInlineApplications => {
                 f.write_str("inline originate requires at least one application")
@@ -646,11 +673,41 @@ impl std::fmt::Display for OriginateError {
             Self::VariablesNotSupported => {
                 f.write_str("this endpoint type carries no variable block")
             }
+            Self::InvalidTimeout { value, .. } => write!(
+                f,
+                "timeout is not a whole number of seconds ({} bytes)",
+                value.len()
+            ),
+            Self::UnknownHangupCause { value, .. } => write!(
+                f,
+                "unknown hangup cause in an error endpoint ({} bytes)",
+                value.len()
+            ),
+            Self::UnknownGroupCallOrder { value, .. } => {
+                write!(f, "unknown group_call order suffix ({} bytes)", value.len())
+            }
+            Self::UnknownEndpointType(s) => {
+                write!(f, "unknown endpoint type ({} bytes)", s.len())
+            }
         }
     }
 }
 
-impl std::error::Error for OriginateError {}
+impl std::error::Error for OriginateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidTimeout { source, .. } => Some(source),
+            Self::UnknownHangupCause { source, .. } => Some(source),
+            Self::UnknownGroupCallOrder { source, .. } => Some(source),
+            Self::UnclosedQuote(_)
+            | Self::ParseError(_)
+            | Self::EmptyInlineApplications
+            | Self::ExtensionWithInlineDialplan
+            | Self::VariablesNotSupported
+            | Self::UnknownEndpointType(_) => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

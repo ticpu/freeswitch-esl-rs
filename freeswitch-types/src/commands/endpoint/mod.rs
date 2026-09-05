@@ -285,10 +285,7 @@ impl Endpoint {
         } else if uri.starts_with("alsa") {
             Ok(Self::Alsa(AudioEndpoint::parse_with_prefix(uri, "alsa")?))
         } else {
-            Err(OriginateError::ParseError(format!(
-                "unknown endpoint type: {}",
-                uri
-            )))
+            Err(OriginateError::UnknownEndpointType(uri.to_string()))
         }
     }
 }
