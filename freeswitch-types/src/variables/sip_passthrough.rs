@@ -168,11 +168,7 @@ pub struct SipPassthroughHeader {
     wire: String,
 }
 
-/// Prefix patterns ordered longest-first for unambiguous `FromStr` matching.
-///
-/// Ordered so that longer prefixes (e.g. `sip_nobye_h_`) are tried before
-/// shorter ones that share a common start (e.g. `sip_bye_h_`). The order
-/// here is the single source of truth — `as_str()` provides the actual strings.
+/// Prefixes longest-first, so `FromStr` never matches a shorter one first.
 const PREFIX_PATTERNS: &[SipHeaderPrefix] = &[
     SipHeaderPrefix::NoBye,
     SipHeaderPrefix::Bye,
@@ -182,17 +178,11 @@ const PREFIX_PATTERNS: &[SipHeaderPrefix] = &[
     SipHeaderPrefix::Request,
 ];
 
-/// Derive the canonical SIP header name from a wire suffix under a given prefix.
-///
-/// For `Invite`, reverses the lowercase+underscore transformation:
-/// `"call_info"` → `"call-info"` → tried against `SipHeader::from_str`.
-/// For all other prefixes, the suffix is used verbatim or matched against
-/// known `SipHeader` variants for canonicalization.
+/// Canonical header name for a wire suffix, reversing the `Invite` prefix's
+/// lowercase-and-underscore spelling.
 fn canonical_from_suffix(prefix: SipHeaderPrefix, suffix: &str) -> String {
     match prefix {
         SipHeaderPrefix::Invite => {
-            // Reverse the lowercase+underscore transformation:
-            // "call_info" → "call-info" → try SipHeader::from_str
             let with_hyphens = suffix.replace('_', "-");
             match with_hyphens.parse::<SipHeader>() {
                 Ok(h) => h
@@ -646,7 +636,6 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(parsed.prefix(), SipHeaderPrefix::Invite);
-        // Unknown header: canonical is the hyphenated form
         assert_eq!(parsed.canonical_name(), "x-custom");
     }
 
