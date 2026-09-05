@@ -19,6 +19,10 @@ pub use super::variables::{Variables, VariablesType};
 /// to be present on the wire.
 const UNDEF: &str = "undef";
 
+/// The context FreeSWITCH itself falls back to, emitted when a later
+/// positional argument forces the slot to be present.
+const DEFAULT_CONTEXT: &str = "default";
+
 /// FreeSWITCH dialplan type for originate commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -127,8 +131,7 @@ impl Application {
                     .name
                     .clone(),
             },
-            // XML and custom dialplans use the &app(args) syntax.
-            _ => {
+            DialplanType::Xml => {
                 let args = self
                     .args
                     .as_deref()
@@ -446,6 +449,65 @@ impl Originate {
     pub fn set_timeout(&mut self, timeout: Option<Duration>) {
         self.timeout = timeout;
     }
+
+    /// Write dialplan, context, cid_name, cid_num and timeout. FreeSWITCH reads
+    /// them by position, so a later one present forces its placeholder onto
+    /// every earlier slot.
+    fn write_positional_tail(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let dialplan = match &self.target {
+            OriginateTarget::InlineApplications(_) => Some(
+                self.dialplan
+                    .unwrap_or(DialplanType::Inline),
+            ),
+            _ => self.dialplan,
+        };
+        let timeout = self
+            .timeout
+            .is_some();
+        let cid_num = timeout
+            || self
+                .cid_num
+                .is_some();
+        let cid_name = cid_num
+            || self
+                .cid_name
+                .is_some();
+        let context = cid_name
+            || self
+                .context
+                .is_some();
+
+        if context || dialplan.is_some() {
+            write!(f, " {}", dialplan.unwrap_or(DialplanType::Xml))?;
+        }
+        if context {
+            write!(
+                f,
+                " {}",
+                self.context
+                    .as_deref()
+                    .unwrap_or(DEFAULT_CONTEXT)
+            )?;
+        }
+        if cid_name {
+            let name = self
+                .cid_name
+                .as_deref()
+                .unwrap_or(UNDEF);
+            write!(f, " {}", originate_quote(name))?;
+        }
+        if cid_num {
+            let num = self
+                .cid_num
+                .as_deref()
+                .unwrap_or(UNDEF);
+            write!(f, " {}", originate_quote(num))?;
+        }
+        if let Some(timeout) = self.timeout {
+            write!(f, " {}", timeout.as_secs())?;
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Display for Originate {
@@ -470,64 +532,7 @@ impl fmt::Display for Originate {
             originate_quote(&target_str)
         )?;
 
-        // Positional args: dialplan, context, cid_name, cid_num, timeout.
-        // FreeSWITCH parses by position, so if a later arg is present,
-        // all preceding ones must be emitted with defaults.
-        let dialplan = match &self.target {
-            OriginateTarget::InlineApplications(_) => Some(
-                self.dialplan
-                    .unwrap_or(DialplanType::Inline),
-            ),
-            _ => self.dialplan,
-        };
-        let has_ctx = self
-            .context
-            .is_some();
-        let has_name = self
-            .cid_name
-            .is_some();
-        let has_num = self
-            .cid_num
-            .is_some();
-        let has_timeout = self
-            .timeout
-            .is_some();
-
-        // Positional args; FS expects the literal "UNDEF" / "default" sentinels for missing slots, not an empty string.
-        if dialplan.is_some() || has_ctx || has_name || has_num || has_timeout {
-            let dp = dialplan
-                .as_ref()
-                .cloned()
-                .unwrap_or(DialplanType::Xml);
-            write!(f, " {}", dp)?;
-        }
-        if has_ctx || has_name || has_num || has_timeout {
-            write!(
-                f,
-                " {}",
-                self.context
-                    .as_deref()
-                    .unwrap_or("default")
-            )?;
-        }
-        if has_name || has_num || has_timeout {
-            let name = self
-                .cid_name
-                .as_deref()
-                .unwrap_or(UNDEF);
-            write!(f, " {}", originate_quote(name))?;
-        }
-        if has_num || has_timeout {
-            let num = self
-                .cid_num
-                .as_deref()
-                .unwrap_or(UNDEF);
-            write!(f, " {}", originate_quote(num))?;
-        }
-        if let Some(ref timeout) = self.timeout {
-            write!(f, " {}", timeout.as_secs())?;
-        }
-        Ok(())
+        self.write_positional_tail(f)
     }
 }
 
