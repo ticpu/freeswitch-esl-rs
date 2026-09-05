@@ -906,8 +906,8 @@ Unit and mock-server tests run without external dependencies:
 
 ```sh
 cargo test --lib
-cargo test --test integration_tests --test connection_tests \
-    --test command_wire_tests --test connection_failure_tests --test reexec_tests
+cargo test --test connection_tests --test command_wire_tests \
+    --test connection_failure_tests --test reexec_tests
 ```
 
 Live integration tests require FreeSWITCH ESL on `127.0.0.1:8022`

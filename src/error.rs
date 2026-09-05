@@ -573,4 +573,31 @@ mod tests {
         ));
         assert!(!err.is_permission_denied());
     }
+
+    #[test]
+    fn classification_of_transport_and_setup_errors() {
+        use std::io::ErrorKind;
+        let io = |kind| EslError::from(std::io::Error::new(kind, "test"));
+        let cases: &[(EslError, bool, bool)] = &[
+            (io(ErrorKind::ConnectionRefused), true, false),
+            (io(ErrorKind::ConnectionReset), true, false),
+            (io(ErrorKind::ConnectionAborted), true, false),
+            (io(ErrorKind::BrokenPipe), true, false),
+            (io(ErrorKind::UnexpectedEof), true, false),
+            (EslError::ConnectionClosed, true, false),
+            (EslError::NotConnected, true, false),
+            (
+                EslError::HeartbeatExpired { interval_ms: 60000 },
+                true,
+                false,
+            ),
+            (EslError::Timeout { timeout_ms: 5000 }, false, true),
+            (EslError::protocol_error("bad framing"), true, false),
+            (EslError::auth_failed("bad password"), false, false),
+        ];
+        for (err, connection, recoverable) in cases {
+            assert_eq!(err.is_connection_error(), *connection, "{err:?}");
+            assert_eq!(err.is_recoverable(), *recoverable, "{err:?}");
+        }
+    }
 }
