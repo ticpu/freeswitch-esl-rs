@@ -479,6 +479,43 @@ mod tests {
             .is_err());
     }
 
+    /// `ErrorEndpoint` has nowhere to keep a block, so accepting one loses
+    /// every variable it named without a word to the caller.
+    #[test]
+    fn a_block_on_an_endpoint_that_cannot_hold_one_is_refused() {
+        for carrier in [DialStringCarrier::EslApi, DialStringCarrier::Dialplan] {
+            assert!(
+                Endpoint::parse_for("{a=b}error/USER_BUSY", carrier).is_err(),
+                "accepted at {carrier:?}"
+            );
+        }
+        assert!("{a=b}error/USER_BUSY"
+            .parse::<Endpoint>()
+            .is_err());
+    }
+
+    /// The two entry points have to agree: `from_str` is `parse_for` at the
+    /// default carrier, not a second dispatch with its own rules.
+    #[test]
+    fn from_str_matches_parse_for_at_the_default_carrier() {
+        for input in [
+            "sofia/internal/1000@example.com",
+            "{a=b}sofia/internal/1000@example.com",
+            "<a=b>loopback/9199/default",
+            "[a=b]user/bob@example.com",
+            "{a=b}error/USER_BUSY",
+            "verto/1234",
+        ] {
+            assert_eq!(
+                input
+                    .parse::<Endpoint>()
+                    .is_ok(),
+                Endpoint::parse_for(input, DialStringCarrier::EslApi).is_ok(),
+                "{input}"
+            );
+        }
+    }
+
     #[test]
     fn endpoint_from_str_unknown_errors() {
         let result = "verto/1234".parse::<Endpoint>();
