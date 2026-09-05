@@ -740,12 +740,21 @@ impl EslClient {
 
     /// Enable FreeSWITCH log forwarding at the given level.
     ///
-    /// Log messages stream as events with `Content-Type: log/data`.
-    /// Valid levels: `DEBUG`, `INFO`, `NOTICE`, `WARNING`, `ERROR`,
-    /// `CRIT`, `ALERT`, `EMERG` (or numeric 0–7).
-    pub async fn log(&self, level: &str) -> EslResult<EslResponse> {
+    /// Log messages stream as events with `Content-Type: log/data`. The level
+    /// is a [`LogLevel`](crate::LogLevel) or its wire spelling.
+    ///
+    /// ```rust,no_run
+    /// # use freeswitch_esl_tokio::{EslClient, EslError, LogLevel};
+    /// # async fn run(client: EslClient) -> Result<(), EslError> {
+    /// client.log(LogLevel::Warning).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn log(&self, level: impl AsRef<str>) -> EslResult<EslResponse> {
         let cmd = EslCommand::Log {
-            level: level.to_string(),
+            level: level
+                .as_ref()
+                .to_string(),
         };
         self.send_command(cmd)
             .await

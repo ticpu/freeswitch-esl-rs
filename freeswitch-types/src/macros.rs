@@ -327,6 +327,12 @@ macro_rules! wire_enum {
             }
         }
 
+        impl AsRef<str> for $Enum {
+            fn as_ref(&self) -> &str {
+                self.as_str()
+            }
+        }
+
         parse_error! { $Error($label); }
     };
 }
