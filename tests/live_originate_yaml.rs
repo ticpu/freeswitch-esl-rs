@@ -14,7 +14,7 @@ use freeswitch_esl_tokio::{
     Application, ChannelState, DialplanType, Endpoint, EslEventType, EventFormat, EventHeader,
     HeaderLookup, Originate,
 };
-use live_common::{channel_exists, connect, getvar, kill_channel, ChannelReaper};
+use live_common::{channel_exists, connect, getvar, ChannelReaper};
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -147,10 +147,14 @@ async fn live_originate_loopback_from_yaml() {
         .expect("originate returned an error")
         .to_string();
 
+    let mut reaper = ChannelReaper::new(&client);
+    reaper.track(&a_leg);
+
     // mod_loopback cross-links the two legs with this variable.
     let b_leg = getvar(&client, &a_leg, "other_loopback_leg_uuid")
         .await
         .expect("A leg must expose other_loopback_leg_uuid");
+    reaper.track(&b_leg);
     assert_ne!(a_leg, b_leg, "the two loopback legs must be distinct");
 
     assert_eq!(
@@ -226,7 +230,9 @@ async fn live_originate_loopback_from_yaml() {
         }
     }
 
-    kill_channel(&client, &a_leg).await;
+    reaper
+        .reap()
+        .await;
 
     assert_eq!(created.len(), 2, "expected CHANNEL_CREATE for both legs");
     assert_eq!(answered.len(), 2, "expected CHANNEL_ANSWER for both legs");
@@ -262,59 +268,69 @@ async fn live_originate_loopback_nested_bridge_scopes_vars() {
         .expect("originate returned an error")
         .to_string();
 
+    let mut reaper = ChannelReaper::new(&client);
+    reaper.track(&a_leg);
+
     let b_leg = getvar(&client, &a_leg, "other_loopback_leg_uuid")
         .await
         .expect("A leg must expose other_loopback_leg_uuid");
+    reaper.track(&b_leg);
 
     // The A leg runs &bridge(...), so the far channel shows up as its bridge
     // partner once the bridge is established.
     let mut far = None;
     let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if let Some(uuid) = getvar(&client, &a_leg, "bridge_uuid").await {
-            far = Some(uuid);
-            break;
+    while far.is_none() && Instant::now() < deadline {
+        far = getvar(&client, &a_leg, "bridge_uuid").await;
+        if far.is_none() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let far = far.expect("A leg never bridged to null/far");
+    if let Some(far) = &far {
+        reaper.track(far);
+    }
 
-    // The originate block reaches both loopback legs...
+    // Every read happens while the channels are alive; the reap below has to
+    // run before the first assertion.
+    let mut on_legs = Vec::new();
     for (leg, uuid) in [("A", &a_leg), ("B", &b_leg)] {
+        on_legs.push((
+            leg,
+            getvar(&client, uuid, "leg_a_only").await,
+            getvar(&client, uuid, "leg_b_only").await,
+        ));
+    }
+    let mut on_far = None;
+    if let Some(far) = &far {
+        on_far = Some((
+            getvar(&client, far, "leg_a_only").await,
+            getvar(&client, far, "leg_b_only").await,
+        ));
+    }
+
+    reaper
+        .reap()
+        .await;
+
+    let (far_leg_a, far_leg_b) = on_far.expect("A leg never bridged to null/far");
+    for (leg, leg_a_only, leg_b_only) in on_legs {
+        // The originate block reaches both loopback legs...
         assert_eq!(
-            getvar(&client, uuid, "leg_a_only")
-                .await
-                .as_deref(),
+            leg_a_only.as_deref(),
             Some("outer"),
-            "{} leg should carry the originate block variable",
-            leg
+            "{leg} leg should carry the originate block variable"
+        );
+        // ...and the bridge dial string reaches only the leg it dials.
+        assert_eq!(
+            leg_b_only, None,
+            "{leg} leg must not see the bridge dial string variable"
         );
     }
-    // ...but does not cross the bridge into the far leg.
     assert_eq!(
-        getvar(&client, &far, "leg_a_only").await,
-        None,
+        far_leg_a, None,
         "originate block variables must not leak across the bridge"
     );
-
-    // The bridge dial string reaches only the leg it dials.
-    assert_eq!(
-        getvar(&client, &far, "leg_b_only")
-            .await
-            .as_deref(),
-        Some("inner")
-    );
-    for (leg, uuid) in [("A", &a_leg), ("B", &b_leg)] {
-        assert_eq!(
-            getvar(&client, uuid, "leg_b_only").await,
-            None,
-            "{} leg must not see the bridge dial string variable",
-            leg
-        );
-    }
-
-    kill_channel(&client, &a_leg).await;
-    kill_channel(&client, &far).await;
+    assert_eq!(far_leg_b.as_deref(), Some("inner"));
 }
 
 /// Drive a loopback pair through a bowout and confirm mod_loopback removed
