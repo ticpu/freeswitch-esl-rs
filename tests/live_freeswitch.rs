@@ -532,9 +532,10 @@ async fn live_header_normalization() {
     );
 
     // Channel variables preserve underscore keys
-    if let Some(dir) = evt.variable_str("direction") {
-        assert!(!dir.is_empty());
-    }
+    let direction = evt
+        .variable_str("direction")
+        .expect("CHANNEL_CREATE carries variable_direction");
+    assert!(!direction.is_empty());
 }
 
 /// Verify that CODEC events have normalized codec headers.
@@ -577,9 +578,10 @@ async fn live_codec_header_normalization() {
     let evt = codec_event.expect("never received CODEC event");
 
     // Codec headers accessible via typed API
-    if let Some(codec) = evt.header(EventHeader::ChannelReadCodecName) {
-        assert!(!codec.is_empty());
-    }
+    let codec = evt
+        .header(EventHeader::ChannelReadCodecName)
+        .expect("a CODEC event names the read codec");
+    assert!(!codec.is_empty());
 
     // No duplicate keys after normalization
     let headers = evt.headers();

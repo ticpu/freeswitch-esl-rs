@@ -3,10 +3,10 @@
 //! These tests use only the public API. Tests for internal modules (buffer,
 //! protocol, command) live as unit tests inside the respective modules.
 
-use freeswitch_esl_tokio::{ConnectionMode, EslError, EslEventType, EventFormat};
+use freeswitch_esl_tokio::{EslError, EslEventType, EventFormat};
 
-#[tokio::test]
-async fn test_event_types() {
+#[test]
+fn test_event_types() {
     assert_eq!(EslEventType::ChannelAnswer.to_string(), "CHANNEL_ANSWER");
     assert_eq!(EslEventType::ChannelCreate.to_string(), "CHANNEL_CREATE");
     assert_eq!(EslEventType::Heartbeat.to_string(), "HEARTBEAT");
@@ -23,8 +23,8 @@ async fn test_event_types() {
     assert_eq!(EslEventType::parse_event_type("UNKNOWN_EVENT"), None);
 }
 
-#[tokio::test]
-async fn test_error_handling() {
+#[test]
+fn test_error_handling() {
     let io_error = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "Connection refused");
     let esl_error = EslError::from(io_error);
     assert!(esl_error.is_connection_error());
@@ -43,8 +43,8 @@ async fn test_error_handling() {
     assert!(!heartbeat_error.is_recoverable());
 }
 
-#[tokio::test]
-async fn test_connection_error_detection() {
+#[test]
+fn test_connection_error_detection() {
     let closed_error = EslError::ConnectionClosed;
     assert!(closed_error.is_connection_error());
     assert!(!closed_error.is_recoverable());
@@ -69,11 +69,8 @@ async fn test_connection_error_detection() {
     }
 }
 
-#[tokio::test]
-async fn test_connection_states() {
-    assert_eq!(ConnectionMode::Inbound, ConnectionMode::Inbound);
-    assert_ne!(ConnectionMode::Inbound, ConnectionMode::Outbound);
-
+#[test]
+fn test_event_format_display() {
     assert_eq!(EventFormat::Plain.to_string(), "plain");
     assert_eq!(EventFormat::Json.to_string(), "json");
     assert_eq!(EventFormat::Xml.to_string(), "xml");

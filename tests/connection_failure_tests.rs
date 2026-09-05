@@ -442,31 +442,19 @@ async fn test_command_timeout() {
     }
 }
 
+/// The timeout a client starts with, which every other test here replaces
+/// before it sends anything. No accessor reports it; the error does.
 #[tokio::test]
 async fn test_command_timeout_default() {
-    let (_mock, _client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
+    let (_mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
 
-    // Default timeout should be 5 seconds -- verify a command still works
-    // by having the mock reply within that window
-    // (This test just verifies the default doesn't break normal flow)
-    let (mut mock, client2, _events2) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let api_task = tokio::spawn(async move {
-        client2
-            .api("status")
-            .await
-    });
-
-    let _cmd = mock
-        .read_command()
-        .await;
-    mock.reply_api("OK")
-        .await;
-
-    let result = api_task
+    match client
+        .api("status")
         .await
-        .unwrap();
-    assert!(result.is_ok());
+    {
+        Err(EslError::Timeout { timeout_ms }) => assert_eq!(timeout_ms, 5000),
+        other => panic!("expected a Timeout, got: {:?}", other),
+    }
 }
 
 #[tokio::test]

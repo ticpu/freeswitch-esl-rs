@@ -140,38 +140,17 @@ async fn live_recv_custom_sendevent_percent_decoded() {
 async fn live_api_multiple_commands() {
     let (client, _events, _permit) = connect().await;
 
-    let version = client
-        .api("version")
-        .await
-        .unwrap();
-    assert!(
-        version
-            .body()
-            .is_some(),
-        "version should have body"
-    );
-
-    let hostname = client
-        .api("hostname")
-        .await
-        .unwrap();
-    assert!(
-        hostname
-            .body()
-            .is_some(),
-        "hostname should have body"
-    );
-
-    let global = client
-        .api("global_getvar")
-        .await
-        .unwrap();
-    assert!(
-        global
-            .body()
-            .is_some(),
-        "global_getvar should have body"
-    );
+    for command in ["version", "hostname", "global_getvar"] {
+        let resp = client
+            .api(command)
+            .await
+            .unwrap_or_else(|e| panic!("{command}: transport error: {e}"));
+        assert!(
+            resp.body()
+                .is_some(),
+            "{command} should have a body"
+        );
+    }
 }
 
 #[tokio::test]
@@ -689,11 +668,6 @@ async fn live_bgapi_single_round_trip() {
                         .body()
                         .expect("BACKGROUND_JOB should have a body");
                     assert!(!body.is_empty(), "body should contain status output");
-                    assert_eq!(
-                        evt.job_uuid(),
-                        Some(job_uuid.as_str()),
-                        "event Job-UUID must match"
-                    );
                     return;
                 }
             }

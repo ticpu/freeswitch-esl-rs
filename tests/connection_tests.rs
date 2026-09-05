@@ -196,8 +196,9 @@ async fn test_client_clone() {
 
     let result = task
         .await
-        .unwrap();
-    assert!(result.is_ok());
+        .unwrap()
+        .expect("the clone's command should succeed");
+    assert_eq!(result.body(), Some("OK"));
 
     // Original client should also work
     let task2 = tokio::spawn(async move {
@@ -215,8 +216,9 @@ async fn test_client_clone() {
 
     let result2 = task2
         .await
-        .unwrap();
-    assert!(result2.is_ok());
+        .unwrap()
+        .expect("the original client's command should succeed");
+    assert_eq!(result2.body(), Some("1.0"));
 }
 
 #[tokio::test]
