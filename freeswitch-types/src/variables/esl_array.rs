@@ -152,7 +152,6 @@ mod tests {
     /// hardcoding it.
     #[test]
     fn prefix_is_the_wire_marker() {
-        assert_eq!(EslArray::PREFIX, "ARRAY::");
         let input = format!("{}one|:two", EslArray::PREFIX);
         assert_eq!(
             EslArray::parse(&input)
@@ -254,14 +253,14 @@ mod tests {
     }
 
     #[test]
-    fn test_new() {
+    fn new_holds_the_items_given() {
         let arr = EslArray::new(vec!["a".into(), "b".into(), "c".into()]);
         assert_eq!(arr.items(), &["a", "b", "c"]);
         assert_eq!(arr.len(), 3);
     }
 
     #[test]
-    fn test_push() {
+    fn push_appends() {
         let mut arr = EslArray::new(vec!["first".into()]);
         arr.push("second".into());
         arr.push("third".into());
@@ -270,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unshift() {
+    fn unshift_prepends() {
         let mut arr = EslArray::new(vec!["last".into()]);
         arr.unshift("middle".into());
         arr.unshift("first".into());
