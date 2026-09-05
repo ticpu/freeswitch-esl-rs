@@ -47,10 +47,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The socket app's argument contains spaces, and originate splits on them;
     // the Originate builder quotes it. `async full` is what makes linger and
     // the api verbs available at all -- see docs/outbound-esl-quirks.md.
-    // The switch dials the literal below, so it names the family the switch
-    // reaches this host on; the listener above takes either.
     let originate = Originate::application(
         Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
+        // The switch dials this, so the family is the one it reaches us on;
+        // the listener above takes either.
         Application::new(
             "socket",
             Some(format!("127.0.0.1:{outbound_port} async full")),

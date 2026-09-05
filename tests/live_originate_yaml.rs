@@ -18,8 +18,6 @@ use live_common::{channel_exists, connect, getvar, wait_for_var, ChannelReaper};
 use std::time::Duration;
 use tokio::time::Instant;
 
-// --- L12: YAML-configured loopback originate (see docs/originate-loopback-yaml.md) ---
-
 /// The same YAML the example and the docs use, so a drift in any of the three
 /// breaks the build rather than only the prose.
 const LOOPBACK_YAML: &str = include_str!("../examples/originate_loopback.yaml");

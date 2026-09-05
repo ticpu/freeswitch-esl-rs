@@ -158,8 +158,6 @@ async fn live_channel_timetable_on_create() {
     assert_eq!(tt.hungup, Some(0), "hungup should be 0 at create");
 }
 
-// --- L6: Command builder verification against real FS ---
-
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_uuid_setvar_getvar_round_trip() {

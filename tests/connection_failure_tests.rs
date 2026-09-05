@@ -502,8 +502,6 @@ async fn test_command_timeout_cleanup() {
     assert!(result.is_ok());
 }
 
-// --- Finding 1: stale reply discard after timeout ---
-
 #[tokio::test]
 async fn timeout_stale_reply_does_not_corrupt_next_command() {
     // Regression: before the stale-reply counter fix, the server's late reply

@@ -51,8 +51,6 @@ async fn live_connect_and_status() {
     assert!(body.contains("UP"), "expected UP in status: {}", body);
 }
 
-// --- L2: Liveness detection live tests ---
-
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_liveness_heartbeat_resets_timer() {
@@ -93,8 +91,6 @@ async fn live_liveness_heartbeat_resets_timer() {
     );
 }
 
-// --- L3: Command timeout live tests ---
-
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_command_timeout_msleep() {
@@ -130,8 +126,6 @@ async fn live_command_timeout_msleep() {
         resp
     );
 }
-
-// --- L7: Connection lifecycle tests ---
 
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]

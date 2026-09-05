@@ -117,8 +117,6 @@ async fn test_concurrent_command_and_events() {
     assert_eq!(event.event_type(), Some(EslEventType::ChannelCreate));
 }
 
-// --- T3: Concurrent command test ---
-
 #[tokio::test]
 async fn test_concurrent_api_commands() {
     let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
@@ -267,8 +265,6 @@ async fn test_url_decoded_headers() {
     );
 }
 
-// --- T4: Event overflow/QueueFull notification test ---
-
 #[tokio::test]
 async fn test_event_overflow_queue_full() {
     let options = EslConnectOptions::new().with_event_queue_size(2);
@@ -326,8 +322,6 @@ async fn test_event_overflow_queue_full() {
         "dropped_event_count should be > 0"
     );
 }
-
-// --- T6: Event queue size 0 clamped to 1 ---
 
 #[tokio::test]
 async fn test_event_queue_size_zero_clamped() {

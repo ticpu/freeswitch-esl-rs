@@ -343,8 +343,6 @@ async fn live_api_err_body() {
     );
 }
 
-// --- L11: Repeating SIP header round-trip tests ---
-
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_sendevent_comma_separated_sip_header() {
@@ -437,8 +435,6 @@ async fn live_sendevent_repeated_diversion_header() {
     );
 }
 
-// --- L4: Event filter live tests ---
-
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_filter_event_name() {
@@ -522,8 +518,6 @@ async fn live_filter_event_name() {
     panic!("BACKGROUND_JOB not received after filter_delete");
 }
 
-// --- L8: sendevent UUID in response ---
-
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_sendevent_returns_event_uuid() {
@@ -553,8 +547,6 @@ async fn live_sendevent_returns_event_uuid() {
         uuid
     );
 }
-
-// --- L9: bgapi correlation ---
 
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
@@ -635,8 +627,6 @@ async fn live_bgapi_correlation() {
         expected
     );
 }
-
-// --- L10: bgapi single round-trip ---
 
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
