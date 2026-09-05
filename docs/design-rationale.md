@@ -657,13 +657,13 @@ would hide a transport distinction that callers need to reason about.
 ### EslHeaders: making the transport boundary visible
 
 The clean solution was a newtype. [`EslHeaders`](../freeswitch-types/src/variables/esl_headers.rs)
-wraps `IndexMap<String, String>` and overrides every `SipHeaderLookup`
-default that parses a list-valued header — the ones sip-header itself marks
-multi-valued — to peel the FreeSWITCH encoding (`ARRAY::` splitting and
-`[...]` bracket stripping) through one splitter before handing entries to the
-RFC parsers. Overriding a named few leaves the rest failing on the same wire
-value the crate knows is ARRAY-encoded, so the set is the predicate, not a
-list. Raw lookups (`sip_header_str`) return the stored value untouched, so
+wraps `IndexMap<String, String>` and overrides one `SipHeaderLookup` method,
+the multi-occurrence lookup every list-valued default in sip-header reads
+through, to peel the FreeSWITCH encoding (`ARRAY::` splitting and `[...]`
+bracket stripping) for the headers sip-header itself marks multi-valued.
+Overriding a named few parsers instead leaves the rest failing on the same
+wire value the crate knows is ARRAY-encoded, so the seam is the predicate, not
+a list. Raw lookups (`sip_header_str`) return the stored value untouched, so
 callers who want the wire form see exactly what FreeSWITCH sent. `EslEvent` and
 `EslResponse` are carriers around an `EslHeaders`; there is no second store.
 

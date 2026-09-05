@@ -317,24 +317,6 @@ impl EslHeaders {
         }
     }
 
-    /// Parse a FreeSWITCH-transported `Contact` value into typed entries,
-    /// handling both `ARRAY::` encoding and bracket wrapping.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ParseSipHeaderAddrError`](sip_header::ParseSipHeaderAddrError)
-    /// when an entry is not a name-addr, an addr-spec or the `*` wildcard.
-    #[doc(hidden)]
-    pub fn parse_contact(
-        value: &str,
-    ) -> Result<Vec<sip_header::ContactValue>, sip_header::ParseSipHeaderAddrError> {
-        let mut contacts = Vec::new();
-        for entry in entries_or_whole(value) {
-            contacts.extend(sip_header::contact::parse_contact_list(entry)?);
-        }
-        Ok(contacts)
-    }
-
     /// Parse a FreeSWITCH-transported `History-Info` value into a typed
     /// [`HistoryInfo`], handling both `ARRAY::` encoding and bracket wrapping.
     ///
@@ -355,52 +337,16 @@ impl EslHeaders {
     }
 }
 
-/// Internal: emits the [`SipHeaderLookup`] method overrides that peel
-/// FreeSWITCH's ARRAY and bracket encoding before RFC parsing — one for
-/// `sip_header_all_str`, which every list-valued default routes through, plus
-/// one per default that reads a single value instead. Invoke inside an
+/// Internal: emits the one [`SipHeaderLookup`] override that peels
+/// FreeSWITCH's ARRAY and bracket encoding, `sip_header_all_str`, which every
+/// list-valued default routes through. Invoke inside an
 /// `impl SipHeaderLookup for T` block. Not part of the stable API.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! esl_sip_header_overrides {
-    (@uri_info $method:ident, $header:ident) => {
-        fn $method(
-            &self,
-        ) -> Result<Option<$crate::sip_header::UriInfo>, $crate::sip_header::UriInfoError> {
-            match self.sip_header($crate::sip_header::SipHeader::$header) {
-                Some(s) => $crate::variables::EslHeaders::parse_uri_info(s).map(Some),
-                None => Ok(None),
-            }
-        }
-    };
     () => {
         fn sip_header_all_str<'a>(&'a self, name: &str) -> Vec<&'a str> {
             $crate::variables::EslHeaders::split_multi_value(self.sip_header_str(name), name)
-        }
-
-        $crate::esl_sip_header_overrides!(@uri_info call_info, CallInfo);
-        $crate::esl_sip_header_overrides!(@uri_info alert_info, AlertInfo);
-        $crate::esl_sip_header_overrides!(@uri_info error_info, ErrorInfo);
-
-        fn history_info(
-            &self,
-        ) -> Result<Option<$crate::sip_header::HistoryInfo>, $crate::sip_header::HistoryInfoError> {
-            match self.sip_header($crate::sip_header::SipHeader::HistoryInfo) {
-                Some(s) => $crate::variables::EslHeaders::parse_history_info(s).map(Some),
-                None => Ok(None),
-            }
-        }
-
-        fn contact(
-            &self,
-        ) -> Result<
-            Vec<$crate::sip_header::ContactValue>,
-            $crate::sip_header::ParseSipHeaderAddrError,
-        > {
-            match self.sip_header($crate::sip_header::SipHeader::Contact) {
-                Some(s) => $crate::variables::EslHeaders::parse_contact(s),
-                None => Ok(Vec::new()),
-            }
         }
     };
 }
@@ -545,7 +491,37 @@ mod tests {
             "Contact",
             "ARRAY::<sip:a@192.0.2.1>;expires=60|:<sip:b@192.0.2.2>",
         );
+        h.insert(
+            "Via",
+            "ARRAY::SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bK1|:SIP/2.0/TCP 192.0.2.2;branch=z9hG4bK2",
+        );
+        h.insert(
+            "Warning",
+            "ARRAY::370 192.0.2.1 \"Insufficient bandwidth\"|:399 192.0.2.2 \"Misc, warning\"",
+        );
+        h.insert("Accept", "ARRAY::application/sdp|:text/plain;q=0.5");
 
+        assert_eq!(
+            h.via()
+                .expect("ARRAY value must decode")
+                .expect("header is present")
+                .len(),
+            2
+        );
+        assert_eq!(
+            h.warning()
+                .expect("ARRAY value must decode")
+                .expect("header is present")
+                .len(),
+            2
+        );
+        assert_eq!(
+            h.accept()
+                .expect("ARRAY value must decode")
+                .expect("header is present")
+                .len(),
+            2
+        );
         assert_eq!(
             h.p_asserted_identity()
                 .expect("ARRAY value must decode")
