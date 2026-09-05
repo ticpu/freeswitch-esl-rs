@@ -623,7 +623,7 @@ mod tests {
     async fn write_failure_clears_pending_waiting() {
         use tokio::io::AsyncWriteExt;
 
-        let listener = TcpListener::bind("127.0.0.1:0")
+        let listener = TcpListener::bind("[::1]:0")
             .await
             .unwrap();
         let addr = listener
@@ -690,30 +690,5 @@ mod tests {
                 result.err()
             );
         }
-    }
-
-    #[tokio::test]
-    async fn test_connection_mode() {
-        assert_eq!(ConnectionMode::Inbound, ConnectionMode::Inbound);
-        assert_ne!(ConnectionMode::Inbound, ConnectionMode::Outbound);
-    }
-
-    #[tokio::test]
-    async fn test_connection_status_eq() {
-        assert_eq!(ConnectionStatus::Connected, ConnectionStatus::Connected);
-        assert_eq!(
-            ConnectionStatus::Disconnected(DisconnectReason::ServerNotice {
-                controlled_session_uuid: None,
-                body: None,
-            }),
-            ConnectionStatus::Disconnected(DisconnectReason::ServerNotice {
-                controlled_session_uuid: None,
-                body: None,
-            })
-        );
-        assert_ne!(
-            ConnectionStatus::Connected,
-            ConnectionStatus::Disconnected(DisconnectReason::ConnectionClosed)
-        );
     }
 }

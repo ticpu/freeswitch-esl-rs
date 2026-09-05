@@ -572,36 +572,127 @@ mod tests {
         assert!(cmd.contains("test body"));
     }
 
+    /// Every command whose wire form is one line with no body.
     #[test]
-    fn test_esl_commands() {
-        let auth = EslCommand::Auth {
-            password: Secret("test".to_string()),
-        };
-        assert_eq!(
-            auth.to_wire_format()
-                .unwrap(),
-            "auth test\n\n"
-        );
+    fn single_line_wire_formats() {
+        let cases: &[(EslCommand, &str)] = &[
+            (
+                EslCommand::Auth {
+                    password: Secret::new("test"),
+                },
+                "auth test\n\n",
+            ),
+            (
+                EslCommand::UserAuth {
+                    user: "admin@default".to_string(),
+                    password: Secret::new("secret123"),
+                },
+                "userauth admin@default:secret123\n\n",
+            ),
+            (
+                EslCommand::Api {
+                    command: "status".to_string(),
+                },
+                "api status\n\n",
+            ),
+            (
+                EslCommand::BgApi {
+                    command: "status".to_string(),
+                },
+                "bgapi status\n\n",
+            ),
+            (
+                EslCommand::Events {
+                    format: "plain".to_string(),
+                    events: "ALL".to_string(),
+                },
+                "event plain ALL\n\n",
+            ),
+            (
+                EslCommand::Filter {
+                    header: "Event-Name".to_string(),
+                    value: "CHANNEL_CREATE".to_string(),
+                },
+                "filter Event-Name CHANNEL_CREATE\n\n",
+            ),
+            (
+                EslCommand::MyEvents {
+                    format: "plain".to_string(),
+                    uuid: None,
+                },
+                "myevents plain\n\n",
+            ),
+            (
+                EslCommand::MyEvents {
+                    format: "json".to_string(),
+                    uuid: Some("abc-123".to_string()),
+                },
+                "myevents abc-123 json\n\n",
+            ),
+            (EslCommand::Linger { timeout: None }, "linger\n\n"),
+            (
+                EslCommand::Linger {
+                    timeout: Some(Duration::from_secs(600)),
+                },
+                "linger 600\n\n",
+            ),
+            (EslCommand::NoLinger, "nolinger\n\n"),
+            (EslCommand::Resume, "resume\n\n"),
+            (
+                EslCommand::NixEvent {
+                    events: "CHANNEL_CREATE CHANNEL_DESTROY".to_string(),
+                },
+                "nixevent CHANNEL_CREATE CHANNEL_DESTROY\n\n",
+            ),
+            (EslCommand::NoEvents, "noevents\n\n"),
+            (
+                EslCommand::FilterDelete {
+                    header: "Event-Name".to_string(),
+                    value: None,
+                },
+                "filter delete Event-Name\n\n",
+            ),
+            (
+                EslCommand::FilterDelete {
+                    header: "Event-Name".to_string(),
+                    value: Some("CHANNEL_CREATE".to_string()),
+                },
+                "filter delete Event-Name CHANNEL_CREATE\n\n",
+            ),
+            (
+                EslCommand::DivertEvents { on: true },
+                "divert_events on\n\n",
+            ),
+            (
+                EslCommand::DivertEvents { on: false },
+                "divert_events off\n\n",
+            ),
+            (
+                EslCommand::GetVar {
+                    name: "caller_id_name".to_string(),
+                },
+                "getvar caller_id_name\n\n",
+            ),
+            (
+                EslCommand::Log {
+                    level: "debug".to_string(),
+                },
+                "log debug\n\n",
+            ),
+            (EslCommand::NoLog, "nolog\n\n"),
+            (EslCommand::NoOp, "noop\n\n"),
+            (EslCommand::Exit, "exit\n\n"),
+            (EslCommand::Connect, "connect\n\n"),
+        ];
 
-        let api = EslCommand::Api {
-            command: "status".to_string(),
-        };
-        assert_eq!(
-            api.to_wire_format()
-                .unwrap(),
-            "api status\n\n"
-        );
-
-        let events = EslCommand::Events {
-            format: "plain".to_string(),
-            events: "ALL".to_string(),
-        };
-        assert_eq!(
-            events
-                .to_wire_format()
-                .unwrap(),
-            "event plain ALL\n\n"
-        );
+        for (cmd, expected) in cases {
+            assert_eq!(
+                cmd.to_wire_format()
+                    .unwrap(),
+                *expected,
+                "{cmd:?}"
+            );
+        }
     }
 
     #[test]
@@ -657,74 +748,6 @@ mod tests {
     }
 
     #[test]
-    fn test_myevents_wire_format() {
-        let cmd = EslCommand::MyEvents {
-            format: "plain".to_string(),
-            uuid: None,
-        };
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "myevents plain\n\n"
-        );
-    }
-
-    #[test]
-    fn test_myevents_uuid_wire_format() {
-        let cmd = EslCommand::MyEvents {
-            format: "json".to_string(),
-            uuid: Some("abc-123".to_string()),
-        };
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "myevents abc-123 json\n\n"
-        );
-    }
-
-    #[test]
-    fn test_linger_wire_format() {
-        let cmd = EslCommand::Linger { timeout: None };
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "linger\n\n"
-        );
-    }
-
-    #[test]
-    fn test_linger_timeout_wire_format() {
-        let cmd = EslCommand::Linger {
-            timeout: Some(Duration::from_secs(600)),
-        };
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "linger 600\n\n"
-        );
-    }
-
-    #[test]
-    fn test_nolinger_wire_format() {
-        let cmd = EslCommand::NoLinger;
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "nolinger\n\n"
-        );
-    }
-
-    #[test]
-    fn test_resume_wire_format() {
-        let cmd = EslCommand::Resume;
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "resume\n\n"
-        );
-    }
-
-    #[test]
     fn test_sendevent_wire_format() {
         let mut event = EslEvent::with_type(EslEventType::Custom);
         event.set_header("Event-Name", "CUSTOM");
@@ -757,54 +780,6 @@ mod tests {
         assert!(wire.ends_with("hello world"));
     }
 
-    #[test]
-    fn test_nixevent_wire_format() {
-        let cmd = EslCommand::NixEvent {
-            events: "CHANNEL_CREATE CHANNEL_DESTROY".to_string(),
-        };
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "nixevent CHANNEL_CREATE CHANNEL_DESTROY\n\n"
-        );
-    }
-
-    #[test]
-    fn test_noevents_wire_format() {
-        let cmd = EslCommand::NoEvents;
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "noevents\n\n"
-        );
-    }
-
-    #[test]
-    fn test_filter_delete_wire_format() {
-        let cmd = EslCommand::FilterDelete {
-            header: "Event-Name".to_string(),
-            value: None,
-        };
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "filter delete Event-Name\n\n"
-        );
-    }
-
-    #[test]
-    fn test_filter_delete_value_wire_format() {
-        let cmd = EslCommand::FilterDelete {
-            header: "Event-Name".to_string(),
-            value: Some("CHANNEL_CREATE".to_string()),
-        };
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "filter delete Event-Name CHANNEL_CREATE\n\n"
-        );
-    }
-
     /// The special-cased header and the dedicated variant emit one wire form;
     /// both are pinned here so a change to either shows as a diff on the other.
     #[test]
@@ -824,47 +799,6 @@ mod tests {
                 .to_wire_format()
                 .unwrap(),
             "filter delete all\n\n"
-        );
-    }
-
-    #[test]
-    fn test_divert_events_wire_format() {
-        let cmd_on = EslCommand::DivertEvents { on: true };
-        assert_eq!(
-            cmd_on
-                .to_wire_format()
-                .unwrap(),
-            "divert_events on\n\n"
-        );
-
-        let cmd_off = EslCommand::DivertEvents { on: false };
-        assert_eq!(
-            cmd_off
-                .to_wire_format()
-                .unwrap(),
-            "divert_events off\n\n"
-        );
-    }
-
-    #[test]
-    fn test_getvar_wire_format() {
-        let cmd = EslCommand::GetVar {
-            name: "caller_id_name".to_string(),
-        };
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "getvar caller_id_name\n\n"
-        );
-    }
-
-    #[test]
-    fn test_connect_wire_format() {
-        let cmd = EslCommand::Connect;
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "connect\n\n"
         );
     }
 
@@ -936,21 +870,6 @@ mod tests {
         assert!(!debug_str.contains("secret"));
         assert!(debug_str.contains("admin@default"));
         assert!(debug_str.contains("REDACTED"));
-    }
-
-    // --- T6: user_auth wire format ---
-
-    #[test]
-    fn test_user_auth_wire_format() {
-        let cmd = EslCommand::UserAuth {
-            user: "admin@default".to_string(),
-            password: Secret("secret123".to_string()),
-        };
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "userauth admin@default:secret123\n\n"
-        );
     }
 
     #[test]
