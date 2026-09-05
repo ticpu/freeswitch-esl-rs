@@ -320,10 +320,26 @@ impl Endpoint {
                 .variables()
                 .is_none()
             {
-                return Err(OriginateError::VariablesNotSupported);
+                return Err(OriginateError::VariablesNotSupported(endpoint.kind()));
             }
         }
         Ok(endpoint)
+    }
+
+    /// The module name this variant renders, for diagnostics.
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Sofia(_) => "sofia",
+            Self::SofiaGateway(_) => "sofia gateway",
+            Self::Loopback(_) => "loopback",
+            Self::User(_) => "user",
+            Self::SofiaContact(_) => "sofia_contact",
+            Self::GroupCall(_) => "group_call",
+            Self::Error(_) => "error",
+            Self::PortAudio(_) => "portaudio",
+            Self::PulseAudio(_) => "pulseaudio",
+            Self::Alsa(_) => "alsa",
+        }
     }
 
     /// Dispatch on the module prefix of a dial string whose variable block has
@@ -519,10 +535,10 @@ mod tests {
     #[test]
     fn a_block_on_an_endpoint_that_cannot_hold_one_is_refused() {
         for carrier in [DialStringCarrier::EslApi, DialStringCarrier::Dialplan] {
-            assert!(
-                Endpoint::parse_for("{a=b}error/USER_BUSY", carrier).is_err(),
-                "accepted at {carrier:?}"
-            );
+            let msg = Endpoint::parse_for("{a=b}error/USER_BUSY", carrier)
+                .expect_err(&format!("accepted at {carrier:?}"))
+                .to_string();
+            assert!(msg.contains("error"), "does not name the type: {msg}");
         }
         assert!("{a=b}error/USER_BUSY"
             .parse::<Endpoint>()

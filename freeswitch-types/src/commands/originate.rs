@@ -635,8 +635,8 @@ pub enum OriginateError {
     /// Extension target cannot use inline dialplan.
     ExtensionWithInlineDialplan,
     /// A dial string carried a variable block for an endpoint type that has
-    /// nowhere to keep it, such as `error/`.
-    VariablesNotSupported,
+    /// nowhere to keep it, such as `error/`. Carries that type's name.
+    VariablesNotSupported(&'static str),
     /// The timeout argument is not a whole number of seconds.
     InvalidTimeout {
         /// The rejected token.
@@ -675,8 +675,8 @@ impl std::fmt::Display for OriginateError {
             Self::ExtensionWithInlineDialplan => {
                 f.write_str("extension target is incompatible with inline dialplan")
             }
-            Self::VariablesNotSupported => {
-                f.write_str("this endpoint type carries no variable block")
+            Self::VariablesNotSupported(kind) => {
+                write!(f, "a {kind} endpoint carries no variable block")
             }
             Self::InvalidTimeout { value, .. } => write!(
                 f,
@@ -708,7 +708,7 @@ impl std::error::Error for OriginateError {
             | Self::ParseError(_)
             | Self::EmptyInlineApplications
             | Self::ExtensionWithInlineDialplan
-            | Self::VariablesNotSupported
+            | Self::VariablesNotSupported(_)
             | Self::UnknownEndpointType(_) => None,
         }
     }
