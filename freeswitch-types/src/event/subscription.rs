@@ -919,6 +919,32 @@ mod tests {
     }
 
     #[test]
+    fn error_display_names_the_character_class_only() {
+        let err = EventSubscription::new(EventFormat::Plain)
+            .custom_subclass("bad subclass")
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "event subscription token contains a space (12 bytes)"
+        );
+        assert_eq!(err.0, "bad subclass");
+
+        let err = EventSubscription::new(EventFormat::Plain)
+            .custom_subclass("")
+            .unwrap_err();
+        assert_eq!(err.to_string(), "event subscription token is empty");
+
+        let err = EventSubscription::new(EventFormat::Plain)
+            .filter_raw("Header", "val\n")
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "event subscription token contains a newline (4 bytes)"
+        );
+        assert_eq!(err.0, "val\n");
+    }
+
+    #[test]
     fn custom_subclass_rejects_space() {
         let result = EventSubscription::new(EventFormat::Plain).custom_subclass("bad subclass");
         assert!(result.is_err());
