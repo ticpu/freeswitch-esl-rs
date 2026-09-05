@@ -297,36 +297,8 @@ pub(super) fn fmtp_param<'a>(fmtp: &'a str, key: &str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::sdp::{SdpCodec, SdpCodecEntry, SdpCodecs, SdpWarning};
-
-    // --- helpers ---
-
-    fn sdp_header() -> String {
-        "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=-\r\nt=0 0\r\n".to_string()
-    }
-
-    fn rtp_codec<'a>(entries: impl IntoIterator<Item = &'a SdpCodecEntry>) -> Vec<&'a SdpCodec> {
-        entries
-            .into_iter()
-            .filter_map(|e| {
-                if let SdpCodecEntry::Rtp(c) = e {
-                    Some(c)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    fn codec_named<'a>(entries: &[&'a SdpCodec], name: &str) -> Option<&'a SdpCodec> {
-        entries
-            .iter()
-            .find(|c| {
-                c.name()
-                    .eq_ignore_ascii_case(name)
-            })
-            .copied()
-    }
+    use super::super::testutil::{codec_named, rtp_codec, sdp_header};
+    use crate::sdp::{SdpCodecs, SdpWarning};
 
     // --- RFC 3551 quirk ---
 

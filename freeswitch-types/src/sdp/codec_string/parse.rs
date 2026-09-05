@@ -464,7 +464,7 @@ mod tests {
         assert_eq!(cs.entries()[0].rate(), Some(8000));
     }
 
-    // --- Fix 2: split_codec_string must mirror cleanup_separated_string ---
+    // --- the split mirrors cleanup_separated_string ---
 
     #[test]
     fn leading_space_after_comma_is_stripped() {

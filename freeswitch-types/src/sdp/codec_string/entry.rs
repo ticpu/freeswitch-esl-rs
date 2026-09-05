@@ -641,49 +641,28 @@ mod tests {
         }
     }
 
-    // --- Fix 1: delimiter chars are rejected in names and modnames ---
+    // --- grammar delimiters are rejected in names and modnames ---
 
     #[test]
-    fn name_with_comma_is_rejected() {
-        assert!(CodecStringEntry::new("PC,MU").is_err());
-        let err = CodecStringEntry::new("PC,MU").unwrap_err();
-        assert!(matches!(err, CodecStringError::InvalidCharInName { .. }));
-    }
-
-    #[test]
-    fn name_with_at_is_rejected() {
-        let err = CodecStringEntry::new("bad@name").unwrap_err();
-        assert!(matches!(err, CodecStringError::InvalidCharInName { .. }));
-    }
-
-    #[test]
-    fn name_with_tilde_is_rejected() {
-        let err = CodecStringEntry::new("bad~name").unwrap_err();
-        assert!(matches!(err, CodecStringError::InvalidCharInName { .. }));
-    }
-
-    #[test]
-    fn name_with_dot_is_rejected() {
-        let err = CodecStringEntry::new("bad.name").unwrap_err();
-        assert!(matches!(err, CodecStringError::InvalidCharInName { .. }));
-    }
-
-    #[test]
-    fn name_with_backslash_is_rejected() {
-        let err = CodecStringEntry::new("bad\\name").unwrap_err();
-        assert!(matches!(err, CodecStringError::InvalidCharInName { .. }));
-    }
-
-    #[test]
-    fn name_with_quote_is_rejected() {
-        let err = CodecStringEntry::new("bad'name").unwrap_err();
-        assert!(matches!(err, CodecStringError::InvalidCharInName { .. }));
-    }
-
-    #[test]
-    fn name_with_space_is_rejected() {
-        let err = CodecStringEntry::new("bad name").unwrap_err();
-        assert!(matches!(err, CodecStringError::InvalidCharInName { .. }));
+    fn name_with_a_grammar_delimiter_is_rejected() {
+        // A name is emitted unescaped, so `PC,MU` would re-parse as two entries.
+        for name in &[
+            "PC,MU",
+            "bad@name",
+            "bad~name",
+            "bad.name",
+            "bad\\name",
+            "bad'name",
+            "bad name",
+        ] {
+            assert!(
+                matches!(
+                    CodecStringEntry::new(*name).unwrap_err(),
+                    CodecStringError::InvalidCharInName { .. }
+                ),
+                "{name:?} must be rejected"
+            );
+        }
     }
 
     #[test]
@@ -695,13 +674,6 @@ mod tests {
             result.unwrap_err(),
             CodecStringError::InvalidCharInName { .. }
         ));
-    }
-
-    #[test]
-    fn name_injection_does_not_roundtrip() {
-        // "PC,MU" must be rejected so the Display output cannot produce two entries
-        // when re-parsed. If this passes through, parse("PC,MU") produces ["PC","MU"].
-        assert!(CodecStringEntry::new("PC,MU").is_err());
     }
 
     #[test]
@@ -785,7 +757,7 @@ mod tests {
         assert_eq!(e.ptime(), Some(20));
     }
 
-    // --- Defect 1: parse_entry must reject newlines in fmtp ---
+    // --- a parsed fmtp goes through the same validation as a set one ---
 
     #[test]
     fn parse_entry_fmtp_with_newline_is_rejected() {
@@ -805,7 +777,7 @@ mod tests {
         );
     }
 
-    // --- Defect 2: fallible setters replace unsafe _mut() accessors ---
+    // --- the setters validate, and leave the entry unchanged when they refuse ---
 
     #[test]
     fn set_fmtp_with_at_is_rejected() {
@@ -876,19 +848,15 @@ mod tests {
             .is_none());
     }
 
-    // --- Fix 4: channels must not silently truncate ---
+    // --- a channel count wider than a u8 ---
 
     #[test]
-    fn channels_u8_overflow_is_not_truncated() {
-        // 300 as u8 = 44; the bug is the "as u8" cast. After widening to u32 this roundtrips.
+    fn channels_above_u8_are_not_truncated() {
+        // FreeSWITCH reads the qualifier with atoi into a uint32_t; 300 must stay 300.
         let cs: CodecString = "PCMU@300c"
             .parse()
             .unwrap();
-        assert_eq!(
-            cs.entries()[0].channels(),
-            Some(300),
-            "channels=300 must not be truncated to 44"
-        );
+        assert_eq!(cs.entries()[0].channels(), Some(300));
     }
 
     #[test]
@@ -912,7 +880,7 @@ mod tests {
         assert_eq!(cs.entries()[0].channels(), Some(300));
     }
 
-    // --- Step 3: FromStr for CodecStringEntry ---
+    // --- FromStr for a single entry ---
 
     #[test]
     fn entry_from_str_basic_roundtrip() {
@@ -958,57 +926,28 @@ mod tests {
         );
     }
 
-    // --- Step 3: clear_* methods ---
+    // --- clearing a qualifier ---
 
     #[test]
-    fn clear_rate_sets_none() {
-        let mut entry = CodecStringEntry::new("PCMU")
-            .unwrap()
-            .with_rate(8000);
-        assert_eq!(entry.rate(), Some(8000));
-        entry.clear_rate();
-        assert!(entry
-            .rate()
-            .is_none());
+    #[allow(clippy::type_complexity)]
+    fn clear_methods_drop_their_qualifier() {
+        let cases: &[(&str, &dyn Fn(&mut CodecStringEntry))] = &[
+            ("PCMU@8000h", &|e| e.clear_rate()),
+            ("PCMU@20i", &|e| e.clear_ptime()),
+            ("PCMU@64000b", &|e| e.clear_bitrate()),
+            ("PCMU@1c", &|e| e.clear_channels()),
+        ];
+        for (input, clear) in cases {
+            let mut entry: CodecStringEntry = input
+                .parse()
+                .unwrap();
+            assert_eq!(entry.to_string(), *input);
+            clear(&mut entry);
+            assert_eq!(entry.to_string(), "PCMU", "{input:?} was not cleared");
+        }
     }
 
-    #[test]
-    fn clear_ptime_sets_none() {
-        let mut entry = CodecStringEntry::new("PCMU")
-            .unwrap()
-            .with_ptime(20);
-        assert_eq!(entry.ptime(), Some(20));
-        entry.clear_ptime();
-        assert!(entry
-            .ptime()
-            .is_none());
-    }
-
-    #[test]
-    fn clear_bitrate_sets_none() {
-        let mut entry = CodecStringEntry::new("PCMU")
-            .unwrap()
-            .with_bitrate(64000);
-        assert_eq!(entry.bitrate(), Some(64000));
-        entry.clear_bitrate();
-        assert!(entry
-            .bitrate()
-            .is_none());
-    }
-
-    #[test]
-    fn clear_channels_sets_none() {
-        let mut entry = CodecStringEntry::new("PCMU")
-            .unwrap()
-            .with_channels(1);
-        assert_eq!(entry.channels(), Some(1));
-        entry.clear_channels();
-        assert!(entry
-            .channels()
-            .is_none());
-    }
-
-    // --- Step 5: simplify() ---
+    // --- simplify() ---
 
     #[test]
     fn simplify_pcmu_full_qualifiers() {

@@ -287,37 +287,9 @@ fn resolve_ptime_bitrate(
 
 #[cfg(test)]
 mod tests {
+    use super::super::testutil::{codec_named, rtp_codec, sdp_header};
     use super::*;
     use crate::sdp::{CodecStringOptions, SdpCodecs, SdpMediaType, SdpWarning};
-
-    // --- helpers ---
-
-    fn sdp_header() -> String {
-        "v=0\r\no=- 0 0 IN IP4 192.0.2.1\r\ns=-\r\nt=0 0\r\n".to_string()
-    }
-
-    fn rtp_codec<'a>(entries: impl IntoIterator<Item = &'a SdpCodecEntry>) -> Vec<&'a SdpCodec> {
-        entries
-            .into_iter()
-            .filter_map(|e| {
-                if let SdpCodecEntry::Rtp(c) = e {
-                    Some(c)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    fn codec_named<'a>(entries: &[&'a SdpCodec], name: &str) -> Option<&'a SdpCodec> {
-        entries
-            .iter()
-            .find(|c| {
-                c.name()
-                    .eq_ignore_ascii_case(name)
-            })
-            .copied()
-    }
 
     // --- retained sections ---
 
@@ -580,26 +552,6 @@ mod tests {
     // --- malformed section handling ---
 
     #[test]
-    fn a_malformed_section_is_retained_beside_its_warning() {
-        let sdp = format!(
-            "{}m=audio 5004 RTP/AVP 0\r\na=rtpmap:x PCMU/8000\r\n",
-            sdp_header()
-        );
-        let codecs = SdpCodecs::parse(&sdp).unwrap();
-        assert_eq!(
-            codecs
-                .warnings()
-                .len(),
-            1
-        );
-        let section = &codecs.sections()[0];
-        assert!(section
-            .entries()
-            .is_empty());
-        assert_eq!(section.port(), 5004);
-    }
-
-    #[test]
     fn a_non_negotiable_section_still_reports_its_parse_warnings() {
         // These sections are parsed rather than skipped, so they warn where the
         // switch, which never looks at them, has no occasion to.
@@ -614,10 +566,9 @@ mod tests {
     }
 
     #[test]
-    fn malformed_rtpmap_non_numeric_pt_skips_section_with_warning() {
-        // The section-level breakage (bad a=rtpmap) drops the whole section,
-        // including the otherwise-fine static PCMU payload type it shares a
-        // section with — there is no per-attribute recovery, only per-section.
+    fn malformed_rtpmap_empties_its_section_but_the_section_survives() {
+        // Recovery is per-section, not per-attribute: the otherwise-fine static PCMU
+        // goes with the bad a=rtpmap. The section itself is still reported.
         let sdp = format!(
             "{}m=audio 5004 RTP/AVP 0\r\na=rtpmap:x PCMU/8000\r\n",
             sdp_header()
@@ -627,8 +578,7 @@ mod tests {
             codecs
                 .entries()
                 .count(),
-            0,
-            "the whole malformed section must be skipped, not just the bad attribute"
+            0
         );
         assert_eq!(
             codecs
@@ -640,6 +590,12 @@ mod tests {
             codecs.warnings()[0],
             SdpWarning::MalformedMediaSection { .. }
         ));
+
+        let section = &codecs.sections()[0];
+        assert_eq!(section.port(), 5004);
+        assert!(section
+            .entries()
+            .is_empty());
     }
 
     #[test]

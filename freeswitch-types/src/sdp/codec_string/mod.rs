@@ -607,7 +607,7 @@ mod tests {
         ));
     }
 
-    // --- Step 5: dedup() ---
+    // --- dedup() ---
 
     fn dedup(s: &str) -> CodecString {
         let mut cs: CodecString = s
@@ -677,88 +677,39 @@ mod tests {
     }
 
     #[test]
-    fn dedup_ilbc_ptime_default_30() {
-        // iLBC defaults to 30 ms; iLBC and iLBC@30i are duplicates, iLBC@20i is distinct.
-        let cs_same = dedup("iLBC,iLBC@30i");
-        assert_eq!(cs_same.len(), 1);
-        let cs_diff = dedup("iLBC,iLBC@20i");
-        assert_eq!(cs_diff.len(), 2);
+    fn a_bare_name_and_its_own_defaults_are_one_entry() {
+        // The qualifier the default table already implies adds nothing to the key.
+        for input in &[
+            "iLBC,iLBC@30i",
+            "isac,isac@30i",
+            "G723,G723@30i",
+            "opus,opus@48000h",
+            "H264,H264@90000h",
+            "h263,h263@90000h",
+            "VP8,VP8@90000h",
+            // switch_default_rate answers 8000 for G.722, not its 16 kHz clock.
+            "G722,G722@8000h",
+            "t38,t38@8000h@20i",
+            "PCMU,pcmu",
+            "PCMU,PCMU@1c",
+            // Channels 0 normalizes to 1 for the key, as the C does.
+            "PCMU,PCMU@0c",
+        ] {
+            assert_eq!(dedup(input).len(), 1, "{input:?} must collapse");
+        }
     }
 
     #[test]
-    fn dedup_isac_ptime_default_30() {
-        let cs_same = dedup("isac,isac@30i");
-        assert_eq!(cs_same.len(), 1);
-        let cs_diff = dedup("isac,isac@20i");
-        assert_eq!(cs_diff.len(), 2);
-    }
-
-    #[test]
-    fn dedup_g723_ptime_default_30() {
-        let cs_same = dedup("G723,G723@30i");
-        assert_eq!(cs_same.len(), 1);
-        let cs_diff = dedup("G723,G723@20i");
-        assert_eq!(cs_diff.len(), 2);
-    }
-
-    #[test]
-    fn dedup_opus_rate_48k() {
-        let cs_same = dedup("opus,opus@48000h");
-        assert_eq!(cs_same.len(), 1);
-        let cs_diff = dedup("opus,opus@8000h");
-        assert_eq!(cs_diff.len(), 2);
-    }
-
-    #[test]
-    fn dedup_h264_rate_90k() {
-        let cs_same = dedup("H264,H264@90000h");
-        assert_eq!(cs_same.len(), 1);
-    }
-
-    #[test]
-    fn dedup_h263_rate_90k() {
-        let cs_same = dedup("h263,h263@90000h");
-        assert_eq!(cs_same.len(), 1);
-    }
-
-    #[test]
-    fn dedup_vp8_rate_90k() {
-        let cs_same = dedup("VP8,VP8@90000h");
-        assert_eq!(cs_same.len(), 1);
-    }
-
-    #[test]
-    fn dedup_case_insensitive_name() {
-        let cs = dedup("PCMU,pcmu");
-        assert_eq!(cs.len(), 1);
-    }
-
-    #[test]
-    fn dedup_g722_rate_is_8000_not_16000() {
-        // default_rate("G722") = 8000 per switch_default_rate; so G722 and G722@8000h are dups.
-        let cs_same = dedup("G722,G722@8000h");
-        assert_eq!(cs_same.len(), 1);
-    }
-
-    #[test]
-    fn dedup_channels_0_normalizes_to_1() {
-        let cs = dedup("PCMU,PCMU@1c");
-        assert_eq!(cs.len(), 1);
-        let cs2 = dedup("PCMU,PCMU@0c");
-        assert_eq!(cs2.len(), 1);
-    }
-
-    #[test]
-    fn dedup_nondefault_channels_is_not_dup() {
-        // opus@2c has channels=2; bare opus normalizes to 1. Distinct.
-        let cs = dedup("opus@2c,opus");
-        assert_eq!(cs.len(), 2);
-    }
-
-    #[test]
-    fn dedup_t38_default_rate_8k() {
-        let cs = dedup("t38,t38@8000h@20i");
-        assert_eq!(cs.len(), 1);
+    fn a_qualifier_that_is_not_the_default_stays_a_second_entry() {
+        for input in &[
+            "iLBC,iLBC@20i",
+            "isac,isac@20i",
+            "G723,G723@20i",
+            "opus,opus@8000h",
+            "opus@2c,opus",
+        ] {
+            assert_eq!(dedup(input).len(), 2, "{input:?} must stay two entries");
+        }
     }
 
     #[test]
@@ -782,13 +733,10 @@ mod tests {
     }
 
     #[test]
-    fn dedup_algorithm_shape_comment() {
-        // A@20i, A, A@20i: the C inner loop compares against ALL earlier original entries,
-        // not just survivors. Entry 2 (A@20i) is compared against entry 0 (A@20i) and
-        // matches, so it's dropped. Comparing against survivors only would give the same
-        // result here (entry 0 survived), which is why the C's shape coincides.
+    fn a_duplicate_of_a_dropped_entry_is_dropped_too() {
+        // The C compares against earlier originals, dropped ones included. Bare A
+        // normalizes to A@20i, so all three collapse onto the first.
         let cs = dedup("A@20i,A,A@20i");
-        // Entry 1 (bare A) has ptime=default_ptime("A")=20, matching entry 0 (A@20i). → 1 entry.
         assert_eq!(cs.len(), 1);
     }
 
