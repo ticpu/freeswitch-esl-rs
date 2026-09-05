@@ -590,61 +590,53 @@ mod tests {
         assert_eq!(h.variable_str("missing"), None);
     }
 
+    /// The stored-header entry point and the raw-value one must agree, so
+    /// every form runs through both.
     #[test]
-    fn call_info_single_value_rfc() {
-        let mut h = EslHeaders::new();
-        h.insert(
-            "Call-Info",
-            "<sip:alice@example.com>;purpose=emergency-CallId",
-        );
-        let ci = h
-            .call_info()
-            .unwrap()
-            .expect("present");
-        assert_eq!(
-            ci.entries()
-                .len(),
-            1
-        );
-        assert_eq!(ci.entries()[0].purpose(), Some("emergency-CallId"));
-    }
+    fn both_entry_points_decode_every_transport_form() {
+        let forms = [
+            (
+                "rfc",
+                "<sip:alice@example.test>;purpose=icon",
+                vec![Some("icon")],
+            ),
+            (
+                "array",
+                "ARRAY::<sip:a@example.test>;purpose=icon|:<sip:b@example.test>;purpose=info",
+                vec![Some("icon"), Some("info")],
+            ),
+            (
+                "bracketed",
+                "[<sip:alice@example.test>;purpose=icon]",
+                vec![Some("icon")],
+            ),
+            (
+                "bracketed array",
+                "[ARRAY::<sip:a@example.test>;purpose=icon|:<sip:b@example.test>]",
+                vec![Some("icon"), None],
+            ),
+        ];
 
-    #[test]
-    fn call_info_array_encoding() {
-        let mut h = EslHeaders::new();
-        h.insert(
-            "Call-Info",
-            "ARRAY::<sip:a@example.com>;purpose=icon|:<sip:b@example.com>;purpose=info",
-        );
-        let ci = h
-            .call_info()
-            .unwrap()
-            .expect("present");
-        assert_eq!(
-            ci.entries()
-                .len(),
-            2
-        );
-        assert_eq!(ci.entries()[0].purpose(), Some("icon"));
-        assert_eq!(ci.entries()[1].purpose(), Some("info"));
-    }
-
-    #[test]
-    fn call_info_bracket_wrapped() {
-        let mut h = EslHeaders::new();
-        h.insert(
-            "Call-Info",
-            "[<sip:alice@example.com>;purpose=emergency-CallId]",
-        );
-        let ci = h
-            .call_info()
-            .unwrap()
-            .expect("present");
-        assert_eq!(
-            ci.entries()
-                .len(),
-            1
-        );
+        for (label, value, purposes) in forms {
+            let mut h = EslHeaders::new();
+            h.insert("Call-Info", value);
+            let from_header = h
+                .call_info()
+                .unwrap_or_else(|e| panic!("{label}: {e}"))
+                .unwrap_or_else(|| panic!("{label}: header is present"));
+            let from_value = EslHeaders::parse_uri_info(value)
+                .unwrap_or_else(|e| panic!("{label} as a raw value: {e}"));
+            assert_eq!(from_header, from_value, "{label}");
+            assert_eq!(
+                from_header
+                    .entries()
+                    .iter()
+                    .map(|e| e.purpose())
+                    .collect::<Vec<_>>(),
+                purposes,
+                "{label}"
+            );
+        }
     }
 
     #[test]
@@ -684,58 +676,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_uri_info_array_form() {
-        let value = "ARRAY::<urn:emergency:uid:callid:bcf.example.test>;purpose=emergency-CallId\
-                     |:<urn:emergency:uid:incidentid:bcf.example.test>;purpose=emergency-IncidentId\
-                     |:<https://eido.example.test/v1/bcf.example.test/abc?test-call=true>;purpose=emergency-eido";
-        let info = EslHeaders::parse_uri_info(value).expect("parse ARRAY form");
-        let entries = info.entries();
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].purpose(), Some("emergency-CallId"));
-        assert_eq!(entries[1].purpose(), Some("emergency-IncidentId"));
-        assert_eq!(entries[2].purpose(), Some("emergency-eido"));
-    }
-
-    #[test]
-    fn parse_uri_info_single_entry() {
-        let value = "<urn:emergency:uid:callid:test>;purpose=emergency-CallId";
-        let info = EslHeaders::parse_uri_info(value).expect("parse single entry");
-        assert_eq!(
-            info.entries()
-                .len(),
-            1
-        );
-        assert_eq!(info.entries()[0].purpose(), Some("emergency-CallId"));
-    }
-
-    #[test]
     fn parse_uri_info_empty_value() {
-        // Empty string is an error (no angle brackets)
-        let result = EslHeaders::parse_uri_info("");
-        assert!(result.is_err());
+        assert!(EslHeaders::parse_uri_info("").is_err());
     }
 
     #[test]
     fn parse_uri_info_malformed_no_panic() {
-        // sip-header UriInfo is lenient - this parses without angle brackets
+        // sip-header's UriInfo is lenient: an addr-spec needs no angle brackets.
         let info = EslHeaders::parse_uri_info("sip:bare@example.test").expect("lenient parse");
         assert_eq!(
             info.entries()
                 .len(),
             1
         );
-    }
-
-    #[test]
-    fn parse_uri_info_bracket_wrapped() {
-        let value = "[<urn:emergency:uid:callid:test>;purpose=emergency-CallId]";
-        let info = EslHeaders::parse_uri_info(value).expect("parse bracket-wrapped");
-        assert_eq!(
-            info.entries()
-                .len(),
-            1
-        );
-        assert_eq!(info.entries()[0].purpose(), Some("emergency-CallId"));
     }
 
     #[test]

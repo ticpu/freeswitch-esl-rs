@@ -484,9 +484,8 @@ mod tests {
 
     #[test]
     fn esl_response_underscored_keys_preserve_case() {
-        // variable_*, sip_h_*, sip_i_* must preserve original SIP wire
-        // casing — the lowercase fallback must not match these keys, or
-        // distinct headers like X-Foo and X-foo would collide.
+        // Underscore keys carry SIP wire casing, so the lowercase fallback
+        // must miss them: X-Foo and X-foo are two headers.
         let mut headers = IndexMap::new();
         headers.insert(
             "variable_sip_h_X-MixedCase-Hdr".to_string(),
@@ -495,11 +494,8 @@ mod tests {
         headers.insert("variable_MyVar".to_string(), "vv".to_string());
         let r = EslResponse::new(headers, None);
 
-        // Exact case hits.
         assert_eq!(r.header("variable_sip_h_X-MixedCase-Hdr"), Some("value"));
         assert_eq!(r.header("variable_MyVar"), Some("vv"));
-
-        // Wrong case must NOT resolve via the lowercase fallback.
         assert_eq!(r.header("variable_sip_h_x-mixedcase-hdr"), None);
         assert_eq!(r.header("VARIABLE_SIP_H_X-MIXEDCASE-HDR"), None);
         assert_eq!(r.header("variable_myvar"), None);
@@ -871,9 +867,8 @@ mod tests {
         assert_eq!(event.body(), Some("hello"));
     }
 
-    // The race the connect-time rebuild loop hits: the channel hung up between
-    // the listing and the dump. It must arrive as a failure the loop can skip,
-    // not as an InvalidHeader from a line with no colon.
+    // The channel hung up between the listing and the dump: a failure the
+    // rebuild loop can skip, not an InvalidHeader from a line with no colon.
     #[test]
     fn channel_dump_of_a_dead_channel_is_a_command_failure() {
         let err = parse_channel_dump("-ERR No such channel!\n").unwrap_err();

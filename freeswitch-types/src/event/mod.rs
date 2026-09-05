@@ -787,8 +787,6 @@ mod tests {
     }
 
     // --- Header key normalization on EslEvent ---
-    // set_header() normalizes keys so lookups via header(EventHeader::X)
-    // and header_str() work regardless of the casing used at insertion.
 
     #[test]
     fn set_header_normalizes_known_enum_variant() {
@@ -824,9 +822,7 @@ mod tests {
     fn header_str_finds_by_original_key() {
         let mut event = EslEvent::new();
         event.set_header("unique-id", "abc-123");
-        // Lookup by original non-canonical key should still work
         assert_eq!(event.header_str("unique-id"), Some("abc-123"));
-        // Lookup by canonical key also works
         assert_eq!(event.header_str("Unique-ID"), Some("abc-123"));
     }
 
@@ -834,9 +830,7 @@ mod tests {
     fn header_str_finds_unknown_dash_header_by_original() {
         let mut event = EslEvent::new();
         event.set_header("x-custom-header", "val");
-        // Stored as Title-Case
         assert_eq!(event.header_str("X-Custom-Header"), Some("val"));
-        // Original key also works via alias
         assert_eq!(event.header_str("x-custom-header"), Some("val"));
     }
 
@@ -919,8 +913,6 @@ mod tests {
         }"#;
         let parsed: EslEvent = serde_json::from_str(external_json).unwrap();
 
-        // Canonical lookup via the typed enum — always works because
-        // set_header normalizes into the canonical form.
         assert_eq!(
             parsed.header(EventHeader::ChannelWriteCodecName),
             Some("opus")

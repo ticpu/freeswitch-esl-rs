@@ -973,9 +973,8 @@ mod tests {
         );
     }
 
-    // The execute-time masquerade copies every variable and clones the caller
-    // profile onto the survivor, so only its own Channel-Name still answers
-    // which driver it belongs to.
+    // The masquerade copies every variable and the caller profile onto the
+    // survivor, so only its own Channel-Name still answers for its driver.
     #[test]
     fn a_survivor_that_inherited_the_marker_is_not_a_loopback() {
         let survivor = store_with(&[

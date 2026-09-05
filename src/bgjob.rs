@@ -392,7 +392,6 @@ mod tests {
             .is_some());
         assert!(!bg.is_pending("uuid-1"));
         assert_eq!(bg.pending_count(), 0);
-        // Second call returns None
         assert!(bg
             .try_complete(&event)
             .is_none());
@@ -403,7 +402,6 @@ mod tests {
         let mut bg = BgJobTracker::new();
         bg.track("uuid-1".into(), ());
 
-        // BackgroundJob event without Job-UUID header
         let event = EslEvent::with_type(EslEventType::BackgroundJob);
         assert!(bg
             .try_complete(&event)
@@ -450,7 +448,6 @@ mod tests {
     fn bgjob_result_delegates_header_lookup() {
         let event = bg_job_event("uuid-1", "+OK");
         let result = BgJobResult(&event);
-        // HeaderLookup::job_uuid() should work through delegation
         assert_eq!(result.job_uuid(), Some("uuid-1"));
     }
 
