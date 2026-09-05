@@ -460,6 +460,51 @@ mod tests {
     }
 
     #[test]
+    fn array_encoding_decodes_for_every_multi_value_header() {
+        let mut h = EslHeaders::new();
+        h.insert(
+            "P-Asserted-Identity",
+            "ARRAY::<sip:alice@example.test>|:<tel:+15551234567>",
+        );
+        h.insert(
+            "Error-Info",
+            "ARRAY::<sip:busy@example.test>|:<http://example.test/why.html>",
+        );
+        h.insert(
+            "Contact",
+            "ARRAY::<sip:a@192.0.2.1>;expires=60|:<sip:b@192.0.2.2>",
+        );
+
+        assert_eq!(
+            h.p_asserted_identity()
+                .expect("ARRAY value must decode")
+                .len(),
+            2
+        );
+        assert_eq!(
+            h.error_info()
+                .expect("ARRAY value must decode")
+                .expect("header is present")
+                .entries()
+                .len(),
+            2
+        );
+        assert_eq!(
+            h.contact()
+                .expect("ARRAY value must decode")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_single_valued_header_keeps_its_commas() {
+        let mut h = EslHeaders::new();
+        h.insert("Subject", "one, two");
+        assert_eq!(h.sip_header_all_str("Subject"), vec!["one, two"]);
+    }
+
+    #[test]
     fn header_str_passthrough() {
         let mut h = EslHeaders::new();
         h.insert("Unique-ID", "abc-123");
