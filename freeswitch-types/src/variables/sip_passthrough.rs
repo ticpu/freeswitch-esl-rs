@@ -19,16 +19,26 @@
 
 use sip_header::SipHeader;
 
-/// Error returned when a raw header name contains invalid characters.
+/// Error returned when a raw header name is empty or carries a wire terminator.
+///
+/// The rejected name stays on the field; `Display` names only what was wrong
+/// with it, since a header name a caller supplied can carry subscriber identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvalidHeaderName(String);
+pub struct InvalidHeaderName(pub String);
 
 impl std::fmt::Display for InvalidHeaderName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self
+            .0
+            .is_empty()
+        {
+            return f.write_str("empty SIP header name");
+        }
         write!(
             f,
-            "invalid SIP header name {:?}: contains \\n or \\r",
+            "invalid SIP header name ({} bytes): contains CR or LF",
             self.0
+                .len()
         )
     }
 }
@@ -57,6 +67,16 @@ pub enum SipHeaderPrefix {
 }
 
 impl SipHeaderPrefix {
+    /// Every prefix, in declaration order.
+    pub const ALL: &'static [Self] = &[
+        Self::Invite,
+        Self::Request,
+        Self::Response,
+        Self::Provisional,
+        Self::Bye,
+        Self::NoBye,
+    ];
+
     /// Wire prefix string including trailing separator.
     ///
     /// ```
@@ -84,12 +104,30 @@ impl std::fmt::Display for SipHeaderPrefix {
 }
 
 /// Error returned when parsing an unrecognized passthrough header variable name.
+///
+/// The rejected name stays on the field; `Display` names only which rule it
+/// broke, since a variable name off the wire can carry subscriber identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseSipPassthroughError(pub String);
 
 impl std::fmt::Display for ParseSipPassthroughError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "not a SIP passthrough variable: {}", self.0)
+        let len = self
+            .0
+            .len();
+        if PREFIX_PATTERNS
+            .iter()
+            .any(|p| {
+                self.0
+                    .eq_ignore_ascii_case(p.as_str())
+            })
+        {
+            return write!(f, "SIP passthrough variable ({len} bytes): no header name");
+        }
+        write!(
+            f,
+            "not a SIP passthrough variable ({len} bytes): no recognised sip_*_ prefix"
+        )
     }
 }
 
@@ -182,8 +220,9 @@ fn validate_header_name(name: &str) -> Result<(), InvalidHeaderName> {
 fn build_wire(prefix: SipHeaderPrefix, canonical: &str) -> String {
     match prefix {
         SipHeaderPrefix::Invite => {
-            let mut wire = String::with_capacity(6 + canonical.len());
-            wire.push_str("sip_i_");
+            let pfx = SipHeaderPrefix::Invite.as_str();
+            let mut wire = String::with_capacity(pfx.len() + canonical.len());
+            wire.push_str(pfx);
             for ch in canonical.chars() {
                 if ch == '-' {
                     wire.push('_');
@@ -756,15 +795,7 @@ mod tests {
 
     #[test]
     fn prefix_patterns_covers_all_variants_exactly_once() {
-        let all_variants = [
-            SipHeaderPrefix::Invite,
-            SipHeaderPrefix::Request,
-            SipHeaderPrefix::Response,
-            SipHeaderPrefix::Provisional,
-            SipHeaderPrefix::Bye,
-            SipHeaderPrefix::NoBye,
-        ];
-        for &variant in &all_variants {
+        for &variant in SipHeaderPrefix::ALL {
             let count = PREFIX_PATTERNS
                 .iter()
                 .filter(|&&p| p == variant)
@@ -777,8 +808,8 @@ mod tests {
         }
         assert_eq!(
             PREFIX_PATTERNS.len(),
-            all_variants.len(),
-            "PREFIX_PATTERNS length differs from all-variants count"
+            SipHeaderPrefix::ALL.len(),
+            "PREFIX_PATTERNS length differs from SipHeaderPrefix::ALL"
         );
     }
 
