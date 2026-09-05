@@ -60,7 +60,6 @@ impl FromStr for DialplanType {
     }
 }
 
-// Endpoint is now defined in endpoint.rs -- re-exported via pub use below.
 pub use super::endpoint::Endpoint;
 
 /// A single dialplan application with optional arguments.
@@ -1292,11 +1291,8 @@ mod tests {
         );
     }
 
-    /// `context: None` with a later positional arg emits `"default"` as a
-    /// gap-filler. `FromStr` reads it back as `Some("default")` because
-    /// `"default"` is also a valid user-specified context. The wire format
-    /// round-trips correctly (identical string), but the struct-level
-    /// representation differs. This is an accepted asymmetry.
+    /// The gap-filler context is a context a caller could also have written,
+    /// so it reads back as one: the wire round-trips, the struct does not.
     #[test]
     fn originate_context_gap_filler_round_trip_asymmetry() {
         let ep = Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test"));
@@ -1313,8 +1309,6 @@ mod tests {
         // Wire format is identical (the important invariant)
         assert_eq!(parsed.to_string(), wire);
     }
-
-    // --- T1: Full Originate serde round-trip ---
 
     #[test]
     fn serde_originate_full_round_trip_with_variables() {
@@ -1362,8 +1356,6 @@ mod tests {
         assert_eq!(parsed, orig);
         assert_eq!(parsed.to_string(), orig.to_string());
     }
-
-    // --- T5: Originate::from_str with context named "inline" or "XML" ---
 
     #[test]
     fn originate_context_named_inline() {

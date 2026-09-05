@@ -524,7 +524,7 @@ mod tests {
         assert_eq!(bridge, parsed);
     }
 
-    // --- T5: BridgeDialString edge cases ---
+    // === Edge cases ===
 
     #[test]
     fn from_str_empty_string_rejected() {

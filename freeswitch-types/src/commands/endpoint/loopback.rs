@@ -141,10 +141,6 @@ mod tests {
         assert_eq!(parsed, ep);
     }
 
-    // --- T5: LoopbackEndpoint parse -> display asymmetry ---
-    // Display omits context when None, but FromStr always produces
-    // context=None for bare "loopback/ext". Round-trip is symmetric.
-
     #[test]
     fn loopback_display_parse_display_stable() {
         let inputs = [

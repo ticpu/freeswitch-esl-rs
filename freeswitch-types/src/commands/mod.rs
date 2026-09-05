@@ -318,8 +318,6 @@ mod tests {
         assert_eq!(originate_unquote(&originate_quote(original)), original);
     }
 
-    // --- T5: originate_split with multiple consecutive spaces ---
-
     #[test]
     fn split_multiple_consecutive_spaces() {
         let result = originate_split("originate  sofia/test  123", ' ').unwrap();

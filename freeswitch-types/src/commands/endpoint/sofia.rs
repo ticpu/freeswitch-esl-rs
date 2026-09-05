@@ -527,8 +527,6 @@ mod tests {
         assert_eq!(parsed, ep);
     }
 
-    // --- T5: SofiaContact with profile containing @ ---
-
     #[test]
     fn sofia_contact_profile_with_at_sign() {
         let ep = SofiaContact::new("1000", "example.com").with_profile("user@realm");

@@ -551,13 +551,9 @@ fn split_unescaped(s: &str, sep: char) -> Vec<&str> {
 mod tests {
     use super::*;
 
-    /// Measured on a live switch: bare, quoted, escaped-quoted and
-    /// backslash-quoted empty values are all discarded, on both carriers, with
-    /// no diagnostic from the switch at any level. Nothing can be emitted for
-    /// one, so it is refused where refusing is possible.
-    /// A config that loaded yesterday and does not today has to say what to do
-    /// about it: the remedy is dropping the key, which is not guessable from
-    /// being told the value is unrepresentable.
+    /// Measured on a live switch: an empty value is discarded under every
+    /// encoding, silently, so nothing can be emitted for one and the refusal
+    /// has to name a remedy the caller could not guess.
     #[test]
     fn an_empty_value_is_refused_at_the_boundary() {
         let err = "{k=,after=sentinel}"
