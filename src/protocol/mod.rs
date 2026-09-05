@@ -55,7 +55,7 @@ fn decode_header_block(
 /// surfaced by [`MessageType::from_content_type`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
-pub enum MessageType {
+pub(crate) enum MessageType {
     /// Authentication request from server
     AuthRequest,
     /// Command reply
@@ -95,17 +95,10 @@ impl MessageType {
     }
 }
 
-/// Parsed ESL message.
-///
-/// This is an internal protocol-parsing intermediate, not part of the
-/// publicly-stable surface. It is constructed by the parser and consumed
-/// by the connection module within this crate; public visibility exists
-/// for module organization only. External API stability comes from
-/// [`EslResponse`] and [`crate::event::EslEvent`], not from `EslMessage` —
-/// which is why this struct intentionally does not carry `#[non_exhaustive]`
-/// despite having public fields.
+/// Parsed ESL message: the parser's intermediate, consumed by the connection
+/// module. What callers see is [`EslResponse`] or [`crate::event::EslEvent`].
 #[derive(Debug, Clone)]
-pub struct EslMessage {
+pub(crate) struct EslMessage {
     /// Message type
     pub message_type: MessageType,
     /// Message headers
@@ -168,7 +161,7 @@ enum ParseState {
 }
 
 /// ESL protocol parser
-pub struct EslParser {
+pub(crate) struct EslParser {
     buffer: EslBuffer,
     state: ParseState,
     strict_header_utf8: bool,

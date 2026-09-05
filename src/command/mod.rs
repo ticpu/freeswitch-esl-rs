@@ -334,43 +334,112 @@ impl EslCommand {
         Ok(builder.build())
     }
 
-    /// Validate all user-supplied fields, then convert to wire format.
-    pub fn to_wire_format(&self) -> EslResult<String> {
+    /// The `Event-Name` a `sendevent` puts on its command line.
+    fn sendevent_name(event: &EslEvent) -> EslResult<String> {
+        event
+            .event_type()
+            .map(|t| t.to_string())
+            .or_else(|| {
+                event
+                    .header(EventHeader::EventName)
+                    .map(|s| s.to_string())
+            })
+            .ok_or_else(|| {
+                EslError::protocol_error(
+                    "sendevent requires Event-Name header or event_type set on the EslEvent",
+                )
+            })
+    }
+
+    /// Reject every user-supplied field that would break the line framing.
+    ///
+    /// Runs before any formatting so no half-built command reaches the wire.
+    fn validate(&self) -> EslResult<()> {
         match self {
-            EslCommand::Auth { password } => {
-                validate_no_newlines(&password.0, "password")?;
-                Ok(Self::format_simple_command("auth", &[&password.0]))
-            }
+            EslCommand::Auth { password } => validate_no_newlines(&password.0, "password"),
             EslCommand::UserAuth { user, password } => {
                 validate_no_newlines(user, "user")?;
-                validate_no_newlines(&password.0, "password")?;
-                Ok(Self::format_simple_command(
-                    "userauth",
-                    &[&format!("{}:{}", user, password.0)],
-                ))
+                validate_no_newlines(&password.0, "password")
             }
-            EslCommand::Api { command } => {
-                validate_no_newlines(command, "api command")?;
-                Ok(Self::format_simple_command("api", &[command]))
-            }
-            EslCommand::BgApi { command } => {
-                validate_no_newlines(command, "bgapi command")?;
-                Ok(Self::format_simple_command("bgapi", &[command]))
-            }
+            EslCommand::Api { command } => validate_no_newlines(command, "api command"),
+            EslCommand::BgApi { command } => validate_no_newlines(command, "bgapi command"),
             EslCommand::Events { format, events } => {
                 validate_no_newlines(format, "event format")?;
-                validate_no_newlines(events, "event list")?;
-                Ok(Self::format_simple_command("event", &[format, events]))
+                validate_no_newlines(events, "event list")
             }
             EslCommand::Filter { header, value } => {
                 validate_no_newlines(header, "filter header")?;
-                validate_no_newlines(value, "filter value")?;
+                validate_no_newlines(value, "filter value")
+            }
+            EslCommand::SendMsg { uuid, .. } => match uuid {
+                Some(u) => validate_no_newlines(u, "sendmsg uuid"),
+                None => Ok(()),
+            },
+            EslCommand::Execute {
+                app, args, uuid, ..
+            } => {
+                validate_no_newlines(app, "execute app")?;
+                if let Some(a) = args {
+                    validate_no_newlines(a, "execute args")?;
+                }
+                match uuid {
+                    Some(u) => validate_no_newlines(u, "execute uuid"),
+                    None => Ok(()),
+                }
+            }
+            EslCommand::Log { level } => validate_no_newlines(level, "log level"),
+            EslCommand::SendEvent { event } => {
+                validate_no_newlines(&Self::sendevent_name(event)?, "sendevent event name")
+            }
+            EslCommand::MyEvents { format, uuid } => {
+                validate_no_newlines(format, "myevents format")?;
+                match uuid {
+                    Some(u) => validate_no_newlines(u, "myevents uuid"),
+                    None => Ok(()),
+                }
+            }
+            EslCommand::NixEvent { events } => validate_no_newlines(events, "nixevent list"),
+            EslCommand::FilterDelete { header, value } => {
+                validate_no_newlines(header, "filter delete header")?;
+                match value {
+                    Some(v) => validate_no_newlines(v, "filter delete value"),
+                    None => Ok(()),
+                }
+            }
+            EslCommand::GetVar { name } => validate_no_newlines(name, "getvar name"),
+            EslCommand::Exit
+            | EslCommand::NoLog
+            | EslCommand::NoOp
+            | EslCommand::Linger { .. }
+            | EslCommand::NoLinger
+            | EslCommand::Resume
+            | EslCommand::NoEvents
+            | EslCommand::DivertEvents { .. }
+            | EslCommand::Connect
+            | EslCommand::FilterDeleteAll => Ok(()),
+        }
+    }
+
+    /// Validate all user-supplied fields, then convert to wire format.
+    pub fn to_wire_format(&self) -> EslResult<String> {
+        self.validate()?;
+        match self {
+            EslCommand::Auth { password } => {
+                Ok(Self::format_simple_command("auth", &[&password.0]))
+            }
+            EslCommand::UserAuth { user, password } => Ok(Self::format_simple_command(
+                "userauth",
+                &[&format!("{}:{}", user, password.0)],
+            )),
+            EslCommand::Api { command } => Ok(Self::format_simple_command("api", &[command])),
+            EslCommand::BgApi { command } => Ok(Self::format_simple_command("bgapi", &[command])),
+            EslCommand::Events { format, events } => {
+                Ok(Self::format_simple_command("event", &[format, events]))
+            }
+            EslCommand::Filter { header, value } => {
                 Ok(Self::format_simple_command("filter", &[header, value]))
             }
             EslCommand::SendMsg { uuid, event } => {
-                if let Some(u) = uuid {
-                    validate_no_newlines(u, "sendmsg uuid")?;
-                }
                 let cmd_str = format!(
                     "sendmsg{}",
                     uuid.as_ref()
@@ -385,14 +454,6 @@ impl EslCommand {
                 uuid,
                 options,
             } => {
-                validate_no_newlines(app, "execute app")?;
-                if let Some(a) = args {
-                    validate_no_newlines(a, "execute args")?;
-                }
-                if let Some(u) = uuid {
-                    validate_no_newlines(u, "execute uuid")?;
-                }
-
                 let mut event = EslEvent::new();
                 event.set_header("call-command", "execute");
                 event.set_header("execute-app-name", app.clone());
@@ -418,40 +479,17 @@ impl EslCommand {
                 .to_wire_format()
             }
             EslCommand::Exit => Ok(Self::format_simple_command("exit", &[])),
-            EslCommand::Log { level } => {
-                validate_no_newlines(level, "log level")?;
-                Ok(Self::format_simple_command("log", &[level]))
-            }
+            EslCommand::Log { level } => Ok(Self::format_simple_command("log", &[level])),
             EslCommand::NoLog => Ok(Self::format_simple_command("nolog", &[])),
             EslCommand::NoOp => Ok(Self::format_simple_command("noop", &[])),
-            EslCommand::SendEvent { event } => {
-                let event_name = event
-                    .event_type()
-                    .map(|t| t.to_string())
-                    .or_else(|| {
-                        event
-                            .header(EventHeader::EventName)
-                            .map(|s| s.to_string())
-                    })
-                    .ok_or_else(|| {
-                        EslError::protocol_error(
-                            "sendevent requires Event-Name header or event_type set on the EslEvent",
-                        )
-                    })?;
-                validate_no_newlines(&event_name, "sendevent event name")?;
-
-                Self::build_from_event(&format!("sendevent {}", event_name), event)
-            }
-            EslCommand::MyEvents { format, uuid } => {
-                validate_no_newlines(format, "myevents format")?;
-                if let Some(u) = uuid {
-                    validate_no_newlines(u, "myevents uuid")?;
-                }
-                Ok(match uuid {
-                    Some(u) => Self::format_simple_command("myevents", &[u, format]),
-                    None => Self::format_simple_command("myevents", &[format]),
-                })
-            }
+            EslCommand::SendEvent { event } => Self::build_from_event(
+                &format!("sendevent {}", Self::sendevent_name(event)?),
+                event,
+            ),
+            EslCommand::MyEvents { format, uuid } => Ok(match uuid {
+                Some(u) => Self::format_simple_command("myevents", &[u, format]),
+                None => Self::format_simple_command("myevents", &[format]),
+            }),
             EslCommand::Linger { timeout } => Ok(match timeout {
                 Some(d) => Self::format_simple_command(
                     "linger",
@@ -463,15 +501,10 @@ impl EslCommand {
             EslCommand::NoLinger => Ok(Self::format_simple_command("nolinger", &[])),
             EslCommand::Resume => Ok(Self::format_simple_command("resume", &[])),
             EslCommand::NixEvent { events } => {
-                validate_no_newlines(events, "nixevent list")?;
                 Ok(Self::format_simple_command("nixevent", &[events]))
             }
             EslCommand::NoEvents => Ok(Self::format_simple_command("noevents", &[])),
             EslCommand::FilterDelete { header, value } => {
-                validate_no_newlines(header, "filter delete header")?;
-                if let Some(v) = value {
-                    validate_no_newlines(v, "filter delete value")?;
-                }
                 if header == "all" {
                     if value.is_some() {
                         warn!(
@@ -495,10 +528,7 @@ impl EslCommand {
                 let arg = if *on { "on" } else { "off" };
                 Ok(Self::format_simple_command("divert_events", &[arg]))
             }
-            EslCommand::GetVar { name } => {
-                validate_no_newlines(name, "getvar name")?;
-                Ok(Self::format_simple_command("getvar", &[name]))
-            }
+            EslCommand::GetVar { name } => Ok(Self::format_simple_command("getvar", &[name])),
             EslCommand::Connect => Ok(Self::format_simple_command("connect", &[])),
         }
     }
@@ -775,14 +805,23 @@ mod tests {
         );
     }
 
+    /// The special-cased header and the dedicated variant emit one wire form;
+    /// both are pinned here so a change to either shows as a diff on the other.
     #[test]
     fn test_filter_delete_all_wire_format() {
-        let cmd = EslCommand::FilterDelete {
+        let by_header = EslCommand::FilterDelete {
             header: "all".to_string(),
             value: None,
         };
         assert_eq!(
-            cmd.to_wire_format()
+            by_header
+                .to_wire_format()
+                .unwrap(),
+            "filter delete all\n\n"
+        );
+        assert_eq!(
+            EslCommand::FilterDeleteAll
+                .to_wire_format()
                 .unwrap(),
             "filter delete all\n\n"
         );
@@ -1006,15 +1045,5 @@ mod tests {
 
         let result = CommandBuilder::new("test").header("X-Key", "bad\nvalue");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_filter_delete_all_variant_wire_format() {
-        let cmd = EslCommand::FilterDeleteAll;
-        assert_eq!(
-            cmd.to_wire_format()
-                .unwrap(),
-            "filter delete all\n\n"
-        );
     }
 }
