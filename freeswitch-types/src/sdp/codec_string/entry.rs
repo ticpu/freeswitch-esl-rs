@@ -8,17 +8,28 @@ use crate::sdp::static_payload::{default_ptime, default_rate};
 
 use super::parse::{escape_fmtp, normalize_fmtp_trailing_space, parse_entry, split_codec_string};
 
-/// Validate a codec name or module name for grammar-delimiter characters.
+/// The first grammar-delimiter character in a name, or `None` when clean.
 ///
-/// Names are emitted unescaped (unlike fmtp which goes through `escape_fmtp`), so
-/// grammar delimiters in a name corrupt the re-parsed form. `\n`/`\r` are handled
-/// separately as `WireInjection`; this checks the remaining forbidden set.
-///
-/// Returns the first forbidden character found, or `None` if clean.
+/// Names are emitted unescaped, unlike fmtp, so a delimiter here corrupts the
+/// re-parsed form.
 fn check_name_grammar(value: &str) -> Option<char> {
     value
         .chars()
         .find(|&c| matches!(c, ',' | '@' | '~' | '.' | '\'' | '\\') || c.is_ascii_whitespace())
+}
+
+/// Validate a codec name: non-empty, no `\n`/`\r`, no grammar delimiter.
+fn validate_name(name: String) -> Result<String, CodecStringError> {
+    if name.is_empty() {
+        return Err(CodecStringError::invalid_codec_name(name));
+    }
+    if name.contains('\n') || name.contains('\r') {
+        return Err(CodecStringError::wire_injection("name", name));
+    }
+    match check_name_grammar(&name) {
+        Some(ch) => Err(CodecStringError::invalid_char_in_name("name", ch, name)),
+        None => Ok(name),
+    }
 }
 
 /// A single entry in a FreeSWITCH codec string.
@@ -45,19 +56,9 @@ impl CodecStringEntry {
     /// [`CodecStringError::InvalidCharInName`] if it contains any codec-string
     /// grammar delimiter (`,` `@` `~` `.` `'` `\` or ASCII whitespace).
     pub fn new(name: impl Into<String>) -> Result<Self, CodecStringError> {
-        let name = name.into();
-        if name.is_empty() {
-            return Err(CodecStringError::invalid_codec_name(name));
-        }
-        if name.contains('\n') || name.contains('\r') {
-            return Err(CodecStringError::wire_injection("name", name));
-        }
-        if let Some(ch) = check_name_grammar(&name) {
-            return Err(CodecStringError::invalid_char_in_name("name", ch, name));
-        }
         Ok(Self {
             modname: None,
-            name,
+            name: validate_name(name.into())?,
             fmtp: None,
             rate: None,
             ptime: None,
@@ -71,16 +72,7 @@ impl CodecStringEntry {
     /// Returns [`CodecStringError::WireInjection`] if the value contains `\n` or `\r`,
     /// or [`CodecStringError::InvalidCharInName`] if it contains a grammar delimiter.
     pub fn with_module(mut self, modname: impl Into<String>) -> Result<Self, CodecStringError> {
-        let modname = modname.into();
-        if modname.contains('\n') || modname.contains('\r') {
-            return Err(CodecStringError::wire_injection("modname", modname));
-        }
-        if let Some(ch) = check_name_grammar(&modname) {
-            return Err(CodecStringError::invalid_char_in_name(
-                "modname", ch, modname,
-            ));
-        }
-        self.modname = Some(modname);
+        self.set_module(modname)?;
         Ok(self)
     }
 
@@ -95,21 +87,7 @@ impl CodecStringEntry {
     ///   dropped. Set the module prefix first with [`with_module`](Self::with_module).
     /// - [`CodecStringError::WireInjection`] — `\n` or `\r` can inject ESL commands.
     pub fn with_fmtp(mut self, fmtp: impl Into<String>) -> Result<Self, CodecStringError> {
-        let fmtp = normalize_fmtp_trailing_space(fmtp.into());
-        if fmtp.contains('\n') || fmtp.contains('\r') {
-            return Err(CodecStringError::wire_injection("fmtp", &fmtp));
-        }
-        if fmtp.contains('@') {
-            return Err(CodecStringError::at_in_fmtp(fmtp));
-        }
-        if fmtp.contains('.')
-            && self
-                .modname
-                .is_none()
-        {
-            return Err(CodecStringError::dot_in_fmtp_without_module(fmtp));
-        }
-        self.fmtp = Some(fmtp);
+        self.set_fmtp(fmtp)?;
         Ok(self)
     }
 
@@ -212,17 +190,7 @@ impl CodecStringEntry {
     /// [`CodecStringError::WireInjection`] if the value contains `\n` or `\r`, or
     /// [`CodecStringError::InvalidCharInName`] if it contains a grammar delimiter.
     pub fn set_name(&mut self, name: impl Into<String>) -> Result<(), CodecStringError> {
-        let name = name.into();
-        if name.is_empty() {
-            return Err(CodecStringError::invalid_codec_name(name));
-        }
-        if name.contains('\n') || name.contains('\r') {
-            return Err(CodecStringError::wire_injection("name", name));
-        }
-        if let Some(ch) = check_name_grammar(&name) {
-            return Err(CodecStringError::invalid_char_in_name("name", ch, name));
-        }
-        self.name = name;
+        self.name = validate_name(name.into())?;
         Ok(())
     }
 

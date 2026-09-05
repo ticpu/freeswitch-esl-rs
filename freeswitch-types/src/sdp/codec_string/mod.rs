@@ -54,11 +54,6 @@ impl CodecString {
             .iter()
     }
 
-    /// Consume the list, returning the inner vector.
-    pub fn into_entries(self) -> Vec<CodecStringEntry> {
-        self.0
-    }
-
     /// Number of entries.
     pub fn len(&self) -> usize {
         self.0

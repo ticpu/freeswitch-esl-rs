@@ -107,9 +107,8 @@ impl FromStr for SdpDirection {
 
 /// A codec derived from an SDP `m=` section.
 ///
-/// Fields are private; use the accessor methods. Mutable accessors (`_mut()`)
-/// are provided for fields a caller may need to adjust before emitting a codec
-/// string (e.g. after deserializing a config and tweaking ptime).
+/// Fields are private and read-only from outside the crate: a codec is what the
+/// offer said. Build one with [`new`](Self::new) plus the `with_*` methods.
 #[derive(Debug, Clone)]
 pub struct SdpCodec {
     media: SdpMediaType,
@@ -239,7 +238,10 @@ impl SdpCodec {
         self.ptime
     }
 
-    /// The maximum packetization time in milliseconds, or `None` if not specified.
+    /// The offered `a=maxptime` in milliseconds, or `None` if not specified.
+    ///
+    /// Retained for offer fidelity: nothing in this crate reads it, and the switch
+    /// derives no codec-string qualifier from it.
     pub fn maxptime(&self) -> Option<u32> {
         self.maxptime
     }
@@ -261,30 +263,30 @@ impl SdpCodec {
         self.has_rtpmap
     }
 
-    // --- mutable accessors ---
+    // --- mutable accessors, for this crate's own section walk ---
 
     /// Mutable access to the format parameters.
-    pub fn fmtp_mut(&mut self) -> &mut Option<String> {
+    pub(crate) fn fmtp_mut(&mut self) -> &mut Option<String> {
         &mut self.fmtp
     }
 
     /// Mutable access to ptime.
-    pub fn ptime_mut(&mut self) -> &mut Option<u32> {
+    pub(crate) fn ptime_mut(&mut self) -> &mut Option<u32> {
         &mut self.ptime
     }
 
     /// Mutable access to maxptime.
-    pub fn maxptime_mut(&mut self) -> &mut Option<u32> {
+    pub(crate) fn maxptime_mut(&mut self) -> &mut Option<u32> {
         &mut self.maxptime
     }
 
     /// Mutable access to bitrate.
-    pub fn bitrate_mut(&mut self) -> &mut Option<u32> {
+    pub(crate) fn bitrate_mut(&mut self) -> &mut Option<u32> {
         &mut self.bitrate
     }
 
     /// Mutable access to the channel count.
-    pub fn channels_mut(&mut self) -> &mut Option<u8> {
+    pub(crate) fn channels_mut(&mut self) -> &mut Option<u8> {
         &mut self.channels
     }
 }

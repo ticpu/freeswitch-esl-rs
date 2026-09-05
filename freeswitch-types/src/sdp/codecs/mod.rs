@@ -109,7 +109,7 @@ impl SdpMediaSection {
 /// `switch_core_media_set_r_sdp_codec_string`; [`sections`](Self::sections) is the
 /// wider view, every `m=` line the offer carried. See `docs/codec-string-format.md`
 /// for the mapping rules.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SdpCodecs {
     sections: Vec<SdpMediaSection>,
     warnings: Vec<SdpWarning>,
@@ -230,15 +230,6 @@ impl SdpCodecs {
                 s.entries
                     .iter()
             })
-    }
-
-    /// Consume this collection, returning the negotiable sections' entries.
-    pub fn into_entries(self) -> Vec<SdpCodecEntry> {
-        self.sections
-            .into_iter()
-            .filter(|s| s.is_negotiable())
-            .flat_map(|s| s.entries)
-            .collect()
     }
 
     /// Number of codec entries; payloads from [`non_codec_payloads`](Self::non_codec_payloads)
