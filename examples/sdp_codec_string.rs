@@ -14,6 +14,7 @@
 //! Connection (all optional, these are the defaults):
 //!   ESL_HOST=localhost  ESL_PORT=8021  ESL_PASSWORD=ClueCon
 
+use freeswitch_esl_tokio::commands::quote_for_uuid_setvar;
 use freeswitch_esl_tokio::sdp::{
     default_rate, CodecImplementation, CodecString, CodecStringOptions, SdpCodecEntry, SdpCodecs,
     SdpWarning,
@@ -30,19 +31,11 @@ use tracing::{error, info, warn};
 // appended below it) are never displaced, only backfilled if genuinely missing.
 const MANDATORY_BACKUP_CODECS: &str = "PCMU,PCMA";
 
-// A caller-supplied inventory of what this switch has loaded. No ESL API exposes
-// the real loaded-implementation table, so retain_available() only ever knows
-// what you tell it here -- keep this in sync with the box's modules.conf.
+// No ESL API exposes the loaded-implementation table, so retain_available() knows
+// only what this list says -- keep it in sync with the box's modules.conf.
 //
-// No "t38" entry on purpose. audio_codec_string() below emits the literal "t38" for
-// any image/t38 m-line in the offer, but FreeSWITCH has no codec interface by that
-// name -- it's just the string generate_m() writes for a T.38 section, never looked
-// up like a codec. Left out of this inventory, a T.38 offer is silently dropped by
-// retain_available() below, with only a generic "not in the loaded-implementation
-// inventory" warning -- exactly the t38 trap documented in
-// docs/codec-string-format.md. A caller that forwards T.38 sections must add
-// CodecImplementation::new("t38") here to keep it, understanding that this
-// misrepresents the switch's real codec table in order to preserve the entry.
+// "t38" is deliberately absent: no codec interface carries that name, so a T.38
+// offer is dropped here unless you add it. See docs/codec-string-format.md.
 fn loaded_implementations() -> Vec<CodecImplementation> {
     vec![
         CodecImplementation::new("PCMU"),
@@ -296,17 +289,10 @@ async fn handle_answered_channel(
         Err(e) => warn!("{short}: {name} not set: {e}"),
     }
 
-    // rtp_force_audio_fmtp: the offer's a=fmtp for whichever codec ended up first
-    // in the final string. Audio fmtp notation in a codec string does not reach
-    // the generated a=fmtp line unless this leg already has a bridged partner at
-    // INVITE time (FreeSWITCH's partner-dependent SDP branch); on an unpartnered
-    // leg this variable is the only thing that actually applies it.
-    //
-    // fmtp_for() takes an explicit clock rate rather than assuming one, because
-    // "first codec in the offer" is routinely not the first codec in the final
-    // string. When the surviving entry carries no explicit @rate qualifier,
-    // default_rate() (freeswitch_esl_tokio::sdp -- the same table dedup() itself
-    // normalizes against) gives the rate FreeSWITCH would assume at match time.
+    // On a leg with no bridged partner at INVITE time, this variable is the only
+    // thing that puts an audio fmtp in the generated offer. It applies to one
+    // payload map, so the codec that ended up first is the one to look up --
+    // routinely not the offer's first -- at the rate the switch would assume.
     if let Some(first) = codec_string
         .entries()
         .first()
@@ -323,20 +309,10 @@ async fn handle_answered_channel(
         }
     }
 
-    // If you were originating a brand new call with this codec string instead of
-    // live-updating an answered one, the delivery path -- and its escaping rule --
-    // is completely different. An inline `{var=value}` block is parsed by
-    // switch_separate_string on a bare comma, not by uuid_setvar's space/quote
-    // rules, so every comma inside the value must be backslash-escaped by hand:
-    //
-    //   originate {absolute_codec_string=PCMU\,PCMA\,G722}sofia/gateway/gw1/1234 &park()
-    //
-    // Drop the backslashes and the brace parser still succeeds -- it just silently
-    // stores only "PCMU" as the value, because the unescaped commas end the
-    // variable assignment early. There is no error, no warning, just a channel
-    // that negotiates one codec instead of three. This is why Originate's own
-    // Variables builder (see examples/originate_examples.rs) escapes commas for
-    // you rather than leaving it to string formatting.
+    // Originating instead of live-updating is a different carrier: an inline
+    // `{var=value}` block splits on a bare comma, so an unescaped one ends the
+    // assignment early and stores "PCMU" with no error and no warning. Originate's
+    // own Variables builder (examples/originate_examples.rs) escapes for you.
     let correct_inline = format!(
         "{{{}={}}}",
         ChannelVariable::AbsoluteCodecString,
@@ -371,11 +347,8 @@ fn short_uuid(uuid: &str) -> String {
 
 /// Set a channel variable through `uuid_setvar`.
 ///
-/// uuid_setvar splits its argument string on spaces and honours single-quote
-/// grouping, and an AMR format-parameter string routinely carries `"; "` with a
-/// space, so an unquoted value is truncated at the first one. `UuidSetVar`'s
-/// `Display` is a bare wire builder and adds no quotes, so quoting is this
-/// caller's job -- as it would be for any other consumer of the typed command.
+/// `UuidSetVar`'s `Display` is a bare wire builder and adds no quotes, so rendering
+/// the value for this carrier is the caller's job: `quote_for_uuid_setvar` does it.
 ///
 /// The reply is read with `api_result()`: the channel can hang up between the
 /// event and this write, and `-ERR No such channel!` arrives in the body.
@@ -385,30 +358,10 @@ async fn set_channel_var(
     name: ChannelVariable,
     value: &str,
 ) -> EslResult<()> {
-    let quoted = format!("'{}'", escape_for_setvar(value));
-    let cmd = UuidSetVar::new(uuid, name.to_string(), quoted);
+    let cmd = UuidSetVar::new(uuid, name.to_string(), quote_for_uuid_setvar(value));
     client
         .api(&cmd.to_string())
         .await?
         .api_result()?;
     Ok(())
-}
-
-/// Escape `'` and `\` in a value before wrapping it in single quotes for `uuid_setvar`.
-///
-/// `uuid_setvar` uses `cleanup_separated_string` with a space delimiter.
-/// That function processes `\` escapes even inside a `'...'` region:
-///
-/// - `\'` prevents the `'` from toggling the quoting state (argument boundary corruption).
-/// - `\\` prevents the `\` from consuming the next character.
-fn escape_for_setvar(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\'' => out.push_str("\\'"),
-            '\\' => out.push_str("\\\\"),
-            c => out.push(c),
-        }
-    }
-    out
 }

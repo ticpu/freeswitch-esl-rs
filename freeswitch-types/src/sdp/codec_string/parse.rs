@@ -90,7 +90,7 @@ pub(super) fn escape_fmtp(s: &str) -> String {
 /// expanded: `\'`→`'`, `\"`→`"`, `\,`→`,`, `\\`→`\`, `\n`→LF, `\r`→CR,
 /// `\t`→TAB, `\s`→space; any other `\X` passes through as `\X`.
 pub(super) fn split_codec_string(s: &str) -> Vec<String> {
-    // Step 1: split on ',' honouring escape and quote, mirroring separate_string_char_delim.
+    // Split on ',' honouring escape and quote, mirroring separate_string_char_delim.
     let mut raw_tokens: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut inside_quotes = false;
@@ -123,7 +123,7 @@ pub(super) fn split_codec_string(s: &str) -> Vec<String> {
     }
     raw_tokens.push(current);
 
-    // Step 2: apply cleanup_token to each raw token.
+    // Then cleanup_token on each raw token.
     raw_tokens
         .into_iter()
         .map(|t| cleanup_token(&t))
@@ -216,7 +216,6 @@ pub(super) fn parse_entry(
         None => (token, "", false),
     };
 
-    // Step 2: classify each `@`-delimited qualifier part.
     let qualifiers: Vec<&str> = if has_at {
         qualifier_str
             .split('@')
@@ -225,7 +224,7 @@ pub(super) fn parse_entry(
         Vec::new()
     };
 
-    // Steps 3+4: split name_seg on first `.` for modname, then first `~` for fmtp.
+    // The `.` split precedes the `~` split, as it does in the C.
     let (modname, name_and_fmtp) = match name_seg.split_once('.') {
         Some((m, rest)) => (Some(m.to_string()), rest),
         None => (None, name_seg),

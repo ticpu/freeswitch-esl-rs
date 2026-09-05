@@ -341,9 +341,7 @@ mod tests {
     #[test]
     fn video_implementation_matches_regardless_of_rate() {
         // switch_loadable_module.c:2855/:2886 wrap every qualifier comparison in
-        // `if (imp->codec_type != SWITCH_CODEC_TYPE_VIDEO)`, so a video implementation
-        // matches on name alone. Before this fix, a declared rate of 90000 would have
-        // been compared against the entry's 8000 and dropped VP8@8000h.
+        // `if (imp->codec_type != SWITCH_CODEC_TYPE_VIDEO)`, so name is the whole check.
         let mut cs = parse("VP8@8000h");
         let impls = vec![CodecImplementation::new("VP8")
             .with_media_type(SdpMediaType::Video)

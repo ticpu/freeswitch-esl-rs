@@ -358,7 +358,7 @@ mod tests {
         assert_eq!(known_bitrate(96), None);
     }
 
-    // --- Step 5: default_rate and default_ptime ---
+    // --- default_rate and default_ptime ---
 
     #[test]
     fn default_rate_opus_is_48k() {

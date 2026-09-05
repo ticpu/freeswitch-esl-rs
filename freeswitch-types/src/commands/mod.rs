@@ -67,6 +67,27 @@ pub fn originate_quote(token: &str) -> String {
     }
 }
 
+/// Escape and single-quote a value for the argument string of `uuid_setvar`.
+///
+/// That command splits its arguments on spaces through `cleanup_separated_string`,
+/// which honours `'` grouping and processes `\` escapes inside the quoted region,
+/// so an unquoted value is silently truncated at its first space and a bare `'`
+/// or `\` inside the quotes ends or eats a character. The inline originate
+/// `{var=…}` block is a different carrier with different escaping.
+pub fn quote_for_uuid_setvar(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for ch in value.chars() {
+        match ch {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
 /// Strip single-quote wrapping added by [`originate_quote`].
 ///
 /// If the token starts and ends with `'`, the outer quotes are removed
@@ -392,6 +413,19 @@ mod tests {
             assert_eq!(apps[1].args(), Some("NORMAL_CLEARING"));
         } else {
             panic!("expected InlineApplications");
+        }
+    }
+
+    #[test]
+    fn setvar_quoting_escapes_for_the_setvar_tokenizer() {
+        let cases: &[(&str, &str)] = &[
+            ("PCMU,PCMA", "'PCMU,PCMA'"),
+            ("mode-set=0; octet-align=1", "'mode-set=0; octet-align=1'"),
+            ("a'b", "'a\\'b'"),
+            ("a\\b", "'a\\\\b'"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(&quote_for_uuid_setvar(value), expected);
         }
     }
 

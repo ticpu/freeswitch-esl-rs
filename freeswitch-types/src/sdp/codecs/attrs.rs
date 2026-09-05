@@ -550,9 +550,8 @@ mod tests {
 
     #[test]
     fn rtpmap_tab_separator_is_parsed() {
-        // A HTAB between payload type and encoding name is legal SDP whitespace;
-        // it must not be treated as "no separator" (which used to discard the
-        // whole m=audio section).
+        // A HTAB between payload type and encoding name is legal SDP whitespace, so
+        // it is a separator and not a reason to drop the section.
         let sdp = format!(
             "{}m=audio 5004 RTP/AVP 0\r\na=rtpmap:0\tPCMU/8000\r\n",
             sdp_header()

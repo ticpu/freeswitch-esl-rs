@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn ptime_ilbc_no_fmtp_overrides_explicit_ptime() {
-        // iLBC without fmtp overrides even an explicit a=ptime (step 5 sequential overwrite).
+        // iLBC without fmtp overrides even an explicit a=ptime.
         let sdp = format!(
             "{}m=audio 5004 RTP/AVP 97\r\na=rtpmap:97 iLBC/8000\r\na=ptime:20\r\n",
             sdp_header()
