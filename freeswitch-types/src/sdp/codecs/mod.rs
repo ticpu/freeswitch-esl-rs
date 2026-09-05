@@ -4,7 +4,7 @@ mod attrs;
 mod media_section;
 
 use attrs::{direction_from_attrs, ptime_from_attrs};
-use media_section::{is_image, parse_media_section, proto_has_rtp};
+use media_section::{is_image, parse_media_section, proto_has_rtp, SessionDefaults};
 
 use crate::sdp::{
     codec::{NonCodecPayload, SdpCodec, SdpDirection, SdpMediaType},
@@ -138,8 +138,8 @@ impl SdpCodecs {
         let session_ptime = ptime_from_attrs(&session.attributes, "ptime", &mut result.warnings);
         let session_maxptime =
             ptime_from_attrs(&session.attributes, "maxptime", &mut result.warnings);
-        let session_direction =
-            direction_from_attrs(&session.attributes).unwrap_or(SdpDirection::SendRecv);
+        let session_direction = direction_from_attrs(&session.attributes, &mut result.warnings)
+            .unwrap_or(SdpDirection::SendRecv);
 
         for media in &session.medias {
             // SdpMediaType::from_str is infallible (Err = std::convert::Infallible).
@@ -160,7 +160,8 @@ impl SdpCodecs {
                 formats: media
                     .fmt
                     .clone(),
-                direction: direction_from_attrs(&media.attributes).unwrap_or(session_direction),
+                direction: direction_from_attrs(&media.attributes, &mut result.warnings)
+                    .unwrap_or(session_direction),
                 entries: Vec::new(),
                 unmapped: Vec::new(),
                 non_codec: Vec::new(),
@@ -175,13 +176,12 @@ impl SdpCodecs {
                 // A single structurally broken section (bad rtpmap/fmtp/payload type)
                 // must not discard every other section already parsed. Stage this
                 // section's output locally and only merge it in on success.
-                match parse_media_section(
-                    media,
-                    media_type.clone(),
-                    session_ptime,
-                    session_maxptime,
-                    section.direction,
-                ) {
+                let defaults = SessionDefaults {
+                    ptime: session_ptime,
+                    maxptime: session_maxptime,
+                    direction: section.direction,
+                };
+                match parse_media_section(media, media_type.clone(), &defaults) {
                     Ok(parsed) => {
                         section.entries = parsed.entries;
                         section.unmapped = parsed.unmapped;

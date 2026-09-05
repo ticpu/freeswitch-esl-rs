@@ -9,9 +9,15 @@ use crate::sdp::{
     UnmappedPayload,
 };
 
-use super::attrs::{
-    attribute_tables, default_ptime_ms, fmtp_param, parse_ptime_value, ptime_from_attrs,
-};
+use super::attrs::{attribute_tables, fmtp_param, parse_ptime_value, ptime_from_attrs};
+
+/// What one section's walk inherits: the session-level packetization attributes and
+/// the direction already resolved for the section.
+pub(super) struct SessionDefaults {
+    pub(super) ptime: Option<u32>,
+    pub(super) maxptime: Option<u32>,
+    pub(super) direction: SdpDirection,
+}
 
 /// One `m=` section's payload walk, staged locally so a mid-section parse
 /// failure can be discarded wholesale instead of reaching
@@ -75,17 +81,15 @@ fn non_codec_kind(canonical_name: &str) -> Option<NonCodecKind> {
 pub(super) fn parse_media_section(
     media: &sdp_types::Media,
     media_type: SdpMediaType,
-    session_ptime: Option<u32>,
-    session_maxptime: Option<u32>,
-    media_direction: SdpDirection,
+    defaults: &SessionDefaults,
 ) -> Result<MediaSection, SdpCodecError> {
     let mut section = MediaSection::default();
 
     // Media-level attributes override session-level.
     let media_ptime =
-        ptime_from_attrs(&media.attributes, "ptime", &mut section.warnings).or(session_ptime);
-    let media_maxptime =
-        ptime_from_attrs(&media.attributes, "maxptime", &mut section.warnings).or(session_maxptime);
+        ptime_from_attrs(&media.attributes, "ptime", &mut section.warnings).or(defaults.ptime);
+    let media_maxptime = ptime_from_attrs(&media.attributes, "maxptime", &mut section.warnings)
+        .or(defaults.maxptime);
 
     let tables = attribute_tables(media)?;
 
@@ -141,7 +145,7 @@ pub(super) fn parse_media_section(
             _ => rtpmap_channels,
         };
 
-        let (ptime, bitrate) = resolve_ptime_bitrate(
+        let resolved = resolve_ptime_bitrate(
             canonical,
             pt,
             fmtp.as_deref(),
@@ -150,15 +154,15 @@ pub(super) fn parse_media_section(
         );
 
         let mut codec = SdpCodec::new(media_type.clone(), pt, canonical, clock_rate)
-            .with_direction(media_direction);
+            .with_direction(defaults.direction);
         if has_rtpmap {
             codec = codec.with_rtpmap();
         }
         *codec.channels_mut() = channels;
         *codec.fmtp_mut() = fmtp;
-        *codec.ptime_mut() = ptime;
+        *codec.ptime_mut() = resolved.ptime;
         *codec.maxptime_mut() = media_maxptime;
-        *codec.bitrate_mut() = bitrate;
+        *codec.bitrate_mut() = resolved.bitrate;
 
         section
             .entries
@@ -168,6 +172,56 @@ pub(super) fn parse_media_section(
     Ok(section)
 }
 
+/// One payload's resolved packetization and bitrate.
+struct PtimeBitrate {
+    ptime: Option<u32>,
+    bitrate: Option<u32>,
+}
+
+/// What a codec's registered fmtp parser contributes, per `switch_core_codec_parse_fmtp`.
+enum FmtpRule {
+    /// The module registers no parser.
+    None,
+    /// `ptime=` sets the packetization.
+    Ptime,
+    /// `mode=` sets it, and an fmtp carrying none means 30 ms.
+    IlbcMode,
+    /// `bitrate=` sets the bitrate.
+    Bitrate,
+}
+
+/// A codec whose ptime or bitrate is not what the generic resolution yields.
+struct CodecQuirk {
+    name: &'static str,
+    /// Forced `(ptime, bitrate)` when the offer carries no `a=fmtp`, overriding
+    /// even an explicit `a=ptime`.
+    no_fmtp: Option<(u32, u32)>,
+    fmtp: FmtpRule,
+}
+
+const CODEC_QUIRKS: [CodecQuirk; 4] = [
+    CodecQuirk {
+        name: "ilbc",
+        no_fmtp: Some((30, 13330)),
+        fmtp: FmtpRule::IlbcMode,
+    },
+    CodecQuirk {
+        name: "isac",
+        no_fmtp: Some((30, 32000)),
+        fmtp: FmtpRule::None,
+    },
+    CodecQuirk {
+        name: "opus",
+        no_fmtp: None,
+        fmtp: FmtpRule::Ptime,
+    },
+    CodecQuirk {
+        name: "g7221",
+        no_fmtp: None,
+        fmtp: FmtpRule::Bitrate,
+    },
+];
+
 /// Resolve one payload's ptime and bitrate as `add_audio_codec` does: a sequential
 /// overwrite where a later step beats an earlier one, not a first-match-wins chain.
 fn resolve_ptime_bitrate(
@@ -176,59 +230,59 @@ fn resolve_ptime_bitrate(
     fmtp: Option<&str>,
     media_ptime: Option<u32>,
     warnings: &mut Vec<SdpWarning>,
-) -> (Option<u32>, Option<u32>) {
-    // Step 1: resolved a=ptime (media-level overrides session-level).
-    let mut ptime = media_ptime;
+) -> PtimeBitrate {
+    let mut out = PtimeBitrate {
+        ptime: media_ptime.or_else(|| Some(crate::sdp::static_payload::default_ptime(canonical))),
+        bitrate: crate::sdp::static_payload::known_bitrate(payload_type),
+    };
 
-    // Step 2: per-codec default when no a=ptime is present at all.
-    if ptime.is_none() {
-        ptime = Some(default_ptime_ms(canonical));
-    }
+    let Some(quirk) = CODEC_QUIRKS
+        .iter()
+        .find(|q| {
+            q.name
+                .eq_ignore_ascii_case(canonical)
+        })
+    else {
+        return out;
+    };
 
-    // Step 4: bitrate from the static payload type table.
-    let mut bitrate = crate::sdp::static_payload::known_bitrate(payload_type);
-
-    // Step 5: no fmtp and iLBC/iSAC override even an explicit a=ptime.
-    if fmtp.is_none() {
-        if canonical.eq_ignore_ascii_case("ilbc") {
-            ptime = Some(30);
-            bitrate = Some(13330);
-        } else if canonical.eq_ignore_ascii_case("isac") {
-            ptime = Some(30);
-            bitrate = Some(32000);
+    let Some(fmtp) = fmtp else {
+        if let Some((ptime, bitrate)) = quirk.no_fmtp {
+            out.ptime = Some(ptime);
+            out.bitrate = Some(bitrate);
         }
-    }
+        return out;
+    };
 
-    // Step 6: fmtp present — apply codec-specific parameter parsers.
-    if let Some(fmtp_str) = fmtp {
-        if canonical.eq_ignore_ascii_case("opus") {
-            if let Some(p) = fmtp_param(fmtp_str, "ptime") {
+    match quirk.fmtp {
+        FmtpRule::None => {}
+        FmtpRule::Ptime => {
+            if let Some(p) = fmtp_param(fmtp, "ptime") {
                 if let Some(v) = parse_ptime_value(p, warnings, "fmtp ptime") {
-                    ptime = Some(v);
+                    out.ptime = Some(v);
                 }
             }
-        } else if canonical.eq_ignore_ascii_case("ilbc") {
-            // mode= sets ptime; fmtp present but no mode= means 30 ms.
-            ptime = Some(match fmtp_param(fmtp_str, "mode") {
+        }
+        FmtpRule::IlbcMode => {
+            out.ptime = Some(match fmtp_param(fmtp, "mode") {
                 Some(m) => parse_ptime_value(m, warnings, "fmtp mode").unwrap_or(30),
                 None => 30,
             });
-        } else if canonical.eq_ignore_ascii_case("g7221") {
-            if let Some(br_str) = fmtp_param(fmtp_str, "bitrate") {
-                match br_str.parse::<u32>() {
-                    Ok(br) => bitrate = Some(br),
-                    Err(_) => {
-                        warnings.push(SdpWarning::unparseable_numeric_attribute(
-                            "g7221 fmtp bitrate",
-                            br_str,
-                        ));
-                    }
+        }
+        FmtpRule::Bitrate => {
+            if let Some(raw) = fmtp_param(fmtp, "bitrate") {
+                match raw.parse::<u32>() {
+                    Ok(bitrate) => out.bitrate = Some(bitrate),
+                    Err(_) => warnings.push(SdpWarning::unparseable_numeric_attribute(
+                        "fmtp bitrate",
+                        raw,
+                    )),
                 }
             }
         }
     }
 
-    (ptime, bitrate)
+    out
 }
 
 #[cfg(test)]

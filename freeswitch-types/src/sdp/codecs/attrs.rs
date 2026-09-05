@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use crate::sdp::error::{SdpCodecError, SdpWarning};
 use crate::sdp::num::atoi_prefix;
-use crate::sdp::static_payload;
 use crate::sdp::SdpDirection;
 
 /// Cursor over an `a=rtpmap`/`a=fmtp` attribute value.
@@ -243,31 +242,43 @@ pub(super) fn parse_ptime_value(
     }
 }
 
-/// Return the first direction attribute from the list, if any.
-pub(super) fn direction_from_attrs(attrs: &[sdp_types::Attribute]) -> Option<SdpDirection> {
-    attrs
-        .iter()
-        .find_map(|a| {
-            // Direction attributes have no value (e.g. `a=sendrecv`, not `a=sendrecv:...`).
-            if a.value
-                .is_none()
-            {
-                a.attribute
-                    .parse::<SdpDirection>()
-                    .ok()
-            } else {
-                None
-            }
-        })
-}
+/// The direction attribute names, which carry no value (`a=sendrecv`, never
+/// `a=sendrecv:…`).
+const DIRECTION_ATTRIBUTES: [&str; 4] = ["sendrecv", "sendonly", "recvonly", "inactive"];
 
-/// Per-codec default ptime in milliseconds when no `a=ptime` is present.
+/// Return the first direction attribute from the list, if any.
 ///
-/// Delegates to `static_payload::default_ptime` — one table, two call sites.
-/// Applied conditionally here (only when no `a=ptime` is present in the SDP);
-/// the public `default_ptime` function is unconditional.
-pub(super) fn default_ptime_ms(canonical_name: &str) -> u32 {
-    static_payload::default_ptime(canonical_name)
+/// A value-less attribute naming a direction in another case is not one — RFC 8866
+/// attribute names are case-sensitive — and is warned about instead of leaving the
+/// caller to read the enclosing level's direction as the peer's.
+pub(super) fn direction_from_attrs(
+    attrs: &[sdp_types::Attribute],
+    warnings: &mut Vec<SdpWarning>,
+) -> Option<SdpDirection> {
+    for attr in attrs
+        .iter()
+        .filter(|a| {
+            a.value
+                .is_none()
+        })
+    {
+        if !DIRECTION_ATTRIBUTES
+            .iter()
+            .any(|d| d.eq_ignore_ascii_case(&attr.attribute))
+        {
+            continue;
+        }
+        match attr
+            .attribute
+            .parse::<SdpDirection>()
+        {
+            Ok(direction) => return Some(direction),
+            Err(_) => warnings.push(SdpWarning::non_canonical_direction_attribute(
+                &attr.attribute,
+            )),
+        }
+    }
+    None
 }
 
 /// Extract a named parameter value from a semicolon-delimited fmtp string.

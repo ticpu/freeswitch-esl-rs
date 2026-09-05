@@ -365,6 +365,14 @@ pub enum SdpWarning {
         /// The cap, [`CodecString::MAX_SWITCH_ENTRIES`](super::codec_string::CodecString::MAX_SWITCH_ENTRIES).
         limit: usize,
     },
+    /// A value-less attribute names a direction in a case RFC 8866 does not accept.
+    ///
+    /// It is not read as one, so the section keeps the direction of the level above
+    /// it — which is what the peer wrote only by coincidence.
+    NonCanonicalDirectionAttribute {
+        /// The attribute name as the peer spelled it.
+        attribute: String,
+    },
 }
 
 impl SdpWarning {
@@ -408,6 +416,13 @@ impl SdpWarning {
         Self::CodecNameUnrepresentable {
             codec_name: codec_name.into(),
             reason: reason.into(),
+        }
+    }
+
+    /// Construct a [`NonCanonicalDirectionAttribute`](SdpWarning::NonCanonicalDirectionAttribute) warning.
+    pub fn non_canonical_direction_attribute(attribute: impl Into<String>) -> Self {
+        Self::NonCanonicalDirectionAttribute {
+            attribute: attribute.into(),
         }
     }
 
@@ -460,6 +475,12 @@ impl fmt::Display for SdpWarning {
             Self::MalformedMediaSection { media_type, reason } => write!(
                 f,
                 "{media_type} section could not be parsed and was skipped entirely: {reason}"
+            ),
+            Self::NonCanonicalDirectionAttribute { attribute } => write!(
+                f,
+                "direction attribute ({} bytes) is not spelled as RFC 8866 defines it \
+                 and was not read as a direction",
+                attribute.len()
             ),
             Self::CodecStringTruncated { entries, limit } => write!(
                 f,
