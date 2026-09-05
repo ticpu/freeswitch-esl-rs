@@ -147,15 +147,7 @@ macro_rules! esl_event_types {
                 }
             }
 
-            // -- Event group constants ----------------------------------------
-            //
-            // Predefined slices for common subscription patterns. Pass directly
-            // to `EslClient::subscribe_events()`.
-            //
-            // Group membership is declared inline via the `[group, ...]` tag on
-            // each variant row above. Adding a new variant and tagging it
-            // automatically includes it in the right constant — no separate
-            // maintenance step required.
+            // Group constants, filtered from the `[group, ...]` tag on each row.
 
             #[doc = "Every `CHANNEL_*` event type."]
             #[doc = ""]

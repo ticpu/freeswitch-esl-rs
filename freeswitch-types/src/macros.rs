@@ -35,14 +35,9 @@ macro_rules! parse_error {
     };
 }
 
-/// Generate an enum with canonical wire-string mappings and a matching
-/// `Parse<Name>Error` error type.
-///
-/// Expands to the enum itself, `ALL`, `as_str()`, `Display`, a `ParseFooError`
-/// newtype (`Debug + Clone + PartialEq + Eq + std::error::Error`), and
-/// `FromStr` that accepts the canonical case only.
-///
-/// Input shape:
+/// Generate a wire-string enum with `ALL`, `as_str`, `Display`, `FromStr` and a
+/// `Parse<Name>Error`. The macro adds `#[non_exhaustive]`, `#[allow(missing_docs)]`
+/// and the serde derives; the caller supplies the rest.
 ///
 /// ```ignore
 /// wire_enum! {
@@ -57,24 +52,14 @@ macro_rules! parse_error {
 /// }
 /// ```
 ///
-/// The caller supplies the derive list and any additional attributes (repr,
-/// cfg_attr, allow). The macro appends `#[non_exhaustive]`,
-/// `#[allow(missing_docs)]`, and `#[cfg_attr(feature = "serde", derive(...))]`
-/// so those do not need to be duplicated at the call sites.
+/// Trailing clauses, in this order. `numeric:` needs a discriminant on every
+/// row; `from_str: ignore_case` excludes `tests:`, which rejects wrong case.
 ///
-/// An optional trailing `tests: <module_ident>;` clause emits a
-/// `#[cfg(test)] mod <module_ident>` containing exhaustive round-trip,
-/// wrong-case-rejection, and unknown-rejection tests. The module name must
-/// be unique within the enclosing scope.
-///
-/// An optional `numeric: <fn_name>(<repr>);` clause emits `from_number(n: <repr>)
-/// -> Option<Self>` and `as_number(&self) -> <repr>` based on the per-variant
-/// discriminants. Every variant must declare a discriminant (`= NUM`) when
-/// this clause is used.
-///
-/// An optional `from_str: ignore_case;` clause makes `FromStr` match with
-/// `eq_ignore_ascii_case`, for the config-facing types the crate's casing rule
-/// exempts. It is incompatible with `tests:`, which asserts wrong-case rejection.
+/// ```ignore
+///     numeric: from_number(u8);
+///     from_str: ignore_case;
+///     tests: channel_state_wire_tests;
+/// ```
 macro_rules! wire_enum {
     // With tests + numeric: emit base + numeric + test module.
     (
