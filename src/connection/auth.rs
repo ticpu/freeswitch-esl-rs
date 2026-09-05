@@ -313,6 +313,64 @@ mod tests {
             .is_none());
     }
 
+    #[tokio::test]
+    async fn salvage_failure_surfaces_its_own_reason() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("[::1]:0")
+            .await
+            .unwrap();
+        let addr = listener
+            .local_addr()
+            .unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener
+                .accept()
+                .await
+                .unwrap();
+            sock.write_all(b"Content-Type: auth/request\n\n")
+                .await
+                .unwrap();
+            let mut discard = [0u8; 128];
+            sock.read(&mut discard)
+                .await
+                .unwrap();
+            // A truncated block that is not an auth reply at all: the salvage
+            // must say so rather than let the read timeout stand as the cause.
+            sock.write_all(b"Content-Type: text/event-plain\nReply-Text: +OK\n")
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .unwrap();
+        let mut parser = EslParser::new();
+        let mut read_buffer = [0u8; 1024];
+        let err = authenticate(
+            &mut stream,
+            &mut parser,
+            &mut read_buffer,
+            AuthMethod::Password("ClueCon"),
+            Duration::from_millis(200),
+        )
+        .await
+        .expect_err("a non-auth truncated reply must not authenticate");
+
+        assert!(
+            matches!(err, EslError::ProtocolError { .. }),
+            "got: {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("command/reply"),
+            "error must name the check that failed: {err}"
+        );
+        server.abort();
+    }
+
     #[test]
     fn salvage_wrong_content_type_returns_error() {
         let wire_data = "Content-Type: auth/request\n";
