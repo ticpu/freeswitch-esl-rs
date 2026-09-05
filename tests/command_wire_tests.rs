@@ -6,7 +6,7 @@
 mod mock_server;
 
 use freeswitch_esl_tokio::{
-    EslClient, EslEvent, EslEventType, EventFormat, HeaderLookup, DEFAULT_ESL_PASSWORD,
+    EslClient, EslError, EslEvent, EslEventType, EventFormat, HeaderLookup, DEFAULT_ESL_PASSWORD,
 };
 use mock_server::{recv_event, setup_connected_pair, setup_raw_pair, MockClient};
 use std::collections::HashMap;
@@ -43,281 +43,149 @@ async fn test_sendevent_command() {
     assert!(response.is_success());
 }
 
-#[tokio::test]
-async fn test_myevents_command() {
+/// Run one command against the mock and check the exact bytes it wrote.
+///
+/// The call is a closure driven alongside the mock: it does not return until
+/// the reply arrives, and the reply cannot be sent before the command is read.
+async fn wire_round_trip<T, F, Fut>(expected: &str, call: F)
+where
+    T: std::fmt::Debug,
+    F: FnOnce(EslClient) -> Fut,
+    Fut: std::future::Future<Output = Result<T, EslError>>,
+{
     let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
 
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .myevents(EventFormat::Plain)
-                .await
-        }
+    let (result, sent) = tokio::join!(call(client.clone()), async {
+        let sent = mock
+            .read_command()
+            .await;
+        mock.reply_ok()
+            .await;
+        sent
     });
 
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "myevents plain\n\n");
-    mock.reply_ok()
-        .await;
+    assert_eq!(sent, expected);
+    if let Err(e) = result {
+        panic!("{expected:?} was rejected: {e}");
+    }
+}
 
-    task.await
-        .unwrap()
-        .unwrap();
+#[tokio::test]
+async fn test_myevents_command() {
+    wire_round_trip("myevents plain\n\n", |client| async move {
+        client
+            .myevents(EventFormat::Plain)
+            .await
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_myevents_uuid_command() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .myevents_uuid("abc-123-def", EventFormat::Json)
-                .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "myevents abc-123-def json\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+    wire_round_trip("myevents abc-123-def json\n\n", |client| async move {
+        client
+            .myevents_uuid("abc-123-def", EventFormat::Json)
+            .await
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_linger_command() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .linger(None)
-                .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "linger\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+    wire_round_trip("linger\n\n", |client| async move {
+        client
+            .linger(None)
+            .await
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_linger_timeout_command() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .linger(Some(std::time::Duration::from_secs(300)))
-                .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "linger 300\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+    wire_round_trip("linger 300\n\n", |client| async move {
+        client
+            .linger(Some(std::time::Duration::from_secs(300)))
+            .await
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_nolinger_command() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .nolinger()
-                .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "nolinger\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+    wire_round_trip("nolinger\n\n", |client| async move {
+        client
+            .nolinger()
+            .await
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_resume_command() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .resume()
-                .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "resume\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+    wire_round_trip("resume\n\n", |client| async move {
+        client
+            .resume()
+            .await
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_nixevent_command() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
+    wire_round_trip(
+        "nixevent CHANNEL_CREATE CHANNEL_DESTROY\n\n",
+        |client| async move {
             client
                 .nixevent(&[EslEventType::ChannelCreate, EslEventType::ChannelDestroy])
                 .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "nixevent CHANNEL_CREATE CHANNEL_DESTROY\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+        },
+    )
+    .await;
 }
 
 /// `nixevent` shares the `event` grammar, so a `CUSTOM` ahead of another type
 /// would delete a subclass by that name instead of unsubscribing the type.
 #[tokio::test]
 async fn test_nixevent_custom_orders_last() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .nixevent(&[EslEventType::Custom, EslEventType::ChannelCreate])
-                .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "nixevent CHANNEL_CREATE CUSTOM\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+    wire_round_trip("nixevent CHANNEL_CREATE CUSTOM\n\n", |client| async move {
+        client
+            .nixevent(&[EslEventType::Custom, EslEventType::ChannelCreate])
+            .await
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_noevents_command() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .noevents()
-                .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "noevents\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+    wire_round_trip("noevents\n\n", |client| async move {
+        client
+            .noevents()
+            .await
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn test_filter_delete_command() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
+    wire_round_trip(
+        "filter delete Event-Name CHANNEL_CREATE\n\n",
+        |client| async move {
             client
                 .filter_delete_raw("Event-Name", Some("CHANNEL_CREATE"))
                 .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "filter delete Event-Name CHANNEL_CREATE\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn test_divert_events_command() {
-    let (mut mock, client, _events) = setup_connected_pair(DEFAULT_ESL_PASSWORD).await;
-
-    let task = tokio::spawn({
-        let client = client.clone();
-        async move {
-            client
-                .divert_events(true)
-                .await
-        }
-    });
-
-    let cmd = mock
-        .read_command()
-        .await;
-    assert_eq!(cmd, "divert_events on\n\n");
-    mock.reply_ok()
-        .await;
-
-    task.await
-        .unwrap()
-        .unwrap();
+    wire_round_trip("divert_events on\n\n", |client| async move {
+        client
+            .divert_events(true)
+            .await
+    })
+    .await;
 }
 
 #[tokio::test]

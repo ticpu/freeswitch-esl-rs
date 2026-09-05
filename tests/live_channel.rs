@@ -25,62 +25,54 @@ use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::Instant;
 
+/// The dialplan extension every originate in this file dials.
+fn test_9199() -> Endpoint {
+    Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test"))
+}
+
+/// Originate over bgapi and reap what it created. The originate is the
+/// assertion: a dial string FreeSWITCH will not take comes back `-ERR`.
+async fn originate_and_reap(cmd: &Originate) {
+    let (client, mut events, _permit) = connect().await;
+
+    client
+        .subscribe_events(EventFormat::Plain, &[EslEventType::BackgroundJob])
+        .await
+        .unwrap();
+
+    let uuid = bgapi_originate_ok(&client, &mut events, cmd).await;
+    kill_channel(&client, &uuid).await;
+}
+
+/// `&park()` holds the channel, so bgapi returns while it is still up.
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_originate_application_target() {
-    let (client, mut events, _permit) = connect().await;
-
-    client
-        .subscribe_events(EventFormat::Plain, &[EslEventType::BackgroundJob])
-        .await
-        .unwrap();
-
-    // Single application target: &park() holds the channel, bgapi returns immediately
-    let cmd = Originate::application(
-        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
+    originate_and_reap(&Originate::application(
+        test_9199(),
         Application::simple("park"),
-    );
-
-    let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
-    kill_channel(&client, &uuid).await;
+    ))
+    .await;
 }
 
+/// Extension target: routed through the XML dialplan rather than an app.
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_originate_extension_target() {
-    let (client, mut events, _permit) = connect().await;
+    let cmd = Originate::extension(test_9199(), "9199")
+        .dialplan(DialplanType::Xml)
+        .unwrap()
+        .context("test");
 
-    client
-        .subscribe_events(EventFormat::Plain, &[EslEventType::BackgroundJob])
-        .await
-        .unwrap();
-
-    // Extension target: route through XML dialplan to 9199 (echo) in test context
-    let cmd = Originate::extension(
-        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
-        "9199",
-    )
-    .dialplan(DialplanType::Xml)
-    .unwrap()
-    .context("test");
-
-    let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
-    kill_channel(&client, &uuid).await;
+    originate_and_reap(&cmd).await;
 }
 
+/// An inline dialplan, which answers and hangs up before bgapi reports.
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_originate_inline_target() {
-    let (client, mut events, _permit) = connect().await;
-
-    client
-        .subscribe_events(EventFormat::Plain, &[EslEventType::BackgroundJob])
-        .await
-        .unwrap();
-
-    // Inline dialplan: answer then hangup (instant)
     let cmd = Originate::inline(
-        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
+        test_9199(),
         vec![
             Application::simple("answer"),
             Application::new("hangup", Some("NORMAL_CLEARING")),
@@ -88,32 +80,18 @@ async fn live_originate_inline_target() {
     )
     .unwrap();
 
-    // answer+hangup is instant, bgapi returns the result quickly
-    let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
-    // Channel already hung up, but kill just in case
-    kill_channel(&client, &uuid).await;
+    originate_and_reap(&cmd).await;
 }
 
+/// A timeout without cid_name/cid_num forces `undef` placeholders into the
+/// positional tail, which FreeSWITCH has to accept as NULL arguments.
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_originate_timeout_fills_positional_gaps() {
-    let (client, mut events, _permit) = connect().await;
+    let cmd = Originate::application(test_9199(), Application::simple("park"))
+        .timeout(Duration::from_secs(5));
 
-    client
-        .subscribe_events(EventFormat::Plain, &[EslEventType::BackgroundJob])
-        .await
-        .unwrap();
-
-    // Timeout without cid_name/cid_num forces `undef` placeholders on the wire.
-    // Verifies FreeSWITCH accepts `undef` as a NULL positional arg.
-    let cmd = Originate::application(
-        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
-        Application::simple("park"),
-    )
-    .timeout(Duration::from_secs(5));
-
-    let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
-    kill_channel(&client, &uuid).await;
+    originate_and_reap(&cmd).await;
 }
 
 #[tokio::test]
@@ -193,10 +171,7 @@ async fn live_uuid_setvar_getvar_round_trip() {
         .unwrap();
 
     // Create a channel to work with
-    let cmd = Originate::application(
-        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
-        Application::simple("park"),
-    );
+    let cmd = Originate::application(test_9199(), Application::simple("park"));
     let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
 
     // Set a variable on the channel
@@ -240,10 +215,7 @@ async fn live_uuid_kill_with_cause() {
         .await
         .unwrap();
 
-    let cmd = Originate::application(
-        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
-        Application::simple("park"),
-    );
+    let cmd = Originate::application(test_9199(), Application::simple("park"));
     let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
 
     // Kill with a specific hangup cause
@@ -305,27 +277,39 @@ const ESCAPING_CASES: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-fn escaping_block(pairs: &[(&str, &str)]) -> Variables {
+/// `lead` goes in first, so a value that eats its separator damages a variable
+/// after it rather than the one the far side is found by.
+fn escaping_block(
+    lead: &[(&str, &str)],
+    pairs: &[(&str, &str)],
+    separator: Option<char>,
+) -> Variables {
     let mut vars = Variables::new(VariablesType::Default);
-    for (k, v) in pairs {
+    for (k, v) in lead
+        .iter()
+        .chain(pairs.iter())
+    {
         vars.insert(*k, *v);
     }
-    vars
+    match separator {
+        None => vars,
+        Some(sep) => vars
+            .with_separator(sep)
+            .unwrap_or_else(|e| panic!("{sep:?} rejected: {e}")),
+    }
 }
 
 /// Appears in none of [`ESCAPING_CASES`], which is what `with_separator`
 /// demands and what keeps a comma ordinary text inside the block.
 const ESCAPING_SEPARATOR: char = '~';
 
-/// The `originate` API splits its argument list before the block is parsed, so
-/// this carrier needs one escaping level more than a dialplan application.
-#[tokio::test]
-#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
-async fn live_escaping_survives_the_api_carrier() {
+/// Every case through `originate`, whose argument list the switch splits before
+/// the block is parsed.
+async fn escaping_over_the_api_carrier(separator: Option<char>) {
     let (client, _events, permit) = connect().await;
 
     for (label, pairs) in ESCAPING_CASES {
-        let vars = escaping_block(pairs);
+        let vars = escaping_block(&[], pairs, separator);
         let resp = client
             .api(&format!("originate {vars}null/escaping &park()"))
             .await
@@ -346,19 +330,20 @@ async fn live_escaping_survives_the_api_carrier() {
             .await;
 
         for (key, want, got) in results {
-            assert_eq!(got.as_deref(), Some(want), "{label}: {key} arrived wrong");
+            assert_eq!(
+                got.as_deref(),
+                Some(want),
+                "{label}: {key} arrived wrong from {vars}"
+            );
         }
     }
 
     drop(permit);
 }
 
-/// A dialplan application receives its argument whole, so the same values need
-/// one level less. Rendering with the API default here would corrupt a quoted
-/// value, which is the whole reason the carrier is nameable.
-#[tokio::test]
-#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
-async fn live_escaping_survives_the_dialplan_carrier() {
+/// Every case through a dialplan application, which receives its argument
+/// whole and so needs one escaping level less.
+async fn escaping_over_the_dialplan_carrier(separator: Option<char>) {
     let (client, _events, permit) = connect().await;
 
     for (label, pairs) in ESCAPING_CASES {
@@ -377,25 +362,21 @@ async fn live_escaping_survives_the_dialplan_carrier() {
             .expect("anchor originate failed")
             .to_string();
 
-        // Pre-assigning the B leg's uuid is what makes the far side findable;
-        // it leads the block so a later value cannot take it with it.
-        let mut vars = Variables::new(VariablesType::Default);
-        vars.insert("origination_uuid", &b_uuid);
-        for (k, v) in *pairs {
-            vars.insert(*k, *v);
-        }
+        // Pre-assigning the B leg's uuid is what makes the far side findable.
+        let vars = escaping_block(&[("origination_uuid", &b_uuid)], pairs, separator);
 
         let mut reaper = ChannelReaper::new(&client);
         reaper.track(&a_uuid);
         reaper.track(&b_uuid);
 
+        let dial_string = format!(
+            "{}null/escaping",
+            vars.display_for(DialStringCarrier::Dialplan)
+        );
         client
             .execute_with_options(
                 "bridge",
-                Some(&format!(
-                    "{}null/escaping",
-                    vars.display_for(DialStringCarrier::Dialplan)
-                )),
+                Some(&dial_string),
                 Some(&a_uuid),
                 ExecuteOptions::new().with_async(),
             )
@@ -419,11 +400,32 @@ async fn live_escaping_survives_the_dialplan_carrier() {
             .await;
 
         for (key, want, got) in results {
-            assert_eq!(got.as_deref(), Some(want), "{label}: {key} arrived wrong");
+            assert_eq!(
+                got.as_deref(),
+                Some(want),
+                "{label}: {key} arrived wrong from {dial_string}"
+            );
         }
     }
 
     drop(permit);
+}
+
+/// The `originate` API splits its argument list before the block is parsed, so
+/// this carrier needs one escaping level more than a dialplan application.
+#[tokio::test]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
+async fn live_escaping_survives_the_api_carrier() {
+    escaping_over_the_api_carrier(None).await;
+}
+
+/// A dialplan application receives its argument whole, so the same values need
+/// one level less. Rendering with the API default here would corrupt a quoted
+/// value, which is the whole reason the carrier is nameable.
+#[tokio::test]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
+async fn live_escaping_survives_the_dialplan_carrier() {
+    escaping_over_the_dialplan_carrier(None).await;
 }
 
 /// A separator the values do not contain is the only way a `${...}`-expanded
@@ -468,41 +470,7 @@ async fn live_chosen_separator_carries_commas_unescaped() {
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_separated_escaping_survives_the_api_carrier() {
-    let (client, _events, permit) = connect().await;
-
-    for (label, pairs) in ESCAPING_CASES {
-        let vars = escaping_block(pairs)
-            .with_separator(ESCAPING_SEPARATOR)
-            .unwrap_or_else(|e| panic!("{label}: {ESCAPING_SEPARATOR:?} rejected: {e}"));
-        let resp = client
-            .api(&format!("originate {vars}null/escaping &park()"))
-            .await
-            .unwrap_or_else(|e| panic!("{label}: originate transport error: {e}"));
-        let uuid = resp
-            .api_result()
-            .unwrap_or_else(|e| panic!("{label}: originate rejected {vars}: {e}"))
-            .to_string();
-
-        let mut reaper = ChannelReaper::new(&client);
-        reaper.track(&uuid);
-        let mut results = Vec::new();
-        for (key, want) in *pairs {
-            results.push((*key, *want, getvar(&client, &uuid, key).await));
-        }
-        reaper
-            .reap()
-            .await;
-
-        for (key, want, got) in results {
-            assert_eq!(
-                got.as_deref(),
-                Some(want),
-                "{label}: {key} arrived wrong from {vars}"
-            );
-        }
-    }
-
-    drop(permit);
+    escaping_over_the_api_carrier(Some(ESCAPING_SEPARATOR)).await;
 }
 
 /// The dialplan half of the pair above: one escaping level less, same block
@@ -511,75 +479,7 @@ async fn live_separated_escaping_survives_the_api_carrier() {
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_separated_escaping_survives_the_dialplan_carrier() {
-    let (client, _events, permit) = connect().await;
-
-    for (label, pairs) in ESCAPING_CASES {
-        let b_uuid = client
-            .api("create_uuid")
-            .await
-            .expect("create_uuid transport error")
-            .api_result()
-            .expect("create_uuid failed")
-            .to_string();
-        let a_uuid = client
-            .api("originate null/anchor &park()")
-            .await
-            .expect("anchor transport error")
-            .api_result()
-            .expect("anchor originate failed")
-            .to_string();
-
-        let mut vars = Variables::new(VariablesType::Default);
-        vars.insert("origination_uuid", &b_uuid);
-        for (k, v) in *pairs {
-            vars.insert(*k, *v);
-        }
-        let vars = vars
-            .with_separator(ESCAPING_SEPARATOR)
-            .unwrap_or_else(|e| panic!("{label}: {ESCAPING_SEPARATOR:?} rejected: {e}"));
-
-        let mut reaper = ChannelReaper::new(&client);
-        reaper.track(&a_uuid);
-        reaper.track(&b_uuid);
-
-        let dial_string = format!(
-            "{}null/escaping",
-            vars.display_for(DialStringCarrier::Dialplan)
-        );
-        client
-            .execute_with_options(
-                "bridge",
-                Some(&dial_string),
-                Some(&a_uuid),
-                ExecuteOptions::new().with_async(),
-            )
-            .await
-            .unwrap_or_else(|e| panic!("{label}: execute bridge transport error: {e}"))
-            .check()
-            .unwrap_or_else(|e| panic!("{label}: execute bridge rejected: {e}"));
-
-        let deadline = Instant::now() + Duration::from_secs(10);
-        wait_for_var(&client, &a_uuid, "bridge_uuid", deadline)
-            .await
-            .unwrap_or_else(|| panic!("{label}: the anchor never bridged"));
-        let mut results = Vec::new();
-        for (key, want) in *pairs {
-            results.push((*key, *want, getvar(&client, &b_uuid, key).await));
-        }
-        reaper
-            .reap()
-            .await;
-
-        for (key, want, got) in results {
-            assert_eq!(
-                got.as_deref(),
-                Some(want),
-                "{label}: {key} arrived wrong from {dial_string}"
-            );
-        }
-    }
-
-    drop(permit);
+    escaping_over_the_dialplan_carrier(Some(ESCAPING_SEPARATOR)).await;
 }
 
 /// The refusal in `Variables` rests on this: an empty value never reaches the
@@ -653,10 +553,7 @@ async fn live_channel_dump_rebuild_loop() {
     let mut reaper = ChannelReaper::new(&client);
     let mut uuids = Vec::new();
     for _ in 0..2 {
-        let cmd = Originate::application(
-            Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
-            Application::simple("park"),
-        );
+        let cmd = Originate::application(test_9199(), Application::simple("park"));
         let uuid = client
             .api(&cmd.to_string())
             .await
@@ -778,10 +675,7 @@ async fn live_channel_dump_of_reaped_uuid_is_skippable() {
         .await
         .unwrap();
 
-    let cmd = Originate::application(
-        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
-        Application::simple("park"),
-    );
+    let cmd = Originate::application(test_9199(), Application::simple("park"));
     let uuid = bgapi_originate_ok(&client, &mut events, &cmd).await;
     kill_channel(&client, &uuid).await;
 
@@ -903,10 +797,7 @@ async fn live_show_bootstrap_rebuilds_channel_create() {
     // `api`, not `bgapi_originate_ok`: waiting on a BACKGROUND_JOB drains the
     // stream this test reads its CHANNEL_CREATE off.
     let mut reaper = ChannelReaper::new(&client);
-    let cmd = Originate::application(
-        Endpoint::Loopback(LoopbackEndpoint::new("9199").with_context("test")),
-        Application::simple("park"),
-    );
+    let cmd = Originate::application(test_9199(), Application::simple("park"));
     let uuid = client
         .api(&cmd.to_string())
         .await

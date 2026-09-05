@@ -466,140 +466,109 @@ async fn live_log_events_have_log_type() {
     panic!("did not receive any log event with EslEventType::Log");
 }
 
-/// Verify that header key normalization works against real FreeSWITCH.
+/// Park a loopback channel and hand back the first `event_type` it emits,
+/// reaping the channel before the caller asserts on the event.
 ///
-/// FreeSWITCH emits headers with inconsistent casing from multiple C code paths.
-/// This test confirms that known EventHeader variants resolve, no duplicate keys
-/// exist after normalization, and channel variables preserve underscore keys.
-#[tokio::test]
-#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
-async fn live_header_normalization() {
+/// The originate goes over `api`, which returns once the channel answers;
+/// events queue while it blocks.
+async fn park_and_await(event_type: EslEventType) -> freeswitch_esl_tokio::EslEvent {
     let (client, mut events, _permit) = connect().await;
 
     client
-        .subscribe_events(EventFormat::Plain, &[EslEventType::ChannelCreate])
+        .subscribe_events(EventFormat::Plain, &[event_type])
         .await
         .expect("subscribe failed");
 
-    // api originate is synchronous — events are queued while it blocks
     let originate = Originate::application(
         Endpoint::from(LoopbackEndpoint::new("9199")),
         Application::park(),
     );
-    let resp = client
+    let uuid = client
         .api(&originate.to_string())
         .await
-        .expect("originate failed");
-    let uuid = resp
+        .expect("originate: transport error")
         .api_result()
-        .expect("originate returned error")
+        .expect("originate rejected")
         .to_string();
 
     let mut reaper = ChannelReaper::new(&client);
     reaper.track(&uuid);
 
     let deadline = Instant::now() + Duration::from_secs(10);
-    let created_event =
-        wait_for_own_event(&mut events, &uuid, EslEventType::ChannelCreate, deadline).await;
+    let event = wait_for_own_event(&mut events, &uuid, event_type, deadline).await;
 
     reaper
         .reap()
         .await;
 
-    let evt = created_event.expect("never received CHANNEL_CREATE event");
+    event.unwrap_or_else(|| panic!("no {event_type} for {uuid}"))
+}
 
-    // Known EventHeader lookups must work
-    assert!(evt
-        .header(EventHeader::UniqueId)
-        .is_some());
-    assert!(evt
-        .header(EventHeader::ChannelState)
-        .is_some());
-    assert!(evt
-        .header(EventHeader::EventName)
-        .is_some());
-
-    // No duplicate keys (normalization collapsed different casings)
-    let headers = evt.headers();
-    let unique_lower: std::collections::HashSet<String> = headers
+/// The keys of an event, lowercased: as many as the event has, or the switch
+/// sent one header under two spellings and normalization kept both.
+fn distinct_lowercased_keys(evt: &freeswitch_esl_tokio::EslEvent) -> Vec<String> {
+    let mut keys: Vec<String> = evt
+        .headers()
         .keys()
         .map(|k| k.to_ascii_lowercase())
         .collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+/// FreeSWITCH emits the same header Title-Cased from `switch_channel.c` and
+/// lowercase from `switch_event.c`, so a live event is the only proof that
+/// both spellings land on one key.
+#[tokio::test]
+#[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
+async fn live_header_normalization() {
+    let evt = park_and_await(EslEventType::ChannelCreate).await;
+
+    for header in [
+        EventHeader::UniqueId,
+        EventHeader::ChannelState,
+        EventHeader::EventName,
+    ] {
+        assert!(
+            evt.header(header)
+                .is_some(),
+            "{header} must resolve on a CHANNEL_CREATE"
+        );
+    }
     assert_eq!(
-        headers.len(),
-        unique_lower.len(),
+        evt.headers()
+            .len(),
+        distinct_lowercased_keys(&evt).len(),
         "duplicate keys with different casing found in headers"
     );
 
-    // Channel variables preserve underscore keys
+    // Channel variables keep their underscore keys.
     let direction = evt
         .variable_str("direction")
         .expect("CHANNEL_CREATE carries variable_direction");
     assert!(!direction.is_empty());
 }
 
-/// Verify that CODEC events have normalized codec headers.
-///
-/// switch_core_codec.c emits lowercase headers while switch_channel.c
-/// emits Title-Case — both should normalize to the same canonical key.
+/// The same, for the event `switch_core_codec.c` writes with a casing all its
+/// own -- read codec lowercase, write codec mixed.
 #[tokio::test]
 #[ignore = "needs FreeSWITCH ESL on :8022; see docs/live-test-switch.md"]
 async fn live_codec_header_normalization() {
-    let (client, mut events, _permit) = connect().await;
+    let evt = park_and_await(EslEventType::Codec).await;
 
-    client
-        .subscribe_events(EventFormat::Plain, &[EslEventType::Codec])
-        .await
-        .expect("subscribe failed");
-
-    let originate = Originate::application(
-        Endpoint::from(LoopbackEndpoint::new("9199")),
-        Application::park(),
-    );
-    let resp = client
-        .api(&originate.to_string())
-        .await
-        .expect("originate failed");
-    let uuid = resp
-        .api_result()
-        .expect("originate returned error")
-        .to_string();
-
-    let mut reaper = ChannelReaper::new(&client);
-    reaper.track(&uuid);
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let codec_event = wait_for_own_event(&mut events, &uuid, EslEventType::Codec, deadline).await;
-
-    reaper
-        .reap()
-        .await;
-
-    let evt = codec_event.expect("never received CODEC event");
-
-    // Codec headers accessible via typed API
     let codec = evt
         .header(EventHeader::ChannelReadCodecName)
         .expect("a CODEC event names the read codec");
     assert!(!codec.is_empty());
 
-    // No duplicate keys after normalization
-    let headers = evt.headers();
-    let unique_lower: std::collections::HashSet<String> = headers
-        .keys()
-        .map(|k| k.to_ascii_lowercase())
-        .collect();
     assert_eq!(
-        headers.len(),
-        unique_lower.len(),
+        evt.headers()
+            .len(),
+        distinct_lowercased_keys(&evt).len(),
         "CODEC event has duplicate keys with different casing: {:?}",
-        headers
+        evt.headers()
             .keys()
-            .filter(|k| {
-                headers
-                    .keys()
-                    .any(|other| other != *k && other.eq_ignore_ascii_case(k))
-            })
             .collect::<Vec<_>>()
     );
 }
