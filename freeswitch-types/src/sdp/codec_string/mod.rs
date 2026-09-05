@@ -3,6 +3,9 @@
 //! See `docs/codec-string-format.md` for the full grammar, parse-order hazards,
 //! and fmtp delimiter collisions. This module provides typed construction and
 //! round-trip-safe serialisation.
+//!
+//! Line numbers in this module index FreeSWITCH `v1.11.1`
+//! (`c2c59645f6911a76589e5008c4d73349ded44b65`).
 
 mod entry;
 mod parse;

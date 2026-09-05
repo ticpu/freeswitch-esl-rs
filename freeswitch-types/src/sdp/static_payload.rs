@@ -1,3 +1,9 @@
+//! RFC 3551 static payload types, and FreeSWITCH's default rate, ptime and bitrate
+//! tables.
+//!
+//! Line numbers in this module index FreeSWITCH `v1.11.1`
+//! (`c2c59645f6911a76589e5008c4d73349ded44b65`).
+
 /// RFC 3551 static payload type descriptor.
 pub(crate) struct StaticPayloadType {
     pub encoding_name: &'static str,

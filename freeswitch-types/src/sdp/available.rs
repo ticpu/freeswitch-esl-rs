@@ -1,5 +1,8 @@
 //! Which codec-string entries a loaded FreeSWITCH survives implementation matching.
 //!
+//! Line numbers in this module index FreeSWITCH `v1.11.1`
+//! (`c2c59645f6911a76589e5008c4d73349ded44b65`).
+//!
 //! `switch_loadable_module_get_codecs_sorted` (`switch_loadable_module.c:2796-2929`) drops
 //! a codec-string entry in two unlogged places: no codec interface registered under that
 //! name/modname at all (`:2547-2572`, `:2849`), or an interface exists but no implementation
