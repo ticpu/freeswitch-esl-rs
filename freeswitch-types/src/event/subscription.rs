@@ -4,16 +4,50 @@ use crate::headers::EventHeader;
 use crate::sofia::SofiaEventSubclass;
 use std::fmt;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WireTokenFault {
+    Empty,
+    Newline,
+    Space,
+}
+
+impl WireTokenFault {
+    fn classify(s: &str) -> Option<Self> {
+        if s.is_empty() {
+            Some(Self::Empty)
+        } else if crate::wire_safety::contains_wire_terminator(s) {
+            Some(Self::Newline)
+        } else if s.contains(' ') {
+            Some(Self::Space)
+        } else {
+            None
+        }
+    }
+}
+
 /// Error returned when an [`EventSubscription`] builder method receives invalid input.
 ///
 /// Custom subclasses and filter values are validated against ESL wire-safety
 /// constraints: no newlines, carriage returns, or (for subclasses) spaces.
+/// `Display` names the character class that made the value unusable and the
+/// value's size; the value itself is subscriber data and stays on the field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventSubscriptionError(pub String);
 
 impl fmt::Display for EventSubscriptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid event subscription: {}", self.0)
+        let class = match WireTokenFault::classify(&self.0) {
+            Some(WireTokenFault::Empty) => return f.write_str("event subscription token is empty"),
+            Some(WireTokenFault::Newline) => "a newline",
+            Some(WireTokenFault::Space) => "a space",
+            None => "an unusable character",
+        };
+        write!(
+            f,
+            "event subscription token contains {class} ({} bytes)",
+            self.0
+                .len()
+        )
     }
 }
 
@@ -47,7 +81,6 @@ impl std::error::Error for EventSubscriptionError {}
 /// assert!(!sub.is_all());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub struct EventSubscription {
     format: EventFormat,
     events: Vec<EslEventType>,
@@ -56,45 +89,50 @@ pub struct EventSubscription {
     filters: Vec<(String, String)>,
 }
 
-/// Wire-safety validator shared by raw events, custom subclasses, and filter fields.
-///
-/// Newlines/CRs are always rejected (would inject extra ESL commands). When
-/// `reject_empty` is set the value must be non-empty. When `reject_space` is
-/// set spaces are rejected (token splitting on the wire).
-fn validate_wire_token(
-    s: &str,
-    label: &str,
+/// What a field accepts beyond the newline ban every wire value carries.
+#[derive(Debug, Clone, Copy)]
+struct WireTokenRules {
     reject_empty: bool,
     reject_space: bool,
-) -> Result<(), EventSubscriptionError> {
-    if reject_empty && s.is_empty() {
-        return Err(EventSubscriptionError(format!("{} cannot be empty", label)));
-    }
-    if crate::wire_safety::contains_wire_terminator(s) {
-        return Err(EventSubscriptionError(format!(
-            "{} contains newline: {:?}",
-            label, s
-        )));
-    }
-    if reject_space && s.contains(' ') {
-        return Err(EventSubscriptionError(format!(
-            "{} contains space: {:?}",
-            label, s
-        )));
+}
+
+impl WireTokenRules {
+    /// One wire token: the switch splits on spaces and drops an empty one.
+    const TOKEN: Self = Self {
+        reject_empty: true,
+        reject_space: true,
+    };
+
+    /// Free text within a header line, where only the terminators are unusable.
+    const TEXT: Self = Self {
+        reject_empty: false,
+        reject_space: false,
+    };
+}
+
+fn validate_wire_token(s: &str, rules: WireTokenRules) -> Result<(), EventSubscriptionError> {
+    let rejected = match WireTokenFault::classify(s) {
+        Some(WireTokenFault::Empty) => rules.reject_empty,
+        Some(WireTokenFault::Newline) => true,
+        Some(WireTokenFault::Space) => rules.reject_space,
+        None => false,
+    };
+    if rejected {
+        return Err(EventSubscriptionError(s.to_string()));
     }
     Ok(())
 }
 
 fn validate_raw_event(s: &str) -> Result<(), EventSubscriptionError> {
-    validate_wire_token(s, "raw event", true, true)
+    validate_wire_token(s, WireTokenRules::TOKEN)
 }
 
 fn validate_custom_subclass(s: &str) -> Result<(), EventSubscriptionError> {
-    validate_wire_token(s, "custom subclass", true, true)
+    validate_wire_token(s, WireTokenRules::TOKEN)
 }
 
-fn validate_filter_field(field: &str, label: &str) -> Result<(), EventSubscriptionError> {
-    validate_wire_token(field, &format!("filter {}", label), false, false)
+fn validate_filter_field(s: &str) -> Result<(), EventSubscriptionError> {
+    validate_wire_token(s, WireTokenRules::TEXT)
 }
 
 const CUSTOM_TOKEN: &str = "CUSTOM";
@@ -323,7 +361,7 @@ impl EventSubscription {
         value: impl Into<String>,
     ) -> Result<Self, EventSubscriptionError> {
         let v = value.into();
-        validate_filter_field(&v, "value")?;
+        validate_filter_field(&v)?;
         let mut s = self;
         s.filters
             .push((
@@ -345,8 +383,8 @@ impl EventSubscription {
     ) -> Result<Self, EventSubscriptionError> {
         let h = header.into();
         let v = value.into();
-        validate_filter_field(&h, "header")?;
-        validate_filter_field(&v, "value")?;
+        validate_filter_field(&h)?;
+        validate_filter_field(&v)?;
         let mut s = self;
         s.filters
             .push((h, v));
@@ -500,8 +538,8 @@ mod event_subscription_serde {
                 validate_custom_subclass(sc)?;
             }
             for (h, v) in &raw.filters {
-                validate_filter_field(h, "header")?;
-                validate_filter_field(v, "value")?;
+                validate_filter_field(h)?;
+                validate_filter_field(v)?;
             }
             Ok(EventSubscription {
                 format: raw.format,
