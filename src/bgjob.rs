@@ -329,6 +329,11 @@ mod tests {
     fn new_tracker_is_empty() {
         let bg = BgJobTracker::<String>::new();
         assert_eq!(bg.pending_count(), 0);
+        assert_eq!(
+            bg.pending_jobs()
+                .count(),
+            0
+        );
     }
 
     #[test]
@@ -448,6 +453,28 @@ mod tests {
     }
 
     #[test]
+    fn bgjob_result_call_info_array_encoding() {
+        use freeswitch_types::sip_header::SipHeaderLookup;
+
+        let mut event = bg_job_event("uuid-1", "+OK");
+        event.set_header(
+            "Call-Info",
+            "ARRAY::<urn:emergency:uid:callid:abc>;purpose=emergency-CallId\
+             |:<urn:emergency:uid:incidentid:def>;purpose=emergency-IncidentId",
+        );
+        let result = BgJobResult(&event);
+        let ci = result
+            .call_info()
+            .expect("ARRAY value must decode")
+            .expect("header is present");
+        assert_eq!(
+            ci.entries()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
     fn bgjob_result_event_access() {
         let event = bg_job_event("uuid-1", "+OK data");
         let result = BgJobResult(&event);
@@ -470,16 +497,6 @@ mod tests {
             .collect();
         uuids.sort();
         assert_eq!(uuids, vec!["uuid-a", "uuid-b"]);
-    }
-
-    #[test]
-    fn pending_jobs_empty() {
-        let bg = BgJobTracker::<()>::new();
-        assert_eq!(
-            bg.pending_jobs()
-                .count(),
-            0
-        );
     }
 
     #[test]
