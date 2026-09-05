@@ -587,6 +587,16 @@ mod tests {
     }
 
     #[test]
+    fn from_str_case_insensitive_prefix_keeps_the_suffix_as_written() {
+        let parsed: SipPassthroughHeader = "SIP_H_X-Tenant"
+            .parse()
+            .unwrap();
+        assert_eq!(parsed.prefix(), SipHeaderPrefix::Request);
+        assert_eq!(parsed.canonical_name(), "X-Tenant");
+        assert_eq!(parsed.as_str(), "sip_h_X-Tenant");
+    }
+
+    #[test]
     fn from_str_rejects_no_prefix() {
         assert!("call_info"
             .parse::<SipPassthroughHeader>()
