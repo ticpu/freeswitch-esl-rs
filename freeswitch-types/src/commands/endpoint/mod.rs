@@ -24,7 +24,7 @@ use std::str::FromStr;
 
 use super::find_matching_bracket;
 use super::originate::OriginateError;
-use super::variables::{DialStringCarrier, Variables};
+use super::variables::{DialStringCarrier, Variables, VariablesType};
 
 /// Common interface for anything that formats as a FreeSWITCH dial string.
 ///
@@ -73,26 +73,45 @@ pub(super) fn strip_endpoint_prefix<'a>(
     Ok((variables, rest))
 }
 
+/// Every scope an endpoint may carry directly ahead of its module name.
+const ANY_SCOPE: &[VariablesType] = &[
+    VariablesType::Default,
+    VariablesType::Enterprise,
+    VariablesType::Channel,
+];
+
 /// Extract a leading variable block (`{...}`, `[...]`, or `<...>`) from a
 /// dial string, returning the parsed variables and the remaining URI portion.
-///
-/// Uses depth-aware bracket matching so nested brackets in values (e.g.
-/// `<sip_h_Call-Info=<url>>`) don't cause premature closure.
 fn extract_variables(
     s: &str,
     carrier: DialStringCarrier,
 ) -> Result<(Option<Variables>, &str), OriginateError> {
-    let (open, close_ch) = match s
+    extract_scoped_variables(s, carrier, ANY_SCOPE)
+}
+
+/// Extract a leading variable block whose brackets name one of `scopes`, so a
+/// caller that owns only some of them leaves the rest to whoever follows.
+///
+/// Uses depth-aware bracket matching so nested brackets in values (e.g.
+/// `<sip_h_Call-Info=<url>>`) don't cause premature closure.
+pub(super) fn extract_scoped_variables<'a>(
+    s: &'a str,
+    carrier: DialStringCarrier,
+    scopes: &[VariablesType],
+) -> Result<(Option<Variables>, &'a str), OriginateError> {
+    let first = s
         .as_bytes()
         .first()
-    {
-        Some(b'{') => ('{', '}'),
-        Some(b'[') => ('[', ']'),
-        Some(b'<') => ('<', '>'),
-        _ => return Ok((None, s)),
+        .copied();
+    let Some((open, close_ch)) = scopes
+        .iter()
+        .map(|scope| scope.delimiters())
+        .find(|(open, _)| first == Some(*open as u8))
+    else {
+        return Ok((None, s));
     };
     let close = find_matching_bracket(s, open, close_ch)
-        .ok_or_else(|| OriginateError::ParseError(format!("unclosed {} in endpoint", open)))?;
+        .ok_or_else(|| OriginateError::ParseError(format!("unclosed {} in dial string", open)))?;
     let var_str = &s[..=close];
     let vars = Variables::parse_for(var_str, carrier)?;
     let vars = if vars.is_empty() { None } else { Some(vars) };

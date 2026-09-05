@@ -6,16 +6,19 @@
 use std::fmt;
 use std::str::FromStr;
 
-use super::endpoint::Endpoint;
-use super::find_matching_bracket;
+use super::endpoint::{extract_scoped_variables, Endpoint};
 use super::originate::OriginateError;
-use super::variables::{DialStringCarrier, Variables};
+use super::variables::{DialStringCarrier, Variables, VariablesType};
 
 /// A bridge dial string is the argument of a dialplan application, which
 /// receives it whole, so it renders and parses one escaping level shallower
 /// than the [`DialStringCarrier::EslApi`] default the endpoint types use on
 /// their own.
 const CARRIER: DialStringCarrier = DialStringCarrier::Dialplan;
+
+/// Scopes a leading block may claim for the whole dial string. A channel block
+/// belongs to the endpoint that follows it, so it is left where it stands.
+const GLOBAL_SCOPES: &[VariablesType] = &[VariablesType::Default, VariablesType::Enterprise];
 
 /// Typed bridge dial string.
 ///
@@ -114,18 +117,7 @@ impl FromStr for BridgeDialString {
             ));
         }
 
-        // Extract leading {global_vars} if present
-        let (variables, rest) = if s.starts_with('{') {
-            let close = find_matching_bracket(s, '{', '}').ok_or_else(|| {
-                OriginateError::ParseError("unclosed { in bridge dial string".into())
-            })?;
-            let var_str = &s[..=close];
-            let vars = Variables::parse_for(var_str, CARRIER)?;
-            let vars = if vars.is_empty() { None } else { Some(vars) };
-            (vars, &s[close + 1..])
-        } else {
-            (None, s)
-        };
+        let (variables, rest) = extract_scoped_variables(s, CARRIER, GLOBAL_SCOPES)?;
 
         // Split on | for sequential groups, respecting brackets
         let group_strs = split_respecting_brackets(rest, '|');
