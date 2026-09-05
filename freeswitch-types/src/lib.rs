@@ -32,6 +32,7 @@ pub mod commands;
 #[cfg(feature = "esl")]
 pub mod event;
 pub mod headers;
+pub mod log_level;
 pub mod lookup;
 #[cfg(feature = "esl")]
 pub mod lossy_values;
@@ -75,6 +76,7 @@ pub use event::{
     EventSubscriptionError, ParseEventFormatError, ParseEventTypeError, ParsePriorityError,
 };
 pub use headers::{case_alias_key, normalize_header_key, EventHeader, ParseEventHeaderError};
+pub use log_level::{LogLevel, ParseLogLevelError};
 pub use lookup::{variable_key, HeaderLookup};
 #[cfg(feature = "esl")]
 pub use lossy_values::{LossyValue, LossyValues};
