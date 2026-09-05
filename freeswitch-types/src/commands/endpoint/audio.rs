@@ -140,4 +140,14 @@ mod tests {
         let result = AudioEndpoint::parse_with_prefix("portaudio/x", "alsa");
         assert!(result.is_err());
     }
+
+    /// A module name is a whole path segment. Accepting a longer one and
+    /// keeping the prefix drops the rest of the dial string without a word.
+    #[test]
+    fn parse_with_prefix_rejects_a_longer_module_name() {
+        assert!(AudioEndpoint::parse_with_prefix("alsafoo/bar", "alsa").is_err());
+        assert!("alsafoo/bar"
+            .parse::<super::super::Endpoint>()
+            .is_err());
+    }
 }
