@@ -1,3 +1,12 @@
+//! The `sip_multipart` channel variable, which is not a SIP multipart body.
+//!
+//! `sofia_handle_sip_i_invite` does not hand the RFC 2046 body over. It pushes
+//! one `<content-type>:<payload>` entry per part onto a stacked channel
+//! variable, which is the switch's `ARRAY::` encoding, and carries nothing else
+//! from the MIME headers; a part missing either half is dropped there and never
+//! reaches this parser. What this module reads is that transport encoding, so
+//! the `sip_*` name it lives under is the variable's, not a standard's.
+
 use super::{EslArray, EslArrayError};
 use std::borrow::Cow;
 use std::fmt;
@@ -258,8 +267,8 @@ mod tests {
         assert_eq!(shouty.media_type(), "application/pidf+xml");
     }
 
-    /// The return type exists to avoid allocating on the common path; a plain
-    /// `String` would have been simpler otherwise.
+    /// A part already spelled in canonical form is borrowed, so dispatching over
+    /// a whole body allocates only for the parts the far end spelled otherwise.
     #[test]
     fn media_type_borrows_when_already_normalised() {
         let item = MultipartItem::new("application/sdp", "v=0");
