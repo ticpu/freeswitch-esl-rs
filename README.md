@@ -31,6 +31,12 @@ Async Rust client for FreeSWITCH
 Typed endpoints, typed events, serde support, split reader/writer, liveness
 detection.
 
+## Quick start
+
+Originate through a gateway, chain a playback and a hangup inline on the
+answered channel, follow that channel to its last event and read the cause it
+hung up with.
+
 ```rust,no_run
 use std::time::Duration;
 use freeswitch_esl_tokio::*;
@@ -40,19 +46,23 @@ use freeswitch_esl_tokio::commands::*;
 async fn main() -> Result<(), EslError> {
     let (client, mut events) = EslClient::connect("localhost", 8021, "ClueCon").await?;
 
+    // No CHANNEL_CREATE: it fires before the reply carries the UUID to match on.
     client.subscribe_events(EventFormat::Plain, &[
         EslEventType::BackgroundJob,
-        EslEventType::ChannelCreate,
+        EslEventType::ChannelState,
         EslEventType::ChannelDestroy,
     ]).await?;
 
-    let cmd = Originate::application(
+    let cmd = Originate::inline(
         Endpoint::SofiaGateway(SofiaGateway::new("my_provider", "18005551234")),
-        Application::new(
-            "playback",
-            Some("/usr/share/freeswitch/sounds/en/us/callie/ivr/ivr-welcome.wav"),
-        ),
-    )
+        [
+            Application::new(
+                "playback",
+                Some("/usr/share/freeswitch/sounds/en/us/callie/ivr/ivr-welcome.wav"),
+            ),
+            Application::new("hangup", Some(HangupCause::NormalClearing.to_string())),
+        ],
+    )?
     .timeout(Duration::from_secs(30));
 
     // BACKGROUND_JOB is a switch-wide event, so the Job-UUID is what makes a
@@ -60,37 +70,45 @@ async fn main() -> Result<(), EslError> {
     let mut jobs: BgJobTracker<()> = BgJobTracker::new();
     jobs.bgapi(&client, &cmd.to_string(), ()).await?;
 
-    while let Some(Ok(event)) = events.recv().await {
+    let call_uuid = loop {
+        let Some(event) = events.recv().await.transpose()? else {
+            return Ok(());
+        };
         if let Some(((), job)) = jobs.try_complete(&event) {
-            match job.parse_body() {
-                Ok(data) => println!("bgapi result: {data}"),
-                Err(e) => eprintln!("bgapi failed: {e}"),
-            }
+            break job.parse_body()?.to_string();
+        }
+    };
+
+    while let Some(event) = events.recv().await.transpose()? {
+        if event.unique_id() != Some(call_uuid.as_str()) {
             continue;
         }
-        let Some(event_type) = event.event_type() else { continue };
-        match event_type {
-            EslEventType::ChannelCreate => {
-                println!("channel created: {}", event.channel_name().unwrap_or("?"));
-            }
-            EslEventType::ChannelDestroy => {
-                // A cause that fails to parse means FreeSWITCH grew one this
-                // crate does not carry: a signal, not a blank.
+        match event.event_type() {
+            Some(EslEventType::ChannelDestroy) => {
+                // The cause lands here, but CHANNEL_STATE with CS_DESTROY comes
+                // after this event, so this is not where the loop ends.
                 let cause = match event.hangup_cause() {
                     Ok(Some(c)) => c.to_string(),
                     Ok(None) => "no cause header".into(),
                     Err(e) => format!("unparseable: {e}"),
                 };
-                println!("channel destroyed: {} ({cause})",
-                    event.channel_name().unwrap_or("?"));
-                break;
+                println!("channel destroyed: {call_uuid} ({cause})");
             }
+            Some(EslEventType::ChannelState) => match event.is_terminal_channel_state() {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(e) => eprintln!("unparseable channel state: {e}"),
+            },
             _ => {}
         }
     }
     Ok(())
 }
 ```
+
+[Channel event ordering](#channel-event-ordering) spells out why the teardown
+ends on the state event; `examples/channel_tracker.rs` implements the full
+lifecycle.
 
 ```toml
 [dependencies]
