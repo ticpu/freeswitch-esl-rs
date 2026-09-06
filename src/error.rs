@@ -389,7 +389,20 @@ impl EslError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use freeswitch_types::HangupCause;
+    use freeswitch_types::{HangupCause, ParseChannelStateError, ParseHeaderError};
+
+    // A typed accessor's error must reach EslError through the union, so a
+    // reader loop can `?` it without naming each parser's error type.
+    #[test]
+    fn header_parse_error_routes_through_the_union() {
+        let err = EslError::from(ParseChannelStateError("CS_NONSENSE".into()));
+        assert!(matches!(
+            err,
+            EslError::HeaderParse(ParseHeaderError::ChannelState(_))
+        ));
+        assert!(!err.is_recoverable());
+        assert!(!err.is_connection_error());
+    }
 
     #[test]
     fn access_denied_not_recoverable() {
@@ -594,6 +607,11 @@ mod tests {
             (EslError::Timeout { timeout_ms: 5000 }, false, true),
             (EslError::protocol_error("bad framing"), true, false),
             (EslError::auth_failed("bad password"), false, false),
+            (
+                EslError::from(ParseChannelStateError("CS_NONSENSE".into())),
+                false,
+                false,
+            ),
         ];
         for (err, connection, recoverable) in cases {
             assert_eq!(err.is_connection_error(), *connection, "{err:?}");

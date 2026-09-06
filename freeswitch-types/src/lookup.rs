@@ -481,6 +481,82 @@ mod tests {
         ChannelVariable, LoopbackChannelName, LoopbackHangupCause, LoopbackLeg,
     };
     use std::collections::HashMap;
+    use std::error::Error;
+
+    #[test]
+    fn every_accessor_error_converts_into_the_union() {
+        let cases: Vec<(ParseHeaderError, &str)> = vec![
+            (
+                ParseChannelStateError("x".into()).into(),
+                "ChannelState(ParseChannelStateError",
+            ),
+            (
+                ParseCallStateError("x".into()).into(),
+                "CallState(ParseCallStateError",
+            ),
+            (
+                ParseAnswerStateError("x".into()).into(),
+                "AnswerState(ParseAnswerStateError",
+            ),
+            (
+                ParseCallDirectionError("x".into()).into(),
+                "CallDirection(ParseCallDirectionError",
+            ),
+            (
+                ParseHangupCauseError("x".into()).into(),
+                "HangupCause(ParseHangupCauseError",
+            ),
+            (
+                ParseGatewayRegStateError("x".into()).into(),
+                "GatewayRegState(ParseGatewayRegStateError",
+            ),
+            (
+                ParseLoopbackLegError("x".into()).into(),
+                "LoopbackLeg(ParseLoopbackLegError",
+            ),
+            (
+                ParseTimetableError::new("Caller-Channel-Created-Time", "x").into(),
+                "Timetable(ParseTimetableError",
+            ),
+            (
+                "x".parse::<u16>()
+                    .expect_err("non-numeric must fail")
+                    .into(),
+                "SipStatusCode(ParseIntError",
+            ),
+        ];
+        for (err, expected) in cases {
+            assert!(
+                format!("{err:?}").starts_with(expected),
+                "{err:?} should be {expected}"
+            );
+            assert!(
+                err.source()
+                    .is_some(),
+                "{err:?} must expose its inner error as source"
+            );
+        }
+    }
+
+    #[cfg(feature = "esl")]
+    #[test]
+    fn priority_error_converts_into_the_union() {
+        let err: ParseHeaderError = ParsePriorityError("x".into()).into();
+        assert!(matches!(err, ParseHeaderError::Priority(_)));
+        assert!(err
+            .source()
+            .is_some());
+    }
+
+    // Display delegates: the union adds no prefix of its own, so a caller
+    // printing `{e}` sees exactly what the typed parser said.
+    #[test]
+    fn display_delegates_to_the_inner_error() {
+        let inner = ParseChannelStateError("CS_NONSENSE".into());
+        let expected = inner.to_string();
+        let err: ParseHeaderError = inner.into();
+        assert_eq!(err.to_string(), expected);
+    }
 
     struct TestStore(HashMap<String, String>);
 
