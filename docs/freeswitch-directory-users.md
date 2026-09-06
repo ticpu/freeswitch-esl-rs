@@ -289,7 +289,7 @@ let subscription = EventSubscription::new(EventFormat::Plain)
 // Sends: event plain CUSTOM sofia::register sofia::unregister sofia::expire
 client.apply_subscription(&subscription).await?;
 
-while let Some(Ok(event)) = events.recv().await {
+while let Some(event) = events.try_next().await? {
     let subclass = event.header_str("Event-Subclass").unwrap_or("");
     let user = event.header_str("from-user").unwrap_or("?");
     let host = event.header_str("from-host").unwrap_or("?");

@@ -10,6 +10,12 @@
 
 use crate::commands::OriginateError;
 use crate::constants::{REPLY_PREFIX_ERR, REPLY_PREFIX_USAGE};
+use freeswitch_types::variables::ParseLoopbackLegError;
+use freeswitch_types::{
+    ParseAnswerStateError, ParseCallDirectionError, ParseCallStateError, ParseChannelStateError,
+    ParseGatewayRegStateError, ParseHangupCauseError, ParseHeaderError, ParsePriorityError,
+    ParseTimetableError,
+};
 use thiserror::Error;
 
 /// Result type alias for ESL operations
@@ -180,6 +186,38 @@ pub enum EslError {
         /// What went wrong during teardown.
         reason: String,
     },
+
+    /// A typed header accessor rejected a value that was present on the wire.
+    #[error("header parse error: {0}")]
+    HeaderParse(#[from] ParseHeaderError),
+}
+
+/// Route each typed parser's error into [`EslError::HeaderParse`], so a reader
+/// loop can `?` a header accessor without naming the parser that failed.
+macro_rules! esl_error_from_header_parse {
+    ($($(#[$attr:meta])* $Error:ty),+ $(,)?) => {
+        $(
+            $(#[$attr])*
+            impl From<$Error> for EslError {
+                fn from(e: $Error) -> Self {
+                    Self::HeaderParse(ParseHeaderError::from(e))
+                }
+            }
+        )+
+    };
+}
+
+esl_error_from_header_parse! {
+    ParseChannelStateError,
+    ParseCallStateError,
+    ParseAnswerStateError,
+    ParseCallDirectionError,
+    ParseHangupCauseError,
+    ParseGatewayRegStateError,
+    ParseLoopbackLegError,
+    ParsePriorityError,
+    ParseTimetableError,
+    std::num::ParseIntError,
 }
 
 impl From<serde_json::Error> for EslError {
@@ -283,6 +321,7 @@ impl EslError {
             EslError::InvalidHeader { .. } => false,
             EslError::MissingHeader { .. } => false,
             EslError::InvalidUuid { .. } => false,
+            EslError::HeaderParse(_) => false,
             // Stream resync impossible after BufferOverflow.
             EslError::BufferOverflow { .. } => false,
             // Per-call: don't retry the same command/originate as-is.
@@ -333,6 +372,7 @@ impl EslError {
             EslError::InvalidHeader { .. } => false,
             EslError::MissingHeader { .. } => false,
             EslError::InvalidUuid { .. } => false,
+            EslError::HeaderParse(_) => false,
             EslError::Originate(_) => false,
             EslError::Generic { .. } => false,
             // Re-exec teardown attempt failed; the original socket is

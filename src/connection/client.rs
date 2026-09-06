@@ -888,10 +888,23 @@ impl EslEventStream {
     /// application was not draining events fast enough. This is a one-time
     /// notification per overflow episode -- subsequent calls return real events.
     /// Parse errors from the reader task are also surfaced here.
+    ///
+    /// Matching `Some(Ok(event))` in a `while let` ends the loop on a parse
+    /// error as well as on disconnect, with nothing to tell the two apart; use
+    /// [`try_next`](Self::try_next) to propagate it instead.
     pub async fn recv(&mut self) -> Option<Result<EslEvent, EslError>> {
         self.rx
             .recv()
             .await
+    }
+
+    /// The `?`-friendly form of [`recv`](Self::recv): `Ok(None)` is end of
+    /// stream, `Err` a reader fault that `recv` would have hidden behind the
+    /// same loop exit.
+    pub async fn try_next(&mut self) -> EslResult<Option<EslEvent>> {
+        self.recv()
+            .await
+            .transpose()
     }
 
     /// Whether the connection is alive (not yet disconnected).

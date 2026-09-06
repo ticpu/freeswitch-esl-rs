@@ -57,7 +57,7 @@
 //!     client.send_command(AppCommand::answer()).await?;
 //!     client.send_command(AppCommand::playback("ivr/ivr-welcome.wav")).await?;
 //!
-//!     while let Some(Ok(event)) = events.recv().await {
+//!     while let Some(event) = events.try_next().await? {
 //!         println!("{:?}", event.event_type());
 //!     }
 //!     Ok(())
@@ -124,8 +124,8 @@
 //!
 //!     client.apply_subscription(&subscription).await?;
 //!
-//!     while let Some(Ok(event)) = events.recv().await {
-//!         if let Ok(Some(state)) = event.channel_state() {
+//!     while let Some(event) = events.try_next().await? {
+//!         if let Some(state) = event.channel_state()? {
 //!             println!("{:?}: {}", event.event_type(), state);
 //!         }
 //!     }
@@ -165,7 +165,7 @@ pub use freeswitch_types::{
     ParseAnswerStateError, ParseCallDirectionError, ParseCallStateError, ParseChannelStateError,
     ParseChannelVariableError, ParseCoreMediaVariableError, ParseDialplanTypeError,
     ParseEventFormatError, ParseEventHeaderError, ParseEventTypeError, ParseGatewayPingStatusError,
-    ParseGatewayRegStateError, ParseGroupCallOrderError, ParseHangupCauseError,
+    ParseGatewayRegStateError, ParseGroupCallOrderError, ParseHangupCauseError, ParseHeaderError,
     ParseHoldActionError, ParseLogLevelError, ParseMuteActionError, ParsePriorityError,
     ParseSipHeaderAddrError, ParseSipHeaderError, ParseSipPassthroughError,
     ParseSipUserPingStatusError, ParseSofiaEventSubclassError, ParseTimetableError, RtpStatUnit,

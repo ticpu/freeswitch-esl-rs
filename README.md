@@ -71,7 +71,7 @@ async fn main() -> Result<(), EslError> {
     jobs.bgapi(&client, &cmd.to_string(), ()).await?;
 
     let call_uuid = loop {
-        let Some(event) = events.recv().await.transpose()? else {
+        let Some(event) = events.try_next().await? else {
             return Ok(());
         };
         if let Some(((), job)) = jobs.try_complete(&event) {
@@ -79,7 +79,7 @@ async fn main() -> Result<(), EslError> {
         }
     };
 
-    while let Some(event) = events.recv().await.transpose()? {
+    while let Some(event) = events.try_next().await? {
         if event.unique_id() != Some(call_uuid.as_str()) {
             continue;
         }
@@ -94,11 +94,7 @@ async fn main() -> Result<(), EslError> {
                 };
                 println!("channel destroyed: {call_uuid} ({cause})");
             }
-            Some(EslEventType::ChannelState) => match event.is_terminal_channel_state() {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(e) => eprintln!("unparseable channel state: {e}"),
-            },
+            Some(EslEventType::ChannelState) if event.is_terminal_channel_state()? => break,
             _ => {}
         }
     }
@@ -254,7 +250,7 @@ client.apply_subscription(
 let mut bg = BgJobTracker::new();
 bg.send(&client, "sofia xmlstatus profile internal").await?;
 
-while let Some(Ok(event)) = events.recv().await {
+while let Some(event) = events.try_next().await? {
     if let Some(((), result)) = bg.try_complete(&event) {
         match result.parse_body() {
             Ok(data) => println!("{}", data),
@@ -282,7 +278,7 @@ for uuid in &channel_uuids {
     bg.bgapi(&client, &format!("uuid_dump {uuid}"), uuid.clone()).await?;
 }
 
-while let Some(Ok(event)) = events.recv().await {
+while let Some(event) = events.try_next().await? {
     if let Some((channel_uuid, result)) = bg.try_complete(&event) {
         // parse_body(), not body(): a job that failed reports it in the body,
         // so the raw string reads as output.
@@ -325,7 +321,7 @@ client.resume().await?;
 client.send_command(AppCommand::answer()).await?;
 client.send_command(AppCommand::playback("ivr/ivr-welcome.wav")).await?;
 
-while let Some(Ok(event)) = events.recv().await {
+while let Some(event) = events.try_next().await? {
     // handle events...
 }
 # Ok(())

@@ -474,6 +474,84 @@ impl HeaderLookup for std::collections::HashMap<String, String> {
 // No blanket impl on `indexmap::IndexMap<String, String>`: both traits are
 // external, so the orphan rules forbid the pair. Wrap in `EslHeaders`.
 
+/// The union a caller reaches when `?`-ing several typed [`HeaderLookup`]
+/// accessors into one error type.
+///
+/// Each accessor returns its own parser's error; a function calling more than
+/// one of them has nothing to name in its return type without this. `Display`
+/// and [`source`](std::error::Error::source) both defer to the inner error, so
+/// nothing is lost by going through it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ParseHeaderError {
+    /// From [`channel_state`](HeaderLookup::channel_state) and its siblings.
+    ChannelState(ParseChannelStateError),
+    /// From [`call_state`](HeaderLookup::call_state).
+    CallState(ParseCallStateError),
+    /// From [`answer_state`](HeaderLookup::answer_state).
+    AnswerState(ParseAnswerStateError),
+    /// From [`call_direction`](HeaderLookup::call_direction).
+    CallDirection(ParseCallDirectionError),
+    /// From [`hangup_cause`](HeaderLookup::hangup_cause).
+    HangupCause(ParseHangupCauseError),
+    /// From [`gateway_reg_state`](HeaderLookup::gateway_reg_state).
+    GatewayRegState(ParseGatewayRegStateError),
+    /// From [`loopback_leg`](HeaderLookup::loopback_leg).
+    LoopbackLeg(ParseLoopbackLegError),
+    /// From [`priority`](HeaderLookup::priority).
+    #[cfg(feature = "esl")]
+    Priority(ParsePriorityError),
+    /// From [`caller_timetable`](HeaderLookup::caller_timetable) and
+    /// [`other_leg_timetable`](HeaderLookup::other_leg_timetable).
+    Timetable(ParseTimetableError),
+    /// From [`sip_status_code`](HeaderLookup::sip_status_code), whose header
+    /// parses as a plain integer.
+    SipStatusCode(std::num::ParseIntError),
+}
+
+macro_rules! parse_header_error_from {
+    ($($(#[$attr:meta])* $Variant:ident($Error:ty)),+ $(,)?) => {
+        $(
+            $(#[$attr])*
+            impl From<$Error> for ParseHeaderError {
+                fn from(e: $Error) -> Self {
+                    Self::$Variant(e)
+                }
+            }
+        )+
+
+        impl ::std::fmt::Display for ParseHeaderError {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                match self {
+                    $($(#[$attr])* Self::$Variant(e) => e.fmt(f),)+
+                }
+            }
+        }
+
+        impl ::std::error::Error for ParseHeaderError {
+            fn source(&self) -> Option<&(dyn ::std::error::Error + 'static)> {
+                match self {
+                    $($(#[$attr])* Self::$Variant(e) => Some(e),)+
+                }
+            }
+        }
+    };
+}
+
+parse_header_error_from! {
+    ChannelState(ParseChannelStateError),
+    CallState(ParseCallStateError),
+    AnswerState(ParseAnswerStateError),
+    CallDirection(ParseCallDirectionError),
+    HangupCause(ParseHangupCauseError),
+    GatewayRegState(ParseGatewayRegStateError),
+    LoopbackLeg(ParseLoopbackLegError),
+    #[cfg(feature = "esl")]
+    Priority(ParsePriorityError),
+    Timetable(ParseTimetableError),
+    SipStatusCode(std::num::ParseIntError),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
