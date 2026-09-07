@@ -592,6 +592,53 @@ mod tests {
         );
     }
 
+    // mod_commands writes a bare `-ERROR` (uuid_answer with no argument, and
+    // the three neighbouring uuid_* APIs). `-ERR` is a token, not a string
+    // prefix, so it must not match inside a longer word.
+    #[test]
+    fn bare_error_reply_is_not_an_err_payload() {
+        assert_eq!(
+            failed("-ERROR").command_failure(),
+            Some(CommandFailure::Unprefixed("-ERROR"))
+        );
+    }
+
+    #[test]
+    fn a_longer_word_behind_either_prefix_stays_unprefixed() {
+        assert_eq!(
+            failed("-ERRORS: 3").command_failure(),
+            Some(CommandFailure::Unprefixed("-ERRORS: 3"))
+        );
+        assert_eq!(
+            failed("-USAGEX y").command_failure(),
+            Some(CommandFailure::Unprefixed("-USAGEX y"))
+        );
+    }
+
+    // A bgapi BACKGROUND_JOB body reaches the caller without parse_api_body's
+    // trailing-newline strip, so the terminator rides in the payload.
+    #[test]
+    fn a_line_terminator_behind_a_bare_prefix_still_peels() {
+        assert_eq!(
+            failed("-ERR\n").command_failure(),
+            Some(CommandFailure::Err("\n"))
+        );
+        assert_eq!(
+            failed("-ERR\r\n").command_failure(),
+            Some(CommandFailure::Err("\r\n"))
+        );
+    }
+
+    // mod_avmd writes `-ERR, <message>`. The comma is not a separator this
+    // crate peels, so it stays on the payload.
+    #[test]
+    fn a_comma_separated_failure_keeps_its_comma() {
+        assert_eq!(
+            failed("-ERR, bad command!").command_failure(),
+            Some(CommandFailure::Err(", bad command!"))
+        );
+    }
+
     #[test]
     fn bare_err_yields_empty_payload() {
         assert_eq!(
