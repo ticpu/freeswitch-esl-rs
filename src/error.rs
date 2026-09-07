@@ -238,10 +238,12 @@ impl From<serde_json::Error> for EslError {
 /// [`HangupCause::from_str`](freeswitch_types::HangupCause) is not a hangup
 /// cause, and a product type lets a caller read one without the other.
 ///
-/// The prefix test is `starts_with` with no delimiter requirement, matching
-/// how [`parse_api_body`](crate::parse_api_body) classifies the same bodies —
-/// so `-ERRORS: 3` peels as [`Err`](Self::Err), and the two agree rather than
-/// diverging.
+/// A prefix counts as one only when no word character follows it: mod_commands
+/// writes a bare `-ERROR`, which is [`Unprefixed`](Self::Unprefixed) rather than
+/// an `-ERR` carrying `OR`. This is a finer question than the one
+/// [`parse_api_body`](crate::parse_api_body) answers — whether the body is a
+/// failure at all, which `-ERROR` is — so the two classify at different
+/// granularities on purpose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CommandFailure<'a> {
@@ -264,6 +266,16 @@ impl<'a> CommandFailure<'a> {
             CommandFailure::Unprefixed(_) => None,
         }
     }
+}
+
+/// Peel a reply prefix, or `None` when a word character follows it and the
+/// match is therefore a longer word the switch wrote (`-ERROR`).
+fn peel_prefix<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = text.strip_prefix(prefix)?;
+    if rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(peel_separator(rest))
 }
 
 /// Drop the separator FreeSWITCH writes between a reply prefix and its text.
@@ -420,10 +432,10 @@ impl EslError {
             return None;
         };
         let text = reply_text.trim_start();
-        if let Some(rest) = text.strip_prefix(REPLY_PREFIX_ERR) {
-            Some(CommandFailure::Err(peel_separator(rest)))
-        } else if let Some(rest) = text.strip_prefix(REPLY_PREFIX_USAGE) {
-            Some(CommandFailure::Usage(peel_separator(rest)))
+        if let Some(payload) = peel_prefix(text, REPLY_PREFIX_ERR) {
+            Some(CommandFailure::Err(payload))
+        } else if let Some(payload) = peel_prefix(text, REPLY_PREFIX_USAGE) {
+            Some(CommandFailure::Usage(payload))
         } else {
             Some(CommandFailure::Unprefixed(text))
         }
