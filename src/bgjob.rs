@@ -20,7 +20,7 @@
 //! let mut bg = BgJobTracker::new();
 //! bg.send(&client, "status").await?;
 //!
-//! while let Some(Ok(event)) = events.recv().await {
+//! while let Some(event) = events.try_next().await? {
 //!     if let Some(((), result)) = bg.try_complete(&event) {
 //!         println!("{}", result.parse_body()?);
 //!         continue;
@@ -43,7 +43,7 @@
 //! let uuid = "abc123".to_string();
 //! bg.bgapi(&client, &format!("uuid_dump {uuid}"), uuid.clone()).await?;
 //!
-//! while let Some(Ok(event)) = events.recv().await {
+//! while let Some(event) = events.try_next().await? {
 //!     if let Some((channel_uuid, result)) = bg.try_complete(&event) {
 //!         println!("dump for {}: {:?}", channel_uuid, result.body());
 //!         continue;
