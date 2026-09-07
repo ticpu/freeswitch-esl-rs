@@ -12,7 +12,7 @@ pub(crate) struct StaticPayloadType {
     ///
     /// `MPA` (PT 14) is audio but its channel count is stream-defined by
     /// the MPEG bitstream, so it also carries `None`.
-    pub channels: Option<u8>,
+    pub channels: Option<u32>,
 }
 
 /// Returns the RFC 3551 static payload descriptor for the given payload type number.

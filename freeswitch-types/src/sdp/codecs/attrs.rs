@@ -89,7 +89,7 @@ impl<'a> AttrCursor<'a> {
 ///
 /// Returns `Err(MalformedRtpmap)` for any structural violation (missing
 /// separator, non-numeric PT, non-numeric clock rate, non-numeric channel count).
-pub(super) fn parse_rtpmap(value: &str) -> Result<(u8, String, u32, Option<u8>), SdpCodecError> {
+pub(super) fn parse_rtpmap(value: &str) -> Result<(u8, String, u32, Option<u32>), SdpCodecError> {
     let mut cursor = AttrCursor::new(value);
 
     let pt = cursor
@@ -161,7 +161,7 @@ pub(super) fn parse_fmtp_pt(value: &str) -> Result<(u8, String), SdpCodecError> 
 
 /// One section's `a=rtpmap` and `a=fmtp` values, keyed by payload type.
 pub(super) struct AttrTables {
-    pub(super) rtpmap: HashMap<u8, (String, u32, Option<u8>)>,
+    pub(super) rtpmap: HashMap<u8, (String, u32, Option<u32>)>,
     pub(super) fmtp: HashMap<u8, String>,
 }
 

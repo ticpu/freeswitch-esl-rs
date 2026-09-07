@@ -121,7 +121,7 @@ pub struct SdpCodec {
     payload_type: u8,
     name: String,
     clock_rate: u32,
-    channels: Option<u8>,
+    channels: Option<u32>,
     fmtp: Option<String>,
     ptime: Option<u32>,
     maxptime: Option<u32>,
@@ -160,7 +160,7 @@ impl SdpCodec {
     }
 
     /// Set the channel count from `a=rtpmap`.
-    pub fn with_channels(mut self, channels: u8) -> Self {
+    pub fn with_channels(mut self, channels: u32) -> Self {
         self.channels = Some(channels);
         self
     }
@@ -226,7 +226,7 @@ impl SdpCodec {
     }
 
     /// The channel count, or `None` when not applicable (video) or stream-defined.
-    pub fn channels(&self) -> Option<u8> {
+    pub fn channels(&self) -> Option<u32> {
         self.channels
     }
 
@@ -289,7 +289,7 @@ impl SdpCodec {
     }
 
     /// Mutable access to the channel count.
-    pub(crate) fn channels_mut(&mut self) -> &mut Option<u8> {
+    pub(crate) fn channels_mut(&mut self) -> &mut Option<u32> {
         &mut self.channels
     }
 }

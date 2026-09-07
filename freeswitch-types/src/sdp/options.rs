@@ -175,7 +175,7 @@ impl CodecStringOptions {
 
         if self.emit_channels {
             if let Some(c) = codec.channels() {
-                entry = entry.with_channels(u32::from(c));
+                entry = entry.with_channels(c);
             }
         }
 
