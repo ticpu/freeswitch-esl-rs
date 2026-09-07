@@ -506,11 +506,23 @@ pub enum ParseHeaderError {
     Timetable(ParseTimetableError),
     /// From [`sip_status_code`](HeaderLookup::sip_status_code), whose header
     /// parses as a plain integer.
+    ///
+    /// Constructed by name, never through `?`: `ParseIntError` belongs to no
+    /// header, and a `From` for it would relabel every unrelated integer parse
+    /// in the caller as this one.
     SipStatusCode(std::num::ParseIntError),
 }
 
-macro_rules! parse_header_error_from {
-    ($($(#[$attr:meta])* $Variant:ident($Error:ty)),+ $(,)?) => {
+/// `From` for each variant that owns its error type outright, plus the two
+/// trait impls over every variant.
+///
+/// A variant listed under `borrowed` carries an error type this crate does not
+/// own and cannot claim: it gets the trait arms and no conversion.
+macro_rules! parse_header_error_impls {
+    (
+        owned { $($(#[$attr:meta])* $Variant:ident($Error:ty)),+ $(,)? }
+        borrowed { $($(#[$battr:meta])* $BVariant:ident),+ $(,)? }
+    ) => {
         $(
             $(#[$attr])*
             impl From<$Error> for ParseHeaderError {
@@ -524,6 +536,7 @@ macro_rules! parse_header_error_from {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                 match self {
                     $($(#[$attr])* Self::$Variant(e) => e.fmt(f),)+
+                    $($(#[$battr])* Self::$BVariant(e) => e.fmt(f),)+
                 }
             }
         }
@@ -532,24 +545,29 @@ macro_rules! parse_header_error_from {
             fn source(&self) -> Option<&(dyn ::std::error::Error + 'static)> {
                 match self {
                     $($(#[$attr])* Self::$Variant(e) => Some(e),)+
+                    $($(#[$battr])* Self::$BVariant(e) => Some(e),)+
                 }
             }
         }
     };
 }
 
-parse_header_error_from! {
-    ChannelState(ParseChannelStateError),
-    CallState(ParseCallStateError),
-    AnswerState(ParseAnswerStateError),
-    CallDirection(ParseCallDirectionError),
-    HangupCause(ParseHangupCauseError),
-    GatewayRegState(ParseGatewayRegStateError),
-    LoopbackLeg(ParseLoopbackLegError),
-    #[cfg(feature = "esl")]
-    Priority(ParsePriorityError),
-    Timetable(ParseTimetableError),
-    SipStatusCode(std::num::ParseIntError),
+parse_header_error_impls! {
+    owned {
+        ChannelState(ParseChannelStateError),
+        CallState(ParseCallStateError),
+        AnswerState(ParseAnswerStateError),
+        CallDirection(ParseCallDirectionError),
+        HangupCause(ParseHangupCauseError),
+        GatewayRegState(ParseGatewayRegStateError),
+        LoopbackLeg(ParseLoopbackLegError),
+        #[cfg(feature = "esl")]
+        Priority(ParsePriorityError),
+        Timetable(ParseTimetableError),
+    }
+    borrowed {
+        SipStatusCode,
+    }
 }
 
 #[cfg(test)]
@@ -597,9 +615,10 @@ mod tests {
                 "Timetable(ParseTimetableError",
             ),
             (
-                "x".parse::<u16>()
-                    .expect_err("non-numeric must fail")
-                    .into(),
+                ParseHeaderError::SipStatusCode(
+                    "x".parse::<u16>()
+                        .expect_err("non-numeric must fail"),
+                ),
                 "SipStatusCode(ParseIntError",
             ),
         ];
