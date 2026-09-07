@@ -37,7 +37,7 @@ impl SdpCodecError {
     ///
     /// The source error is boxed so the `sdp-types` concrete type does not appear
     /// in any public signature.
-    pub fn parse_failure(
+    pub(crate) fn parse_failure(
         message: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
@@ -156,22 +156,22 @@ pub enum CodecStringError {
 
 impl CodecStringError {
     /// Construct an [`AtInFmtp`](CodecStringError::AtInFmtp) error.
-    pub fn at_in_fmtp(value: impl Into<String>) -> Self {
+    pub(crate) fn at_in_fmtp(value: impl Into<String>) -> Self {
         Self::AtInFmtp(value.into())
     }
 
     /// Construct a [`DotInFmtpWithoutModule`](CodecStringError::DotInFmtpWithoutModule) error.
-    pub fn dot_in_fmtp_without_module(value: impl Into<String>) -> Self {
+    pub(crate) fn dot_in_fmtp_without_module(value: impl Into<String>) -> Self {
         Self::DotInFmtpWithoutModule(value.into())
     }
 
     /// Construct an [`InvalidCodecName`](CodecStringError::InvalidCodecName) error.
-    pub fn invalid_codec_name(value: impl Into<String>) -> Self {
+    pub(crate) fn invalid_codec_name(value: impl Into<String>) -> Self {
         Self::InvalidCodecName(value.into())
     }
 
     /// Construct a [`WireInjection`](CodecStringError::WireInjection) error.
-    pub fn wire_injection(field: impl Into<String>, value: impl Into<String>) -> Self {
+    pub(crate) fn wire_injection(field: impl Into<String>, value: impl Into<String>) -> Self {
         Self::WireInjection {
             field: field.into(),
             value: value.into(),
@@ -179,7 +179,7 @@ impl CodecStringError {
     }
 
     /// Construct a [`QualifierParseError`](CodecStringError::QualifierParseError) error.
-    pub fn qualifier_parse_error(raw: impl Into<String>, reason: impl Into<String>) -> Self {
+    pub(crate) fn qualifier_parse_error(raw: impl Into<String>, reason: impl Into<String>) -> Self {
         Self::QualifierParseError {
             raw: raw.into(),
             reason: reason.into(),
@@ -187,7 +187,7 @@ impl CodecStringError {
     }
 
     /// Construct an [`InvalidCharInName`](CodecStringError::InvalidCharInName) error.
-    pub fn invalid_char_in_name(
+    pub(crate) fn invalid_char_in_name(
         field: impl Into<String>,
         ch: char,
         value: impl Into<String>,
@@ -200,12 +200,12 @@ impl CodecStringError {
     }
 
     /// Construct a [`MultipleEntries`](CodecStringError::MultipleEntries) error.
-    pub fn multiple_entries(value: impl Into<String>) -> Self {
+    pub(crate) fn multiple_entries(value: impl Into<String>) -> Self {
         Self::MultipleEntries(value.into())
     }
 
     /// Construct a [`TooManyEntries`](CodecStringError::TooManyEntries) error.
-    pub fn too_many_entries(entries: usize, limit: usize) -> Self {
+    pub(crate) fn too_many_entries(entries: usize, limit: usize) -> Self {
         Self::TooManyEntries { entries, limit }
     }
 }
@@ -272,7 +272,7 @@ pub struct UnmappedPayload {
 
 impl UnmappedPayload {
     /// Records a dynamic payload type that has no `a=rtpmap` and no static-table entry.
-    pub fn new(payload_type: u8, media_type: SdpMediaType) -> Self {
+    pub(crate) fn new(payload_type: u8, media_type: SdpMediaType) -> Self {
         Self {
             payload_type,
             media_type,
@@ -380,7 +380,7 @@ pub enum SdpWarning {
 
 impl SdpWarning {
     /// Construct an [`UnparseableNumericAttribute`](SdpWarning::UnparseableNumericAttribute) warning.
-    pub fn unparseable_numeric_attribute(
+    pub(crate) fn unparseable_numeric_attribute(
         attribute: impl Into<String>,
         raw_value: impl Into<String>,
     ) -> Self {
@@ -391,7 +391,10 @@ impl SdpWarning {
     }
 
     /// Construct a [`CodecStringQualifier`](SdpWarning::CodecStringQualifier) warning.
-    pub fn codec_string_qualifier(raw: impl Into<String>, reason: impl Into<String>) -> Self {
+    pub(crate) fn codec_string_qualifier(
+        raw: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
         Self::CodecStringQualifier {
             raw: raw.into(),
             reason: reason.into(),
@@ -399,7 +402,7 @@ impl SdpWarning {
     }
 
     /// Construct an [`FmtpUnrepresentable`](SdpWarning::FmtpUnrepresentable) warning.
-    pub fn fmtp_unrepresentable(
+    pub(crate) fn fmtp_unrepresentable(
         codec_name: impl Into<String>,
         fmtp: impl Into<String>,
         reason: impl Into<String>,
@@ -412,7 +415,7 @@ impl SdpWarning {
     }
 
     /// Construct a [`CodecNameUnrepresentable`](SdpWarning::CodecNameUnrepresentable) warning.
-    pub fn codec_name_unrepresentable(
+    pub(crate) fn codec_name_unrepresentable(
         codec_name: impl Into<String>,
         reason: impl Into<String>,
     ) -> Self {
@@ -423,19 +426,19 @@ impl SdpWarning {
     }
 
     /// Construct a [`NonCanonicalDirectionAttribute`](SdpWarning::NonCanonicalDirectionAttribute) warning.
-    pub fn non_canonical_direction_attribute(attribute: impl Into<String>) -> Self {
+    pub(crate) fn non_canonical_direction_attribute(attribute: impl Into<String>) -> Self {
         Self::NonCanonicalDirectionAttribute {
             attribute: attribute.into(),
         }
     }
 
     /// Construct a [`CodecStringTruncated`](SdpWarning::CodecStringTruncated) warning.
-    pub fn codec_string_truncated(entries: usize, limit: usize) -> Self {
+    pub(crate) fn codec_string_truncated(entries: usize, limit: usize) -> Self {
         Self::CodecStringTruncated { entries, limit }
     }
 
     /// Construct a [`MalformedMediaSection`](SdpWarning::MalformedMediaSection) warning.
-    pub fn malformed_media_section(
+    pub(crate) fn malformed_media_section(
         media_type: impl Into<String>,
         reason: impl Into<String>,
     ) -> Self {
