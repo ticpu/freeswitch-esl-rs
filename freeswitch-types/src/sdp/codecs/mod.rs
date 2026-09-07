@@ -506,6 +506,20 @@ mod tests {
         assert_eq!(amrwb_ch1.channels(), Some(1));
     }
 
+    #[test]
+    fn a_channel_count_above_a_byte_parses() {
+        // RFC 4566 puts no ceiling on rtpmap's encoding parameters, so a count
+        // that overflows a byte is a legal offer, not a malformed rtpmap.
+        let sdp = format!(
+            "{}m=audio 5004 RTP/AVP 100\r\na=rtpmap:100 L16/48000/300\r\n",
+            sdp_header()
+        );
+        let codecs = SdpCodecs::parse(&sdp).expect("a legal channel count must not fail the parse");
+        let rtp = rtp_codec(codecs.entries());
+        let l16 = codec_named(&rtp, "L16").expect("L16 must be present");
+        assert_eq!(l16.channels(), Some(300));
+    }
+
     // --- ptime precedence ---
 
     #[test]
